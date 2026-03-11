@@ -1,0 +1,5 @@
+/target
+/gen
+/pkg/sil
+/tests/fixtures/simple/out
+/tmp/psc_probe

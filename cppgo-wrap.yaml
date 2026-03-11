@@ -1,0 +1,23 @@
+version: 1
+input:
+  headers:
+    - examples/simple-cpp/include/foo.hpp
+  compile_commands: examples/simple-cpp/build/compile_commands.json
+output:
+  dir: gen
+  header: wrapper.h
+  source: wrapper.cpp
+  ir: wrapper.ir.yaml
+filter:
+  namespaces:
+    - foo
+naming:
+  prefix: cgowrap
+  style: snake_case
+policies:
+  string_mode: c_str
+  enum_mode: c_enum
+  unsupported:
+    templates: error
+    stl_containers: skip
+    exceptions: error

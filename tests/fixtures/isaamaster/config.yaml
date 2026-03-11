@@ -1,0 +1,28 @@
+version: 1
+
+input:
+  headers:
+    - include/IsAAMaster.h
+  compile_commands: build/compile_commands.json
+
+output:
+  dir: out
+  header: wrapper.h
+  source: wrapper.cpp
+  ir: wrapper.ir.yaml
+
+filter:
+  classes: [IsAAMaster]
+  methods: [IsAAMaster::*]
+
+naming:
+  prefix: sil
+  style: preserve
+
+policies:
+  string_mode: c_str
+  enum_mode: c_enum
+  unsupported:
+    templates: error
+    stl_containers: skip
+    exceptions: error

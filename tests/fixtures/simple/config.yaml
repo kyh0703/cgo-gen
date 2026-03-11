@@ -1,0 +1,30 @@
+version: 1
+
+input:
+  headers:
+    - include/foo.hpp
+  compile_commands: build/compile_commands.json
+
+output:
+  dir: out
+  header: wrapper.h
+  source: wrapper.cpp
+  ir: wrapper.ir.yaml
+
+filter:
+  namespaces: [foo]
+  classes: [Bar]
+  functions: [add]
+  enums: [Mode]
+
+naming:
+  prefix: cgowrap
+  style: snake_case
+
+policies:
+  string_mode: c_str
+  enum_mode: c_enum
+  unsupported:
+    templates: error
+    stl_containers: skip
+    exceptions: error

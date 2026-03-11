@@ -1,0 +1,13 @@
+[
+  {
+    "directory": "tests/fixtures/isaamaster",
+    "file": "include/IsAAMaster.h",
+    "arguments": [
+      "clang++",
+      "-std=c++11",
+      "-x",
+      "c++",
+      "-Iinclude"
+    ]
+  }
+]

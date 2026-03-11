@@ -1,0 +1,45 @@
+version: 1
+
+# Edit these paths for your environment before running the command.
+input:
+  headers:
+    - /absolute/path/to/src/IE/SIL/IsIEApi.h
+  clang_args:
+    - -std=c++11
+    - -x
+    - c++
+    - -I/absolute/path/to/CORE/inc
+    - -I/absolute/path/to/CORE/inc/iCore
+    - -I/absolute/path/to/CORE/inc/iJson
+    - -I/absolute/path/to/CORE/inc/iSqlLib
+    - -I/absolute/path/to/src/IE/inc
+    - -I/absolute/path/to/src/IE/SIL
+    - -I/absolute/path/to/src/LIB/inc
+    - -I/absolute/path/to/src/LIB/inc/iBus
+    - -I/absolute/path/to/src/LIB/inc/iUtil
+
+output:
+  dir: ./pkg/sil
+  header: sil_wrapper.h
+  source: sil_wrapper.cpp
+  ir: sil_wrapper.ir.yaml
+
+filter:
+  classes:
+    - IsIEApiSession
+    - IsIEApiMonitor
+  methods:
+    - IsIEApiSession::*
+    - IsIEApiMonitor::*
+
+naming:
+  prefix: sil
+  style: preserve
+
+policies:
+  string_mode: c_str
+  enum_mode: c_enum
+  unsupported:
+    templates: error
+    stl_containers: skip
+    exceptions: error
