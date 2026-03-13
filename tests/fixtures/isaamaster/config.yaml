@@ -7,13 +7,13 @@ input:
 
 output:
   dir: out
-  header: wrapper.h
-  source: wrapper.cpp
-  ir: wrapper.ir.yaml
+  basename: is_aa_master_wrapper
 
 filter:
   classes: [IsAAMaster]
   methods: [IsAAMaster::*]
+
+go_structs: [IsAAMaster]
 
 naming:
   prefix: sil

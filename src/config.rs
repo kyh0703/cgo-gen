@@ -16,6 +16,8 @@ pub struct Config {
     #[serde(default)]
     pub filter: FilterConfig,
     #[serde(default)]
+    pub go_structs: Vec<String>,
+    #[serde(default)]
     pub naming: NamingConfig,
     #[serde(default)]
     pub policies: PolicyConfig,
@@ -34,6 +36,8 @@ pub struct InputConfig {
 pub struct OutputConfig {
     #[serde(default = "default_output_dir")]
     pub dir: PathBuf,
+    #[serde(default)]
+    pub basename: Option<String>,
     #[serde(default = "default_header_name")]
     pub header: String,
     #[serde(default = "default_source_name")]
@@ -46,6 +50,7 @@ impl Default for OutputConfig {
     fn default() -> Self {
         Self {
             dir: default_output_dir(),
+            basename: None,
             header: default_header_name(),
             source: default_source_name(),
             ir: default_ir_name(),
@@ -206,6 +211,7 @@ impl Config {
         if self.output.dir.is_relative() {
             self.output.dir = base_dir.join(&self.output.dir);
         }
+        self.output.apply_basename();
         Ok(())
     }
 
@@ -213,6 +219,66 @@ impl Config {
         if self.input.headers.is_empty() {
             bail!("config.input.headers must not be empty");
         }
+        if let Some(basename) = &self.output.basename {
+            if basename.trim().is_empty() {
+                bail!("config.output.basename must not be empty");
+            }
+            if self.go_structs.len() > 1 {
+                bail!("config.output.basename currently supports at most one go_structs target");
+            }
+        }
         Ok(())
     }
+}
+
+impl OutputConfig {
+    fn apply_basename(&mut self) {
+        let Some(basename) = self.basename.as_ref() else {
+            return;
+        };
+        self.header = format!("{basename}.h");
+        self.source = format!("{basename}.cpp");
+        self.ir = format!("{basename}.ir.yaml");
+    }
+
+    pub fn go_filename(&self, value: &str) -> String {
+        match self.basename.as_ref() {
+            Some(basename) => format!("{basename}.go"),
+            None => format!("{}_wrapper.go", to_snake_case(value)),
+        }
+    }
+}
+
+fn to_snake_case(value: &str) -> String {
+    let chars = value.chars().collect::<Vec<_>>();
+    if chars.is_empty() {
+        return String::new();
+    }
+
+    let mut tokens = Vec::new();
+    let mut start = 0;
+    for index in 1..chars.len() {
+        let prev = chars[index - 1];
+        let current = chars[index];
+        let next = chars.get(index + 1).copied();
+
+        let boundary = (prev.is_lowercase() && current.is_uppercase())
+            || (prev.is_ascii_digit() && !current.is_ascii_digit())
+            || (!prev.is_ascii_digit() && current.is_ascii_digit())
+            || (prev.is_uppercase()
+                && current.is_uppercase()
+                && next.map(|ch| ch.is_lowercase()).unwrap_or(false));
+
+        if boundary {
+            tokens.push(chars[start..index].iter().collect::<String>());
+            start = index;
+        }
+    }
+    tokens.push(chars[start..].iter().collect::<String>());
+
+    tokens
+        .into_iter()
+        .map(|token| token.to_ascii_lowercase())
+        .collect::<Vec<_>>()
+        .join("_")
 }

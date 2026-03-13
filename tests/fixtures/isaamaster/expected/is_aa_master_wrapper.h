@@ -1,5 +1,5 @@
-#ifndef SIL_WRAPPER_H
-#define SIL_WRAPPER_H
+#ifndef SIL_IS_AA_MASTER_WRAPPER_H
+#define SIL_IS_AA_MASTER_WRAPPER_H
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -87,4 +87,4 @@ void sil_IsAAMaster_SetDigitS_Num(IsAAMasterHandle* self, const char* sDigitNum)
 }
 #endif
 
-#endif /* SIL_WRAPPER_H */
+#endif /* SIL_IS_AA_MASTER_WRAPPER_H */
