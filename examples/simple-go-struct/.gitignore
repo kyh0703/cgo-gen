@@ -1,0 +1,6 @@
+build/
+.gocache/
+pkg/model/thing_model_wrapper.h
+pkg/model/thing_model_wrapper.cpp
+pkg/model/thing_model_wrapper.ir.yaml
+pkg/model/thing_model_wrapper.go
