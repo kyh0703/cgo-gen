@@ -10,6 +10,7 @@ fn temp_output_dir(label: &str) -> PathBuf {
     let mut path = env::temp_dir();
     path.push(format!("c_go_isaamaster_{}_{}", label, std::process::id()));
     let _ = fs::remove_dir_all(&path);
+    path.push("sil");
     fs::create_dir_all(&path).unwrap();
     path
 }
@@ -61,10 +62,17 @@ fn parses_and_generates_wrapper_for_isaamaster_fixture() {
     let header = fs::read_to_string(config.output.dir.join(&config.output.header)).unwrap();
     let source = fs::read_to_string(config.output.dir.join(&config.output.source)).unwrap();
     let ir_yaml = fs::read_to_string(config.output.dir.join(&config.output.ir)).unwrap();
+    let go_struct_path = config.output.dir.join(config.output.go_filename("IsAAMaster"));
+    let go_structs = fs::read_to_string(go_struct_path).unwrap();
     let expected_dir = fixture_dir().join("expected");
-    let expected_header = fs::read_to_string(expected_dir.join("wrapper.h")).unwrap();
-    let expected_source = fs::read_to_string(expected_dir.join("wrapper.cpp")).unwrap();
-    let expected_ir_yaml = fs::read_to_string(expected_dir.join("wrapper.ir.yaml")).unwrap();
+    let expected_header =
+        fs::read_to_string(expected_dir.join("is_aa_master_wrapper.h")).unwrap();
+    let expected_source =
+        fs::read_to_string(expected_dir.join("is_aa_master_wrapper.cpp")).unwrap();
+    let expected_ir_yaml =
+        fs::read_to_string(expected_dir.join("is_aa_master_wrapper.ir.yaml")).unwrap();
+    let expected_go_structs =
+        fs::read_to_string(expected_dir.join("is_aa_master_wrapper.go")).unwrap();
 
     assert!(header.contains("typedef struct IsAAMasterHandle IsAAMasterHandle;"));
     assert!(header.contains("IsAAMasterHandle* sil_IsAAMaster_new(void);"));
@@ -72,9 +80,13 @@ fn parses_and_generates_wrapper_for_isaamaster_fixture() {
     assert!(header.contains("void sil_IsAAMaster_SetDigit1_Num(IsAAMasterHandle* self, const char* sDigitNum);"));
     assert!(source.contains("return reinterpret_cast<IsAAMasterHandle*>(new IsAAMaster());"));
     assert!(source.contains("reinterpret_cast<IsAAMaster*>(self)->SetDigit1_Num(sDigitNum);"));
+    assert!(go_structs.contains("type IsAAMaster struct {"));
+    assert!(go_structs.contains("AAMasterID uint32"));
+    assert!(go_structs.contains("AADn string"));
     assert_eq!(header, expected_header);
     assert_eq!(source, expected_source);
     assert_eq!(ir_yaml, expected_ir_yaml);
+    assert_eq!(go_structs, expected_go_structs);
 }
 
 #[test]
@@ -90,7 +102,7 @@ fn generated_wrapper_compiles_and_runs_against_isaamaster_fixture() {
     fs::write(
         &smoke_cpp,
         r#"
-        #include "wrapper.h"
+        #include "is_aa_master_wrapper.h"
         #include <cstring>
 
         int main() {
