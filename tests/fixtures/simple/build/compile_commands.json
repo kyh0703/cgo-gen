@@ -1,0 +1,13 @@
+[
+  {
+    "directory": "tests/fixtures/simple",
+    "file": "include/foo.hpp",
+    "arguments": [
+      "clang++",
+      "-std=c++17",
+      "-x",
+      "c++",
+      "-Iinclude"
+    ]
+  }
+]

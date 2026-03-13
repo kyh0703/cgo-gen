@@ -1,0 +1,13 @@
+[
+  {
+    "directory": "tests/fixtures/filtering",
+    "file": "include/api.hpp",
+    "arguments": [
+      "clang++",
+      "-std=c++17",
+      "-x",
+      "c++",
+      "-Iinclude"
+    ]
+  }
+]

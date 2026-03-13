@@ -230,3 +230,4 @@ cargo test
 
 - `examples/simple-cpp`: 최소 C++ fixture
 - `examples/simple-go`: generated wrapper를 Go/cgo에서 빌드/실행하는 최소 예제
+- `examples/simple-go-struct`: generated Go struct(projection)를 import/use 하는 최소 예제
