@@ -7,7 +7,6 @@ input:
 
 output:
   dir: out
-  basename: is_aa_master_wrapper
 
 filter:
   classes: [IsAAMaster]

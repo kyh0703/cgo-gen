@@ -36,8 +36,6 @@ pub struct InputConfig {
 pub struct OutputConfig {
     #[serde(default = "default_output_dir")]
     pub dir: PathBuf,
-    #[serde(default)]
-    pub basename: Option<String>,
     #[serde(default = "default_header_name")]
     pub header: String,
     #[serde(default = "default_source_name")]
@@ -50,7 +48,6 @@ impl Default for OutputConfig {
     fn default() -> Self {
         Self {
             dir: default_output_dir(),
-            basename: None,
             header: default_header_name(),
             source: default_source_name(),
             ir: default_ir_name(),
@@ -190,6 +187,19 @@ impl Config {
         self.input.compile_commands.clone()
     }
 
+    pub fn uses_default_output_names(&self) -> bool {
+        self.output.header == default_header_name()
+            && self.output.source == default_source_name()
+            && self.output.ir == default_ir_name()
+    }
+
+    pub fn scoped_to_header(&self, header: PathBuf) -> Self {
+        let mut scoped = self.clone();
+        scoped.input.headers = vec![header];
+        scoped.apply_output_defaults();
+        scoped
+    }
+
     fn resolve_relative_paths(&mut self, config_path: &Path) -> Result<()> {
         let base_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
         for header in &mut self.input.headers {
@@ -211,7 +221,7 @@ impl Config {
         if self.output.dir.is_relative() {
             self.output.dir = base_dir.join(&self.output.dir);
         }
-        self.output.apply_basename();
+        self.apply_output_defaults();
         Ok(())
     }
 
@@ -219,33 +229,38 @@ impl Config {
         if self.input.headers.is_empty() {
             bail!("config.input.headers must not be empty");
         }
-        if let Some(basename) = &self.output.basename {
-            if basename.trim().is_empty() {
-                bail!("config.output.basename must not be empty");
-            }
-            if self.go_structs.len() > 1 {
-                bail!("config.output.basename currently supports at most one go_structs target");
-            }
-        }
         Ok(())
     }
-}
 
-impl OutputConfig {
-    fn apply_basename(&mut self) {
-        let Some(basename) = self.basename.as_ref() else {
-            return;
-        };
-        self.header = format!("{basename}.h");
-        self.source = format!("{basename}.cpp");
-        self.ir = format!("{basename}.ir.yaml");
+    pub fn go_filename(&self, _value: &str) -> String {
+        let stem = Path::new(&self.output.header)
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .filter(|stem| !stem.is_empty())
+            .unwrap_or("wrapper");
+        format!("{stem}.go")
     }
 
-    pub fn go_filename(&self, value: &str) -> String {
-        match self.basename.as_ref() {
-            Some(basename) => format!("{basename}.go"),
-            None => format!("{}_wrapper.go", to_snake_case(value)),
+    fn apply_output_defaults(&mut self) {
+        if !self.uses_default_output_names() {
+            return;
         }
+
+        let Some(basename) = self.infer_output_basename() else {
+            return;
+        };
+        self.output.header = format!("{basename}.h");
+        self.output.source = format!("{basename}.cpp");
+        self.output.ir = format!("{basename}.ir.yaml");
+    }
+
+    fn infer_output_basename(&self) -> Option<String> {
+        if self.input.headers.len() != 1 {
+            return None;
+        }
+        let header = self.input.headers.first()?;
+        let stem = header.file_stem()?.to_str()?;
+        Some(format!("{}_wrapper", to_snake_case(stem)))
     }
 }
 

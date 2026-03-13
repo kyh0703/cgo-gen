@@ -49,9 +49,7 @@ pub fn run() -> Result<()> {
     match cli.command {
         Command::Generate { config, dump_ir } => {
             let config = Config::load(config)?;
-            let parsed = parser::parse(&config)?;
-            let ir = ir::normalize(&config, &parsed)?;
-            generator::generate(&config, &ir, dump_ir)?;
+            generator::generate_all(&config, dump_ir)?;
         }
         Command::Ir {
             config,

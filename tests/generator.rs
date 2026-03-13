@@ -16,7 +16,7 @@ fn renders_header_and_source_from_fixture() {
     assert!(header.contains("char* cgowrap_foo_bar_name(const fooBarHandle* self);"));
 
     let source = render_source(&config, &ir);
-    assert!(source.contains("#include \"wrapper.h\""));
+    assert!(source.contains(&format!("#include \"{}\"", config.output.header)));
     assert!(source.contains("return reinterpret_cast<fooBarHandle*>(new foo::Bar(value));"));
     assert!(source.contains("delete reinterpret_cast<foo::Bar*>(self);"));
 }
