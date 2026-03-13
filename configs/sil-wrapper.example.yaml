@@ -3,7 +3,8 @@ version: 1
 # Edit these paths for your environment before running the command.
 input:
   headers:
-    - /absolute/path/to/src/IE/SIL/IsIEApi.h
+    - /absolute/path/to/src/IE/SIL/IsAAMaster.h
+    - /absolute/path/to/src/IE/SIL/IsAAUser.h
   clang_args:
     - -std=c++11
     - -x
@@ -20,17 +21,18 @@ input:
 
 output:
   dir: ./pkg/sil
-  header: sil_wrapper.h
-  source: sil_wrapper.cpp
-  ir: sil_wrapper.ir.yaml
 
 filter:
   classes:
-    - IsIEApiSession
-    - IsIEApiMonitor
+    - IsAAMaster
+    - IsAAUser
   methods:
-    - IsIEApiSession::*
-    - IsIEApiMonitor::*
+    - IsAAMaster::*
+    - IsAAUser::*
+
+go_structs:
+  - IsAAMaster
+  - IsAAUser
 
 naming:
   prefix: sil

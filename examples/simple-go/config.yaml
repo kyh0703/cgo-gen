@@ -1,0 +1,26 @@
+version: 1
+
+input:
+  headers:
+    - ../simple-cpp/include/foo.hpp
+  compile_commands: ../simple-cpp/build/compile_commands.json
+
+output:
+  dir: pkg/foo
+
+filter:
+  namespaces: [foo]
+  classes: [Bar]
+  functions: [add]
+
+naming:
+  prefix: cgowrap
+  style: snake_case
+
+policies:
+  string_mode: c_str
+  enum_mode: c_enum
+  unsupported:
+    templates: error
+    stl_containers: skip
+    exceptions: error
