@@ -1,11 +1,89 @@
-use std::{fs, path::Path};
+use std::{collections::BTreeSet, fs, path::Path};
 
 use anyhow::{Context, Result, bail};
 
 use crate::{
     config::Config,
     ir::{IrEnum, IrFunction, IrModule, IrType},
+    parser,
 };
+
+pub fn generate_all(config: &Config, write_ir: bool) -> Result<()> {
+    if config.input.headers.len() > 1 && !config.uses_default_output_names() {
+        bail!(
+            "multi-header generation does not support explicit output.header/source/ir overrides; leave them as defaults to emit one wrapper set per header"
+        );
+    }
+
+    if config.input.headers.len() <= 1 {
+        let scoped = config
+            .input
+            .headers
+            .first()
+            .cloned()
+            .map(|header| config.scoped_to_header(header))
+            .unwrap_or_else(|| config.clone());
+        let parsed = parser::parse(&scoped)?;
+        let ir = crate::ir::normalize(&scoped, &parsed)?;
+        return generate(&scoped, &ir, write_ir);
+    }
+
+    let mut matched_go_targets = BTreeSet::new();
+    for header in &config.input.headers {
+        let scoped = config.scoped_to_header(header.clone());
+        let parsed = parser::parse(&scoped)?;
+        let scoped = scoped_config_for_parsed_targets(&scoped, &parsed, Some(&mut matched_go_targets));
+        let ir = crate::ir::normalize(&scoped, &parsed)?;
+        generate(&scoped, &ir, write_ir)?;
+    }
+
+    let unmatched_targets = config
+        .go_structs
+        .iter()
+        .filter(|target| !matched_go_targets.contains(target.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !unmatched_targets.is_empty() {
+        bail!(
+            "go_structs targets did not match any parsed header output: {}",
+            unmatched_targets.join(", ")
+        );
+    }
+
+    Ok(())
+}
+
+fn scoped_config_for_parsed_targets(
+    config: &Config,
+    parsed: &parser::ParsedApi,
+    mut matched_go_targets: Option<&mut BTreeSet<String>>,
+) -> Config {
+    let mut scoped = config.clone();
+    let matched_targets = config
+        .go_structs
+        .iter()
+        .filter(|target| {
+            parsed.classes.iter().any(|class| {
+                let owner = if class.namespace.is_empty() {
+                    class.name.as_str().to_string()
+                } else {
+                    format!("{}::{}", class.namespace.join("::"), class.name)
+                };
+                go_struct_target_matches(target, &owner)
+            })
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+
+    if let Some(seen) = &mut matched_go_targets {
+        for target in &matched_targets {
+            seen.insert(target.clone());
+        }
+    }
+
+    scoped.go_structs = matched_targets;
+    scoped
+}
 
 pub fn generate(config: &Config, ir: &IrModule, write_ir: bool) -> Result<()> {
     fs::create_dir_all(&config.output.dir).with_context(|| {
@@ -124,23 +202,21 @@ pub fn render_go_structs(config: &Config, ir: &IrModule) -> Result<Vec<Generated
 
     let projections = build_go_structs(config, ir)?;
     let package_name = go_package_name(&config.output.dir);
-    let mut files = Vec::new();
+    let mut out = String::new();
+    out.push_str(&format!("package {}\n\n", package_name));
 
     for projection in projections {
-        let mut out = String::new();
-        out.push_str(&format!("package {}\n\n", package_name));
         out.push_str(&format!("type {} struct {{\n", projection.name));
         for field in projection.fields {
             out.push_str(&format!("    {} {}\n", field.name, field.ty));
         }
         out.push_str("}\n\n");
-        files.push(GeneratedGoFile {
-            filename: config.output.go_filename(&projection.name),
-            contents: out,
-        });
     }
 
-    Ok(files)
+    Ok(vec![GeneratedGoFile {
+        filename: config.go_filename(""),
+        contents: out,
+    }])
 }
 
 fn render_enum_decl(out: &mut String, item: &IrEnum) {

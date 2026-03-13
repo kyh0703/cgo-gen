@@ -42,9 +42,10 @@ fn generated_wrapper_compiles_and_runs_against_sample_cpp_library() {
     let smoke_cpp = config.output.dir.join("smoke.cpp");
     fs::write(
         &smoke_cpp,
-        r#"
-        #include "wrapper.h"
-        int main() {
+        format!(
+            r#"
+        #include "{}"
+        int main() {{
             fooBarHandle* bar = cgowrap_foo_bar_new(7);
             if (bar == nullptr) return 10;
             if (cgowrap_foo_add(1, 2) != 3) return 11;
@@ -56,8 +57,10 @@ fn generated_wrapper_compiles_and_runs_against_sample_cpp_library() {
             cgowrap_string_free(name);
             cgowrap_foo_bar_delete(bar);
             return 0;
-        }
+        }}
         "#,
+            config.output.header
+        ),
     )
     .unwrap();
 

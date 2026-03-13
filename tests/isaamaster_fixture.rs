@@ -62,7 +62,7 @@ fn parses_and_generates_wrapper_for_isaamaster_fixture() {
     let header = fs::read_to_string(config.output.dir.join(&config.output.header)).unwrap();
     let source = fs::read_to_string(config.output.dir.join(&config.output.source)).unwrap();
     let ir_yaml = fs::read_to_string(config.output.dir.join(&config.output.ir)).unwrap();
-    let go_struct_path = config.output.dir.join(config.output.go_filename("IsAAMaster"));
+    let go_struct_path = config.output.dir.join(config.go_filename("IsAAMaster"));
     let go_structs = fs::read_to_string(go_struct_path).unwrap();
     let expected_dir = fixture_dir().join("expected");
     let expected_header =
