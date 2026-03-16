@@ -8,11 +8,6 @@ input:
 output:
   dir: pkg/foo
 
-filter:
-  namespaces: [foo]
-  classes: [Bar]
-  functions: [add]
-
 naming:
   prefix: cgowrap
   style: snake_case

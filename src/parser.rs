@@ -9,10 +9,7 @@ use anyhow::{Result, anyhow, bail};
 use clang_sys::*;
 use serde::Serialize;
 
-use crate::{
-    compiler,
-    config::{Config, FilterConfig},
-};
+use crate::{compiler, config::Config};
 
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct ParsedApi {
@@ -37,6 +34,8 @@ pub struct CppFunction {
     pub namespace: Vec<String>,
     pub name: String,
     pub return_type: String,
+    pub return_canonical_type: String,
+    pub return_is_function_pointer: bool,
     pub params: Vec<CppParam>,
 }
 
@@ -44,6 +43,8 @@ pub struct CppFunction {
 pub struct CppMethod {
     pub name: String,
     pub return_type: String,
+    pub return_canonical_type: String,
+    pub return_is_function_pointer: bool,
     pub params: Vec<CppParam>,
     pub is_const: bool,
 }
@@ -57,6 +58,8 @@ pub struct CppConstructor {
 pub struct CppParam {
     pub name: String,
     pub ty: String,
+    pub canonical_ty: String,
+    pub is_function_pointer: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -114,7 +117,7 @@ pub fn parse(config: &Config) -> Result<ParsedApi> {
 
             let root = clang_getTranslationUnitCursor(translation_unit);
             for child in direct_children(root) {
-                collect_entity(child, &[], config, &mut api)?;
+                collect_entity(child, &[], &mut api)?;
             }
 
             let diagnostics = collect_diagnostics(translation_unit);
@@ -142,12 +145,7 @@ pub fn parse(config: &Config) -> Result<ParsedApi> {
     Ok(api)
 }
 
-fn collect_entity(
-    cursor: CXCursor,
-    namespace: &[String],
-    config: &Config,
-    api: &mut ParsedApi,
-) -> Result<()> {
+fn collect_entity(cursor: CXCursor, namespace: &[String], api: &mut ParsedApi) -> Result<()> {
     if !is_main_file(cursor) || is_system_header(cursor) {
         return Ok(());
     }
@@ -160,65 +158,32 @@ fn collect_entity(
             let mut next_namespace = namespace.to_vec();
             next_namespace.push(name);
             for child in direct_children(cursor) {
-                collect_entity(child, &next_namespace, config, api)?;
+                collect_entity(child, &next_namespace, api)?;
             }
         }
         CXCursor_ClassDecl | CXCursor_StructDecl => {
             if unsafe { clang_isCursorDefinition(cursor) } == 0 {
                 return Ok(());
             }
-            if let Some(name) = cursor_spelling(cursor) {
-                let qualified = qualified_name(namespace, &name);
-                if namespace_allowed(&config.filter, namespace)
-                    && named_allowed(
-                        &config.filter.classes,
-                        &config.filter.exclude_classes,
-                        &name,
-                        &qualified,
-                    )
+            if cursor_spelling(cursor).is_some() {
+                let parsed = parse_class(cursor, namespace.to_vec())?;
+                if parsed.has_declared_constructor
+                    || parsed.has_destructor
+                    || !parsed.methods.is_empty()
                 {
-                    let parsed = parse_class(cursor, namespace.to_vec(), &config.filter)?;
-                    if parsed.has_declared_constructor
-                        || parsed.has_destructor
-                        || !parsed.methods.is_empty()
-                    {
-                        api.classes.push(parsed);
-                    }
+                    api.classes.push(parsed);
                 }
             }
         }
         CXCursor_FunctionDecl => {
-            if let Some(name) = cursor_spelling(cursor) {
-                let qualified = qualified_name(namespace, &name);
-                if namespace_allowed(&config.filter, namespace)
-                    && named_allowed(
-                        &config.filter.functions,
-                        &config.filter.exclude_functions,
-                        &name,
-                        &qualified,
-                    )
-                {
-                    let parsed = parse_function(cursor, namespace.to_vec())?;
-                    if signature_types_allowed(&config.filter, &parsed.return_type, &parsed.params)
-                    {
-                        api.functions.push(parsed);
-                    }
-                }
+            if cursor_spelling(cursor).is_some() {
+                api.functions
+                    .push(parse_function(cursor, namespace.to_vec())?);
             }
         }
         CXCursor_EnumDecl => {
-            if let Some(name) = cursor_spelling(cursor) {
-                let qualified = qualified_name(namespace, &name);
-                if namespace_allowed(&config.filter, namespace)
-                    && named_allowed(
-                        &config.filter.enums,
-                        &config.filter.exclude_enums,
-                        &name,
-                        &qualified,
-                    )
-                {
-                    api.enums.push(parse_enum(cursor, namespace.to_vec()));
-                }
+            if cursor_spelling(cursor).is_some() {
+                api.enums.push(parse_enum(cursor, namespace.to_vec()));
             }
         }
         _ => {}
@@ -227,14 +192,9 @@ fn collect_entity(
     Ok(())
 }
 
-fn parse_class(
-    cursor: CXCursor,
-    namespace: Vec<String>,
-    filter: &FilterConfig,
-) -> Result<CppClass> {
+fn parse_class(cursor: CXCursor, namespace: Vec<String>) -> Result<CppClass> {
     let name = cursor_spelling(cursor)
         .ok_or_else(|| anyhow!("anonymous classes are unsupported in v1"))?;
-    let qualified_class = qualified_name(&namespace, &name);
     let is_struct = unsafe { clang_getCursorKind(cursor) == CXCursor_StructDecl };
     let mut methods = Vec::new();
     let mut constructors = Vec::new();
@@ -255,34 +215,20 @@ fn parse_class(
         match unsafe { clang_getCursorKind(child) } {
             CXCursor_Constructor => {
                 has_declared_constructor = true;
-                let constructor = CppConstructor {
+                constructors.push(CppConstructor {
                     params: parse_params(child),
-                };
-                if signature_types_allowed(filter, "void", &constructor.params) {
-                    constructors.push(constructor);
-                }
+                });
             }
             CXCursor_Destructor => has_destructor = true,
             CXCursor_CXXMethod => {
-                let method_name = cursor_spelling(child).unwrap_or_default();
-                let qualified_method = format!("{qualified_class}::{method_name}");
-                if !named_allowed(
-                    &filter.methods,
-                    &filter.exclude_methods,
-                    &method_name,
-                    &qualified_method,
-                ) {
-                    continue;
-                }
-                let method = CppMethod {
-                    name: method_name,
+                methods.push(CppMethod {
+                    name: cursor_spelling(child).unwrap_or_default(),
                     return_type: result_type_name(child),
+                    return_canonical_type: result_canonical_type_name(child),
+                    return_is_function_pointer: result_is_function_pointer(child),
                     params: parse_params(child),
                     is_const: unsafe { clang_CXXMethod_isConst(child) != 0 },
-                };
-                if signature_types_allowed(filter, &method.return_type, &method.params) {
-                    methods.push(method);
-                }
+                });
             }
             _ => {}
         }
@@ -304,6 +250,8 @@ fn parse_function(cursor: CXCursor, namespace: Vec<String>) -> Result<CppFunctio
         name: cursor_spelling(cursor)
             .ok_or_else(|| anyhow!("encountered unnamed function declaration"))?,
         return_type: result_type_name(cursor),
+        return_canonical_type: result_canonical_type_name(cursor),
+        return_is_function_pointer: result_is_function_pointer(cursor),
         params: parse_params(cursor),
     })
 }
@@ -336,6 +284,8 @@ fn parse_params(cursor: CXCursor) -> Vec<CppParam> {
         .map(|arg| CppParam {
             name: cursor_spelling(arg).unwrap_or_else(|| "arg".to_string()),
             ty: canonicalize_type_name(&cursor_type_spelling(arg)),
+            canonical_ty: canonicalize_type_name(&cursor_canonical_type_spelling(arg)),
+            is_function_pointer: cursor_is_function_pointer(arg),
         })
         .enumerate()
         .map(|(index, mut param)| {
@@ -351,12 +301,42 @@ fn result_type_name(cursor: CXCursor) -> String {
     canonicalize_type_name(&unsafe { type_spelling(clang_getCursorResultType(cursor)) })
 }
 
+fn result_canonical_type_name(cursor: CXCursor) -> String {
+    canonicalize_type_name(&unsafe {
+        type_spelling(clang_getCanonicalType(clang_getCursorResultType(cursor)))
+    })
+}
+
+fn result_is_function_pointer(cursor: CXCursor) -> bool {
+    is_function_pointer_type(unsafe { clang_getCursorResultType(cursor) })
+}
+
 fn cursor_type_spelling(cursor: CXCursor) -> String {
     unsafe { type_spelling(clang_getCursorType(cursor)) }
 }
 
+fn cursor_canonical_type_spelling(cursor: CXCursor) -> String {
+    unsafe { type_spelling(clang_getCanonicalType(clang_getCursorType(cursor))) }
+}
+
+fn cursor_is_function_pointer(cursor: CXCursor) -> bool {
+    is_function_pointer_type(unsafe { clang_getCursorType(cursor) })
+}
+
 unsafe fn type_spelling(ty: CXType) -> String {
     unsafe { cxstring_to_string(clang_getTypeSpelling(ty)) }
+}
+
+fn is_function_pointer_type(ty: CXType) -> bool {
+    let canonical = unsafe { clang_getCanonicalType(ty) };
+    match canonical.kind {
+        CXType_FunctionProto | CXType_FunctionNoProto => true,
+        CXType_Pointer => {
+            let pointee = unsafe { clang_getPointeeType(canonical) };
+            matches!(pointee.kind, CXType_FunctionProto | CXType_FunctionNoProto)
+        }
+        _ => false,
+    }
 }
 
 fn direct_children(cursor: CXCursor) -> Vec<CXCursor> {
@@ -429,93 +409,6 @@ unsafe fn cxstring_to_string(raw: CXString) -> String {
     };
     unsafe { clang_disposeString(raw) };
     owned
-}
-
-fn qualified_name(namespace: &[String], name: &str) -> String {
-    if namespace.is_empty() {
-        name.to_string()
-    } else {
-        format!("{}::{name}", namespace.join("::"))
-    }
-}
-
-fn namespace_allowed(filter: &FilterConfig, namespace: &[String]) -> bool {
-    let qualified = namespace.join("::");
-    let simple = namespace.last().cloned().unwrap_or_default();
-    named_allowed(
-        &filter.namespaces,
-        &filter.exclude_namespaces,
-        &simple,
-        &qualified,
-    )
-}
-
-fn named_allowed(includes: &[String], excludes: &[String], simple: &str, qualified: &str) -> bool {
-    let included = includes.is_empty()
-        || includes
-            .iter()
-            .any(|item| selector_matches(item, simple, qualified));
-    let excluded = excludes
-        .iter()
-        .any(|item| selector_matches(item, simple, qualified));
-    included && !excluded
-}
-
-fn signature_types_allowed(filter: &FilterConfig, return_type: &str, params: &[CppParam]) -> bool {
-    let mut referenced_types = Vec::new();
-    if return_type != "void" {
-        referenced_types.push(canonicalize_type_name(return_type));
-    }
-    referenced_types.extend(params.iter().map(|param| canonicalize_type_name(&param.ty)));
-
-    if !filter.exclude_types.is_empty()
-        && referenced_types.iter().any(|ty| {
-            filter
-                .exclude_types
-                .iter()
-                .any(|selector| type_selector_matches(selector, ty))
-        })
-    {
-        return false;
-    }
-
-    filter.types.is_empty()
-        || referenced_types.iter().any(|ty| {
-            filter
-                .types
-                .iter()
-                .any(|selector| type_selector_matches(selector, ty))
-        })
-}
-
-fn selector_matches(selector: &str, simple: &str, qualified: &str) -> bool {
-    let selector = selector.trim();
-    if selector.is_empty() {
-        return false;
-    }
-    if let Some(prefix) = selector.strip_suffix("::*") {
-        return qualified == prefix || qualified.starts_with(&format!("{prefix}::"));
-    }
-    selector == simple || selector == qualified
-}
-
-fn type_selector_matches(selector: &str, ty: &str) -> bool {
-    let selector = canonicalize_type_name(selector);
-    let ty = canonicalize_type_name(ty);
-    if let Some(prefix) = selector.strip_suffix("::*") {
-        return ty == prefix || ty.starts_with(&format!("{prefix}::"));
-    }
-
-    selector == ty || base_type_name(&selector) == base_type_name(&ty)
-}
-
-fn base_type_name(value: &str) -> String {
-    value
-        .trim_start_matches("const ")
-        .trim_end_matches('&')
-        .trim_end_matches('*')
-        .trim()
-        .to_string()
 }
 
 fn canonicalize_type_name(value: &str) -> String {

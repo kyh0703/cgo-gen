@@ -11,12 +11,6 @@ output:
   source: wrapper.cpp
   ir: wrapper.ir.yaml
 
-filter:
-  namespaces: [foo]
-  classes: [Bar]
-  functions: [add]
-  enums: [Mode]
-
 naming:
   prefix: cgowrap
   style: snake_case

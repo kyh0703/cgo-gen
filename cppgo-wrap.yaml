@@ -8,9 +8,6 @@ output:
   header: wrapper.h
   source: wrapper.cpp
   ir: wrapper.ir.yaml
-filter:
-  namespaces:
-    - foo
 naming:
   prefix: cgowrap
   style: snake_case
