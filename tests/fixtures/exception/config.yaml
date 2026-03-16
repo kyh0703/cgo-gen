@@ -11,11 +11,6 @@ output:
   source: wrapper.cpp
   ir: wrapper.ir.yaml
 
-filter:
-  namespaces: [boom]
-  classes: [Worker]
-  functions: [fail_if]
-
 naming:
   prefix: cgowrap
   style: snake_case

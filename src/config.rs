@@ -14,13 +14,34 @@ pub struct Config {
     #[serde(default)]
     pub output: OutputConfig,
     #[serde(default)]
-    pub filter: FilterConfig,
-    #[serde(default)]
-    pub go_structs: Vec<String>,
+    pub files: FileRoleConfig,
     #[serde(default)]
     pub naming: NamingConfig,
     #[serde(default)]
     pub policies: PolicyConfig,
+    #[serde(skip)]
+    pub known_model_types: Vec<String>,
+    #[serde(skip)]
+    pub known_model_projections: Vec<KnownModelProjection>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct KnownModelProjection {
+    pub cpp_type: String,
+    pub handle_name: String,
+    pub go_name: String,
+    pub output_header: String,
+    pub constructor_symbol: String,
+    pub destructor_symbol: Option<String>,
+    pub fields: Vec<KnownModelField>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct KnownModelField {
+    pub go_name: String,
+    pub go_type: String,
+    pub getter_symbol: String,
+    pub return_kind: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -30,6 +51,21 @@ pub struct InputConfig {
     pub compile_commands: Option<PathBuf>,
     #[serde(default)]
     pub clang_args: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FileRoleConfig {
+    #[serde(default)]
+    pub model: Vec<PathBuf>,
+    #[serde(default)]
+    pub facade: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeaderRole {
+    Model,
+    Facade,
+    Unclassified,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,34 +89,6 @@ impl Default for OutputConfig {
             ir: default_ir_name(),
         }
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct FilterConfig {
-    #[serde(default)]
-    pub namespaces: Vec<String>,
-    #[serde(default)]
-    pub exclude_namespaces: Vec<String>,
-    #[serde(default)]
-    pub classes: Vec<String>,
-    #[serde(default)]
-    pub exclude_classes: Vec<String>,
-    #[serde(default)]
-    pub functions: Vec<String>,
-    #[serde(default)]
-    pub exclude_functions: Vec<String>,
-    #[serde(default)]
-    pub methods: Vec<String>,
-    #[serde(default)]
-    pub exclude_methods: Vec<String>,
-    #[serde(default)]
-    pub enums: Vec<String>,
-    #[serde(default)]
-    pub exclude_enums: Vec<String>,
-    #[serde(default)]
-    pub types: Vec<String>,
-    #[serde(default)]
-    pub exclude_types: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -218,6 +226,22 @@ impl Config {
                 *compdb = canonical;
             }
         }
+        for header in &mut self.files.model {
+            if header.is_relative() {
+                *header = base_dir.join(&*header);
+            }
+            if let Ok(canonical) = header.canonicalize() {
+                *header = canonical;
+            }
+        }
+        for header in &mut self.files.facade {
+            if header.is_relative() {
+                *header = base_dir.join(&*header);
+            }
+            if let Ok(canonical) = header.canonicalize() {
+                *header = canonical;
+            }
+        }
         if self.output.dir.is_relative() {
             self.output.dir = base_dir.join(&self.output.dir);
         }
@@ -228,6 +252,38 @@ impl Config {
     fn validate(&self) -> Result<()> {
         if self.input.headers.is_empty() {
             bail!("config.input.headers must not be empty");
+        }
+        for header in &self.files.model {
+            if !self
+                .input
+                .headers
+                .iter()
+                .any(|candidate| candidate == header)
+            {
+                bail!(
+                    "files.model entry must also appear in input.headers: {}",
+                    header.display()
+                );
+            }
+        }
+        for header in &self.files.facade {
+            if !self
+                .input
+                .headers
+                .iter()
+                .any(|candidate| candidate == header)
+            {
+                bail!(
+                    "files.facade entry must also appear in input.headers: {}",
+                    header.display()
+                );
+            }
+            if self.files.model.iter().any(|candidate| candidate == header) {
+                bail!(
+                    "header cannot be classified as both model and facade: {}",
+                    header.display()
+                );
+            }
         }
         Ok(())
     }
@@ -262,6 +318,64 @@ impl Config {
         let stem = header.file_stem()?.to_str()?;
         Some(format!("{}_wrapper", to_snake_case(stem)))
     }
+
+    pub fn header_role(&self, header: &Path) -> HeaderRole {
+        if self.files.model.iter().any(|candidate| candidate == header) {
+            HeaderRole::Model
+        } else if self
+            .files
+            .facade
+            .iter()
+            .any(|candidate| candidate == header)
+        {
+            HeaderRole::Facade
+        } else {
+            HeaderRole::Unclassified
+        }
+    }
+
+    pub fn with_known_model_types(mut self, known_model_types: Vec<String>) -> Self {
+        self.known_model_types = known_model_types;
+        self
+    }
+
+    pub fn with_known_model_projections(
+        mut self,
+        known_model_projections: Vec<KnownModelProjection>,
+    ) -> Self {
+        self.known_model_projections = known_model_projections;
+        self
+    }
+
+    pub fn is_known_model_type(&self, cpp_type: &str) -> bool {
+        let base = base_cpp_type_name(cpp_type);
+        self.known_model_types.iter().any(|candidate| {
+            let normalized = base_cpp_type_name(candidate);
+            normalized == base
+                || normalized.rsplit("::").next().unwrap_or(&normalized) == base
+                || base.rsplit("::").next().unwrap_or(&base) == normalized
+        })
+    }
+
+    pub fn known_model_projection(&self, cpp_type: &str) -> Option<&KnownModelProjection> {
+        let base = base_cpp_type_name(cpp_type);
+        self.known_model_projections.iter().find(|projection| {
+            let normalized = base_cpp_type_name(&projection.cpp_type);
+            normalized == base
+                || normalized.rsplit("::").next().unwrap_or(&normalized) == base
+                || base.rsplit("::").next().unwrap_or(&base) == normalized
+        })
+    }
+}
+
+fn base_cpp_type_name(value: &str) -> String {
+    value
+        .trim()
+        .trim_start_matches("const ")
+        .trim_end_matches('&')
+        .trim_end_matches('*')
+        .trim()
+        .to_string()
 }
 
 fn to_snake_case(value: &str) -> String {

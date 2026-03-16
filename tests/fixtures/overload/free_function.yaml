@@ -11,10 +11,6 @@ output:
   source: wrapper.cpp
   ir: wrapper.ir.yaml
 
-filter:
-  namespaces: [clash]
-  functions: [add]
-
 naming:
   prefix: cgowrap
   style: snake_case

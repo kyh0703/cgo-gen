@@ -11,11 +11,9 @@ Top-level sections:
 - `output.header`
 - `output.source`
 - `output.ir`
-- `filter.*`
+- `files.model`
+- `files.facade`
 - `naming.*`
 - `policies.*`
-
-Filter fields support simple names, fully qualified names, and `::*` wildcard prefixes.
-Include and exclude lists are available for namespaces, classes, functions, methods, enums, and signature types.
 
 Relative paths are resolved from the config file location.

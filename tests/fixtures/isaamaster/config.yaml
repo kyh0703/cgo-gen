@@ -8,11 +8,9 @@ input:
 output:
   dir: out
 
-filter:
-  classes: [IsAAMaster]
-  methods: [IsAAMaster::*]
-
-go_structs: [IsAAMaster]
+files:
+  model:
+    - include/IsAAMaster.h
 
 naming:
   prefix: sil

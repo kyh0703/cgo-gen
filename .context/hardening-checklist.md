@@ -2,7 +2,7 @@
 
 ## Must fix before wider adoption
 
-- [x] Prevent false default-constructor generation when a class declares constructors but all supported constructors were filtered out or rejected.
+- [x] Prevent false default-constructor generation when a class declares constructors but wrapper generation cannot safely synthesize a default constructor.
 - [x] Add overload collision detection or deterministic overload-safe symbol naming.
 - [ ] Catch C++ exceptions at every exported C ABI boundary and convert to an explicit failure policy.
 
@@ -14,7 +14,6 @@
 
 ## Good follow-up improvements
 
-- [ ] Document exact filter semantics, especially `types` matching rules.
 - [ ] Add unsupported-feature diagnostics for templates, overloaded methods, and exception-bearing APIs.
 - [ ] Add more compile-and-run smoke tests across multiple fixture shapes.
 - [ ] Upgrade overload handling from collision detection to deterministic overload-safe wrapper naming.

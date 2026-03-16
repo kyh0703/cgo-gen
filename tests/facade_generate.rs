@@ -1,0 +1,231 @@
+use std::{env, fs};
+
+use c_go::{config::Config, generator, ir, parser};
+
+fn temp_output_dir(label: &str) -> std::path::PathBuf {
+    let mut path = env::temp_dir();
+    path.push(format!("c_go_facade_test_{}_{}", label, std::process::id()));
+    let _ = fs::remove_dir_all(&path);
+    fs::create_dir_all(&path).unwrap();
+    path
+}
+
+#[test]
+fn generates_go_facade_for_simple_free_function_header() {
+    let mut config = Config::load("tests/fixtures/simple/config.yaml").unwrap();
+    let facade_header = config.input.headers[0].clone();
+    config.output.dir = temp_output_dir("generate");
+    config.files.facade = vec![facade_header];
+
+    let parsed = parser::parse(&config).unwrap();
+    let ir = ir::normalize(&config, &parsed).unwrap();
+    generator::generate(&config, &ir, true).unwrap();
+
+    let go_facade = fs::read_to_string(config.output.dir.join(config.go_filename(""))).unwrap();
+
+    assert!(go_facade.contains("import \"C\""));
+    assert!(go_facade.contains(&format!("#include \"{}\"", config.output.header)));
+    assert!(go_facade.contains("func Add(lhs int, rhs int) int {"));
+    assert!(go_facade.contains("C.cgowrap_foo_add(C.int(lhs), C.int(rhs))"));
+}
+
+#[test]
+fn generates_go_facade_for_bool_and_string_returns() {
+    let root = temp_output_dir("bool-string");
+    let include_dir = root.join("include");
+    fs::create_dir_all(&include_dir).unwrap();
+
+    let header_path = include_dir.join("Api.hpp");
+    fs::write(
+        &header_path,
+        r#"
+        #pragma once
+        #include <string>
+
+        bool is_ready();
+        std::string version();
+        const char* banner();
+        "#,
+    )
+    .unwrap();
+
+    let config_path = root.join("cppgo-wrap.yaml");
+    fs::write(
+        &config_path,
+        r#"
+version: 1
+input:
+  headers:
+    - include/Api.hpp
+files:
+  facade:
+    - include/Api.hpp
+output:
+  dir: out
+naming:
+  prefix: cgowrap
+  style: preserve
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(&config_path).unwrap();
+    let parsed = parser::parse(&config).unwrap();
+    let ir = ir::normalize(&config, &parsed).unwrap();
+    generator::generate(&config, &ir, true).unwrap();
+
+    let go_facade = fs::read_to_string(config.output.dir.join(config.go_filename(""))).unwrap();
+
+    assert!(go_facade.contains("import \"errors\""));
+    assert!(go_facade.contains("func IsReady() bool {"));
+    assert!(go_facade.contains("return bool(C.cgowrap_is_ready())"));
+    assert!(go_facade.contains("func Version() (string, error) {"));
+    assert!(go_facade.contains("raw := C.cgowrap_version()"));
+    assert!(go_facade.contains("defer C.cgowrap_string_free(raw)"));
+    assert!(go_facade.contains("return C.GoString(raw), nil"));
+    assert!(go_facade.contains("func Banner() (string, error) {"));
+    assert!(go_facade.contains("raw := C.cgowrap_banner()"));
+    let banner_section = go_facade
+        .split("func Banner() (string, error) {")
+        .nth(1)
+        .unwrap();
+    let banner_body = banner_section.split("}\n").next().unwrap();
+    assert!(!banner_body.contains("string_free"));
+}
+
+#[test]
+fn rejects_namespaced_facade_functions_that_collide_in_go_exports() {
+    let root = temp_output_dir("namespace-collision");
+    let include_dir = root.join("include");
+    fs::create_dir_all(&include_dir).unwrap();
+
+    let header_path = include_dir.join("Api.hpp");
+    fs::write(
+        &header_path,
+        r#"
+        #pragma once
+
+        namespace alpha { int init(); }
+        namespace beta { int init(); }
+        "#,
+    )
+    .unwrap();
+
+    let config_path = root.join("cppgo-wrap.yaml");
+    fs::write(
+        &config_path,
+        r#"
+version: 1
+input:
+  headers:
+    - include/Api.hpp
+files:
+  facade:
+    - include/Api.hpp
+output:
+  dir: out
+naming:
+  prefix: cgowrap
+  style: preserve
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(&config_path).unwrap();
+    let parsed = parser::parse(&config).unwrap();
+    let ir = ir::normalize(&config, &parsed).unwrap();
+    let error = generator::generate(&config, &ir, true)
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("facade export collision"));
+}
+
+#[test]
+fn lifts_known_model_out_param_methods_into_model_returning_facade_methods() {
+    let root = temp_output_dir("model-method");
+    let include_dir = root.join("include");
+    fs::create_dir_all(&include_dir).unwrap();
+
+    fs::write(
+        include_dir.join("ThingModel.hpp"),
+        r#"
+        class ThingModel {
+        public:
+            ThingModel() = default;
+            ~ThingModel() = default;
+            int GetValue() const;
+            void SetValue(int value);
+        };
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        include_dir.join("Api.hpp"),
+        r#"
+        #include "ThingModel.hpp"
+
+        class Api {
+        public:
+            Api() = default;
+            ~Api() = default;
+            bool IsReady() const;
+            int Clear();
+            bool GetThing(int id, ThingModel& out);
+            bool GetThingByKey(const char* key, ThingModel* out);
+        };
+        "#,
+    )
+    .unwrap();
+
+    let config_path = root.join("cppgo-wrap.yaml");
+    fs::write(
+        &config_path,
+        r#"
+version: 1
+input:
+  headers:
+    - include/ThingModel.hpp
+    - include/Api.hpp
+files:
+  model:
+    - include/ThingModel.hpp
+  facade:
+    - include/Api.hpp
+output:
+  dir: out
+naming:
+  prefix: cgowrap
+  style: preserve
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(&config_path).unwrap();
+    generator::generate_all(&config, true).unwrap();
+
+    let go_facade = fs::read_to_string(root.join("out/api_wrapper.go")).unwrap();
+
+    assert!(go_facade.contains("type Api struct {"));
+    assert!(go_facade.contains("ptr *C.ApiHandle"));
+    assert!(go_facade.contains("func NewApi() (*Api, error) {"));
+    assert!(go_facade.contains("C.cgowrap_Api_new()"));
+    assert!(go_facade.contains("func (a *Api) Close() {"));
+    assert!(go_facade.contains("C.cgowrap_Api_delete(a.ptr)"));
+    assert!(go_facade.contains("func (a *Api) IsReady() bool {"));
+    assert!(go_facade.contains("return bool(C.cgowrap_Api_IsReady(a.ptr))"));
+    assert!(go_facade.contains("func (a *Api) Clear() int {"));
+    assert!(go_facade.contains("return int(C.cgowrap_Api_Clear(a.ptr))"));
+    assert!(go_facade.contains("func (a *Api) GetThing(id int) (ThingModel, error) {"));
+    assert!(go_facade.contains("out := C.cgowrap_ThingModel_new()"));
+    assert!(go_facade.contains("C.cgowrap_Api_GetThing(a.ptr, C.int(id), out)"));
+    assert!(go_facade.contains("return mapThingModelFromHandle(out), nil"));
+    assert!(go_facade.contains("func (a *Api) GetThingByKey(key string) (ThingModel, error) {"));
+    assert!(go_facade.contains("cArg0 := C.CString(key)"));
+    assert!(go_facade.contains("defer C.free(unsafe.Pointer(cArg0))"));
+    assert!(go_facade.contains("C.cgowrap_Api_GetThingByKey(a.ptr, cArg0, out)"));
+    assert!(
+        go_facade.contains("func mapThingModelFromHandle(handle *C.ThingModelHandle) ThingModel {")
+    );
+    assert!(go_facade.contains("model.Value = int(C.cgowrap_ThingModel_GetValue(handle))"));
+}

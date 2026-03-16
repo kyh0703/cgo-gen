@@ -22,17 +22,11 @@ input:
 output:
   dir: ./pkg/sil
 
-filter:
-  classes:
-    - IsAAMaster
-    - IsAAUser
-  methods:
-    - IsAAMaster::*
-    - IsAAUser::*
-
-go_structs:
-  - IsAAMaster
-  - IsAAUser
+files:
+  model:
+    - /absolute/path/to/src/IE/SIL/IsAAMaster.h
+  facade:
+    - /absolute/path/to/src/IE/SIL/IsAAUser.h
 
 naming:
   prefix: sil

@@ -56,7 +56,7 @@ pub fn run() -> Result<()> {
             output,
             format,
         } => {
-            let config = Config::load(config)?;
+            let config = generator::prepare_config(&Config::load(config)?)?;
             let parsed = parser::parse(&config)?;
             let ir = ir::normalize(&config, &parsed)?;
             match (output, format) {
@@ -69,7 +69,7 @@ pub fn run() -> Result<()> {
             }
         }
         Command::Check { config } => {
-            let config = Config::load(config)?;
+            let config = generator::prepare_config(&Config::load(config)?)?;
             let parsed = parser::parse(&config)?;
             let ir = ir::normalize(&config, &parsed)?;
             println!(

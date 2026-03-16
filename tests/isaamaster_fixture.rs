@@ -5,6 +5,7 @@ use std::{
 };
 
 use c_go::{config::Config, generator, ir, parser};
+use serde_yaml::Value;
 
 fn temp_output_dir(label: &str) -> PathBuf {
     let mut path = env::temp_dir();
@@ -30,6 +31,27 @@ fn project_root() -> PathBuf {
 
 fn fixture_dir() -> PathBuf {
     project_root().join("tests/fixtures/isaamaster")
+}
+
+fn normalize_ir_yaml_sources(yaml: &str) -> Value {
+    let mut value: Value = serde_yaml::from_str(yaml).unwrap();
+    if let Some(headers) = value
+        .get_mut("source_headers")
+        .and_then(Value::as_sequence_mut)
+    {
+        for header in headers {
+            if let Some(path) = header.as_str() {
+                *header = Value::String(
+                    Path::new(path)
+                        .file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned(),
+                );
+            }
+        }
+    }
+    value
 }
 
 #[test]
@@ -65,8 +87,7 @@ fn parses_and_generates_wrapper_for_isaamaster_fixture() {
     let go_struct_path = config.output.dir.join(config.go_filename("IsAAMaster"));
     let go_structs = fs::read_to_string(go_struct_path).unwrap();
     let expected_dir = fixture_dir().join("expected");
-    let expected_header =
-        fs::read_to_string(expected_dir.join("is_aa_master_wrapper.h")).unwrap();
+    let expected_header = fs::read_to_string(expected_dir.join("is_aa_master_wrapper.h")).unwrap();
     let expected_source =
         fs::read_to_string(expected_dir.join("is_aa_master_wrapper.cpp")).unwrap();
     let expected_ir_yaml =
@@ -77,7 +98,9 @@ fn parses_and_generates_wrapper_for_isaamaster_fixture() {
     assert!(header.contains("typedef struct IsAAMasterHandle IsAAMasterHandle;"));
     assert!(header.contains("IsAAMasterHandle* sil_IsAAMaster_new(void);"));
     assert!(header.contains("const char* sil_IsAAMaster_GetAADn(IsAAMasterHandle* self);"));
-    assert!(header.contains("void sil_IsAAMaster_SetDigit1_Num(IsAAMasterHandle* self, const char* sDigitNum);"));
+    assert!(header.contains(
+        "void sil_IsAAMaster_SetDigit1_Num(IsAAMasterHandle* self, const char* sDigitNum);"
+    ));
     assert!(source.contains("return reinterpret_cast<IsAAMasterHandle*>(new IsAAMaster());"));
     assert!(source.contains("reinterpret_cast<IsAAMaster*>(self)->SetDigit1_Num(sDigitNum);"));
     assert!(go_structs.contains("type IsAAMaster struct {"));
@@ -85,7 +108,10 @@ fn parses_and_generates_wrapper_for_isaamaster_fixture() {
     assert!(go_structs.contains("AADn string"));
     assert_eq!(header, expected_header);
     assert_eq!(source, expected_source);
-    assert_eq!(ir_yaml, expected_ir_yaml);
+    assert_eq!(
+        normalize_ir_yaml_sources(&ir_yaml),
+        normalize_ir_yaml_sources(&expected_ir_yaml)
+    );
     assert_eq!(go_structs, expected_go_structs);
 }
 
@@ -152,4 +178,24 @@ fn generated_wrapper_compiles_and_runs_against_isaamaster_fixture() {
 
     let status = Command::new(&binary).status().unwrap();
     assert!(status.success(), "generated smoke binary failed: {status}");
+}
+
+#[test]
+fn model_classification_auto_projects_isaamaster_without_go_structs() {
+    let mut config = Config::load("tests/fixtures/isaamaster/config.yaml").unwrap();
+    let model_header = config.input.headers[0].clone();
+    config.output.dir = temp_output_dir("model-auto");
+    config.files.model = vec![model_header];
+
+    let parsed = parser::parse(&config).unwrap();
+    let ir = ir::normalize(&config, &parsed).unwrap();
+    generator::generate(&config, &ir, true).unwrap();
+
+    let go_struct_path = config.output.dir.join(config.go_filename("IsAAMaster"));
+    let go_structs = fs::read_to_string(go_struct_path).unwrap();
+
+    assert!(go_structs.contains("type IsAAMaster struct {"));
+    assert!(go_structs.contains("AAMasterID uint32"));
+    assert!(go_structs.contains("AADn string"));
+    assert!(go_structs.contains("Digit1Act uint16"));
 }
