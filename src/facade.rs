@@ -12,19 +12,25 @@ use crate::{
 };
 
 #[derive(Debug)]
-struct FacadeClass<'a> {
+struct AnalyzedFacadeClass<'a> {
     go_name: String,
     handle_name: String,
     constructor: &'a IrFunction,
     destructor: &'a IrFunction,
     general_methods: Vec<&'a IrFunction>,
-    lifted_methods: Vec<LiftedMethod<'a>>,
+    model_mapped_methods: Vec<ModelMappedMethod<'a>>,
 }
 
 #[derive(Debug)]
-struct LiftedMethod<'a> {
+struct ModelMappedMethod<'a> {
     function: &'a IrFunction,
     model: KnownModelProjection,
+}
+
+#[derive(Debug)]
+enum AnalyzedMethod<'a> {
+    GeneralApi(&'a IrFunction),
+    ModelMapped(ModelMappedMethod<'a>),
 }
 
 pub fn render_go_facade(config: &Config, ir: &IrModule) -> Result<Vec<GeneratedGoFile>> {
@@ -58,7 +64,10 @@ pub fn render_go_facade(config: &Config, ir: &IrModule) -> Result<Vec<GeneratedG
     }])
 }
 
-fn collect_facade_classes<'a>(config: &Config, ir: &'a IrModule) -> Result<Vec<FacadeClass<'a>>> {
+fn collect_facade_classes<'a>(
+    config: &Config,
+    ir: &'a IrModule,
+) -> Result<Vec<AnalyzedFacadeClass<'a>>> {
     let mut methods_by_owner = BTreeMap::<&str, Vec<&IrFunction>>::new();
     for function in ir
         .functions
@@ -96,30 +105,17 @@ fn collect_facade_classes<'a>(config: &Config, ir: &'a IrModule) -> Result<Vec<F
 
     let mut classes = Vec::new();
     for (owner, methods) in methods_by_owner {
-        let lifted_methods = methods
-            .iter()
-            .copied()
-            .filter_map(|function| {
-                let model_param = model_out_param(function)?;
-                let model = config
-                    .known_model_projection(&model_param.cpp_type)?
-                    .clone();
-                if !liftable_method_supported(function)
-                    || model.constructor_symbol.is_empty()
-                    || model.destructor_symbol.is_none()
-                {
-                    return None;
-                }
-                Some(LiftedMethod { function, model })
-            })
-            .collect::<Vec<_>>();
-        let general_methods = methods
-            .iter()
-            .copied()
-            .filter(|function| general_method_supported(function))
-            .collect::<Vec<_>>();
+        let mut general_methods = Vec::new();
+        let mut model_mapped_methods = Vec::new();
+        for function in methods {
+            match classify_facade_method(config, function) {
+                Some(AnalyzedMethod::GeneralApi(function)) => general_methods.push(function),
+                Some(AnalyzedMethod::ModelMapped(method)) => model_mapped_methods.push(method),
+                None => {}
+            }
+        }
 
-        if lifted_methods.is_empty() && general_methods.is_empty() {
+        if model_mapped_methods.is_empty() && general_methods.is_empty() {
             continue;
         }
 
@@ -137,13 +133,13 @@ fn collect_facade_classes<'a>(config: &Config, ir: &'a IrModule) -> Result<Vec<F
             bail!("facade class `{owner}` has renderable methods but no destructor wrapper");
         };
 
-        classes.push(FacadeClass {
+        classes.push(AnalyzedFacadeClass {
             go_name: leaf_cpp_name(owner).to_string(),
             handle_name: format!("{}Handle", flatten_qualified_cpp_name(owner)),
             constructor,
             destructor,
             general_methods,
-            lifted_methods,
+            model_mapped_methods,
         });
     }
 
@@ -153,7 +149,7 @@ fn collect_facade_classes<'a>(config: &Config, ir: &'a IrModule) -> Result<Vec<F
 fn render_go_facade_file(
     config: &Config,
     functions: &[&IrFunction],
-    classes: &[FacadeClass<'_>],
+    classes: &[AnalyzedFacadeClass<'_>],
 ) -> String {
     let package_name = go_package_name(&config.output.dir);
     let includes = collect_include_headers(config, classes);
@@ -170,7 +166,7 @@ fn render_go_facade_file(
                     .general_methods
                     .iter()
                     .any(|function| has_string_params(function.params.iter().skip(1)))
-                || class.lifted_methods.iter().any(|method| {
+                || class.model_mapped_methods.iter().any(|method| {
                     has_string_params(
                         method
                             .function
@@ -217,11 +213,11 @@ fn render_go_facade_file(
         out.push_str(&render_facade_close(class));
         out.push('\n');
         for method in &class.general_methods {
-            out.push_str(&render_general_method(config, class, method));
+            out.push_str(&render_general_api_method(config, class, method));
             out.push('\n');
         }
-        for method in &class.lifted_methods {
-            out.push_str(&render_lifted_method(class, method));
+        for method in &class.model_mapped_methods {
+            out.push_str(&render_model_mapped_method(class, method));
             out.push('\n');
         }
     }
@@ -229,7 +225,7 @@ fn render_go_facade_file(
     out
 }
 
-fn collect_include_headers(config: &Config, classes: &[FacadeClass<'_>]) -> Vec<String> {
+fn collect_include_headers(config: &Config, classes: &[AnalyzedFacadeClass<'_>]) -> Vec<String> {
     let mut includes = BTreeSet::from([config.output.header.clone()]);
     for projection in collect_used_models(classes) {
         includes.insert(projection.output_header.clone());
@@ -237,10 +233,10 @@ fn collect_include_headers(config: &Config, classes: &[FacadeClass<'_>]) -> Vec<
     includes.into_iter().collect()
 }
 
-fn collect_used_models(classes: &[FacadeClass<'_>]) -> Vec<KnownModelProjection> {
+fn collect_used_models(classes: &[AnalyzedFacadeClass<'_>]) -> Vec<KnownModelProjection> {
     let mut models = BTreeMap::<String, KnownModelProjection>::new();
     for class in classes {
-        for method in &class.lifted_methods {
+        for method in &class.model_mapped_methods {
             models
                 .entry(method.model.cpp_type.clone())
                 .or_insert_with(|| method.model.clone());
@@ -300,14 +296,14 @@ fn render_model_mapper(config: &Config, projection: &KnownModelProjection) -> St
     out
 }
 
-fn render_facade_class(class: &FacadeClass<'_>) -> String {
+fn render_facade_class(class: &AnalyzedFacadeClass<'_>) -> String {
     format!(
         "type {} struct {{\n    ptr *C.{}\n}}\n",
         class.go_name, class.handle_name
     )
 }
 
-fn render_facade_constructor(class: &FacadeClass<'_>) -> String {
+fn render_facade_constructor(class: &AnalyzedFacadeClass<'_>) -> String {
     let params = class
         .constructor
         .params
@@ -341,7 +337,7 @@ fn render_facade_constructor(class: &FacadeClass<'_>) -> String {
     out
 }
 
-fn render_facade_close(class: &FacadeClass<'_>) -> String {
+fn render_facade_close(class: &AnalyzedFacadeClass<'_>) -> String {
     format!(
         "func ({} *{}) Close() {{\n    if {} == nil || {}.ptr == nil {{\n        return\n    }}\n    C.{}({}.ptr)\n    {}.ptr = nil\n}}\n",
         receiver_name(&class.go_name),
@@ -354,7 +350,10 @@ fn render_facade_close(class: &FacadeClass<'_>) -> String {
     )
 }
 
-fn render_lifted_method(class: &FacadeClass<'_>, method: &LiftedMethod<'_>) -> String {
+fn render_model_mapped_method(
+    class: &AnalyzedFacadeClass<'_>,
+    method: &ModelMappedMethod<'_>,
+) -> String {
     let receiver = receiver_name(&class.go_name);
     let method_params = method
         .function
@@ -417,9 +416,9 @@ fn render_lifted_method(class: &FacadeClass<'_>, method: &LiftedMethod<'_>) -> S
     out
 }
 
-fn render_general_method(
+fn render_general_api_method(
     config: &Config,
-    class: &FacadeClass<'_>,
+    class: &AnalyzedFacadeClass<'_>,
     function: &IrFunction,
 ) -> String {
     let receiver = receiver_name(&class.go_name);
@@ -598,6 +597,20 @@ fn free_function_supported(function: &IrFunction) -> bool {
         .all(|param| matches!(param.ty.kind.as_str(), "primitive" | "string" | "c_string"))
 }
 
+fn classify_facade_method<'a>(
+    config: &Config,
+    function: &'a IrFunction,
+) -> Option<AnalyzedMethod<'a>> {
+    if let Some(model) = model_projection_for_out_param(config, function) {
+        return Some(AnalyzedMethod::ModelMapped(ModelMappedMethod {
+            function,
+            model,
+        }));
+    }
+
+    general_method_supported(function).then_some(AnalyzedMethod::GeneralApi(function))
+}
+
 fn general_method_supported(function: &IrFunction) -> bool {
     model_out_param(function).is_none()
         && matches!(
@@ -626,6 +639,21 @@ fn liftable_method_supported(function: &IrFunction) -> bool {
         .skip(1)
         .take(function.params.len() - 2)
         .all(|param| matches!(param.ty.kind.as_str(), "primitive" | "string" | "c_string"))
+}
+
+fn model_projection_for_out_param(
+    config: &Config,
+    function: &IrFunction,
+) -> Option<KnownModelProjection> {
+    let model_param = model_out_param(function)?;
+    let model = config.known_model_projection(&model_param.cpp_type)?;
+    if !liftable_method_supported(function)
+        || model.constructor_symbol.is_empty()
+        || model.destructor_symbol.is_none()
+    {
+        return None;
+    }
+    Some(model.clone())
 }
 
 fn model_out_param(function: &IrFunction) -> Option<&IrType> {
@@ -831,5 +859,122 @@ fn go_package_name(path: &Path) -> String {
         "bindings".to_string()
     } else {
         sanitized
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::KnownModelField;
+    use crate::ir::IrParam;
+
+    fn test_config_with_known_model() -> Config {
+        Config {
+            known_model_projections: vec![KnownModelProjection {
+                cpp_type: "ThingModel".to_string(),
+                handle_name: "ThingModelHandle".to_string(),
+                go_name: "ThingModel".to_string(),
+                output_header: "thing_model_wrapper.h".to_string(),
+                constructor_symbol: "cgowrap_ThingModel_new".to_string(),
+                destructor_symbol: Some("cgowrap_ThingModel_delete".to_string()),
+                fields: vec![KnownModelField {
+                    go_name: "Value".to_string(),
+                    go_type: "int".to_string(),
+                    getter_symbol: "cgowrap_ThingModel_GetValue".to_string(),
+                    return_kind: "primitive".to_string(),
+                }],
+            }],
+            ..Config::default()
+        }
+    }
+
+    fn primitive_type(cpp_type: &str, c_type: &str) -> IrType {
+        IrType {
+            kind: "primitive".to_string(),
+            cpp_type: cpp_type.to_string(),
+            c_type: c_type.to_string(),
+            handle: None,
+        }
+    }
+
+    fn model_reference_type(cpp_type: &str) -> IrType {
+        IrType {
+            kind: "model_reference".to_string(),
+            cpp_type: cpp_type.to_string(),
+            c_type: format!("{cpp_type}Handle*"),
+            handle: Some(format!("{cpp_type}Handle")),
+        }
+    }
+
+    fn method(name: &str, params: Vec<IrParam>) -> IrFunction {
+        IrFunction {
+            name: format!("cgowrap_Api_{name}"),
+            kind: "method".to_string(),
+            cpp_name: format!("Api::{name}"),
+            method_of: Some("Api".to_string()),
+            owner_cpp_type: Some("Api".to_string()),
+            is_const: Some(false),
+            returns: primitive_type("bool", "bool"),
+            params,
+        }
+    }
+
+    #[test]
+    fn classify_facade_method_marks_known_model_out_param_as_model_mapped() {
+        let config = test_config_with_known_model();
+        let function = method(
+            "GetThing",
+            vec![
+                IrParam {
+                    name: "self".to_string(),
+                    ty: IrType {
+                        kind: "opaque".to_string(),
+                        cpp_type: "Api".to_string(),
+                        c_type: "ApiHandle*".to_string(),
+                        handle: Some("ApiHandle".to_string()),
+                    },
+                },
+                IrParam {
+                    name: "id".to_string(),
+                    ty: primitive_type("int", "int"),
+                },
+                IrParam {
+                    name: "out".to_string(),
+                    ty: model_reference_type("ThingModel"),
+                },
+            ],
+        );
+
+        let classified = classify_facade_method(&config, &function).unwrap();
+        assert!(matches!(classified, AnalyzedMethod::ModelMapped(_)));
+    }
+
+    #[test]
+    fn classify_facade_method_does_not_lift_known_model_outside_last_position() {
+        let config = test_config_with_known_model();
+        let function = method(
+            "GetThing",
+            vec![
+                IrParam {
+                    name: "self".to_string(),
+                    ty: IrType {
+                        kind: "opaque".to_string(),
+                        cpp_type: "Api".to_string(),
+                        c_type: "ApiHandle*".to_string(),
+                        handle: Some("ApiHandle".to_string()),
+                    },
+                },
+                IrParam {
+                    name: "out".to_string(),
+                    ty: model_reference_type("ThingModel"),
+                },
+                IrParam {
+                    name: "id".to_string(),
+                    ty: primitive_type("int", "int"),
+                },
+            ],
+        );
+
+        assert!(classify_facade_method(&config, &function).is_none());
     }
 }
