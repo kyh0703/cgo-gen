@@ -229,3 +229,125 @@ naming:
     );
     assert!(go_facade.contains("model.Value = int(C.cgowrap_ThingModel_GetValue(handle))"));
 }
+
+#[test]
+fn keeps_non_model_methods_on_general_api_path_even_if_names_look_like_lookup_apis() {
+    let root = temp_output_dir("general-api-routing");
+    let include_dir = root.join("include");
+    fs::create_dir_all(&include_dir).unwrap();
+
+    fs::write(
+        include_dir.join("Api.hpp"),
+        r#"
+        class Api {
+        public:
+            Api() = default;
+            ~Api() = default;
+            bool ListThing(int id) const;
+            int NextThing(int cursor);
+        };
+        "#,
+    )
+    .unwrap();
+
+    let config_path = root.join("cppgo-wrap.yaml");
+    fs::write(
+        &config_path,
+        r#"
+version: 1
+input:
+  headers:
+    - include/Api.hpp
+files:
+  facade:
+    - include/Api.hpp
+output:
+  dir: out
+naming:
+  prefix: cgowrap
+  style: preserve
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(&config_path).unwrap();
+    generator::generate_all(&config, true).unwrap();
+
+    let go_facade = fs::read_to_string(root.join("out/api_wrapper.go")).unwrap();
+
+    assert!(go_facade.contains("func (a *Api) ListThing(id int) bool {"));
+    assert!(go_facade.contains("return bool(C.cgowrap_Api_ListThing(a.ptr, C.int(id)))"));
+    assert!(go_facade.contains("func (a *Api) NextThing(cursor int) int {"));
+    assert!(!go_facade.contains("(ThingModel, error)"));
+    assert!(!go_facade.contains("mapThingModelFromHandle"));
+}
+
+#[test]
+fn does_not_lift_known_model_when_it_is_not_the_final_supported_out_param() {
+    let root = temp_output_dir("model-not-last");
+    let include_dir = root.join("include");
+    fs::create_dir_all(&include_dir).unwrap();
+
+    fs::write(
+        include_dir.join("ThingModel.hpp"),
+        r#"
+        class ThingModel {
+        public:
+            ThingModel() = default;
+            ~ThingModel() = default;
+            int GetValue() const;
+            void SetValue(int value);
+        };
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        include_dir.join("Api.hpp"),
+        r#"
+        #include "ThingModel.hpp"
+
+        class Api {
+        public:
+            Api() = default;
+            ~Api() = default;
+            bool IsReady() const;
+            bool GetThing(ThingModel& out, int id);
+        };
+        "#,
+    )
+    .unwrap();
+
+    let config_path = root.join("cppgo-wrap.yaml");
+    fs::write(
+        &config_path,
+        r#"
+version: 1
+input:
+  headers:
+    - include/ThingModel.hpp
+    - include/Api.hpp
+files:
+  model:
+    - include/ThingModel.hpp
+  facade:
+    - include/Api.hpp
+output:
+  dir: out
+naming:
+  prefix: cgowrap
+  style: preserve
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(&config_path).unwrap();
+    generator::generate_all(&config, true).unwrap();
+
+    let go_facade = fs::read_to_string(root.join("out/api_wrapper.go")).unwrap();
+
+    assert!(go_facade.contains("type Api struct {"));
+    assert!(go_facade.contains("func (a *Api) IsReady() bool {"));
+    assert!(!go_facade.contains("func (a *Api) GetThing("));
+    assert!(!go_facade.contains("(ThingModel, error)"));
+    assert!(!go_facade.contains("mapThingModelFromHandle"));
+}

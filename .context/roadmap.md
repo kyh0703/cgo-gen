@@ -64,15 +64,17 @@ Completed in code:
 - regression tests for classification loading, validation, and multi-header behavior
 
 Immediate next target:
-- extend model-mapped facade lifting from single-model returns into collection-style model APIs
+- separate model-aware facade routing from rendering and lock the type-based rule with regression tests
 
 Detailed next steps:
-1. inspect `src/IE/SIL/iSiLib.h` and identify methods whose out-parameters reference known `files.model` classes
-2. extend parser/IR as needed so known model out-parameters remain recognizable during generation
-3. generate initial Go facade shape as `func Foo(...) (Model, error)`
-4. add fixture coverage for:
+1. split facade method analysis from Go rendering in `src/facade.rs`
+2. classify facade class methods by explicit signature only:
+   - known supported model out-param -> model-mapped API
+   - otherwise supported primitive/string method -> general API
+3. keep `files.model` as the sole semantic source of truth for model-aware routing
+4. add regression coverage for:
    - `Model&` out-param
    - `Model*` out-param
-   - failure path mapping into `error`
-5. after single-model lifting is stable, extend the same model-mapping rule to collection-style APIs
-6. only APIs already mapped to known shared models should be lifted into list/iterator-style helpers
+   - names that look like lookup/list APIs but have no known model type
+   - known model type outside the final supported out-param position
+5. defer iterator/list helper inference until after routing cleanup is stable

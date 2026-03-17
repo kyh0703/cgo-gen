@@ -184,13 +184,14 @@ func GetAAMaster(...) (IsAAMaster, error)
 - 이유:
   - C++ `bool` 반환이 not-found인지 generic failure인지 자동으로 단정하기 어렵기 때문
 
-### collection direction
+### routing direction
 
-iterator/list도 별도 패턴 추론보다 **모델 매핑이 먼저**다.
+현재 단계의 facade 확장은 **collection 의미 추론**이 아니라 **model-aware routing 정리**를 우선한다.
 
-- known model type으로 매핑되는 API만 collection helper 후보로 본다
-- 매핑되지 않은 것은 그냥 일반 API로 둔다
-- 즉 iterator/list라는 이름보다 `files.model`에 연결되는 model 반환/채움 여부가 우선 기준이다
+- known model type이 supported out-param 위치에 명시적으로 나타나는 API만 model-mapped facade 후보로 본다
+- known model type이 없으면 기존 지원 범위 안에서 일반 API로 유지한다
+- method/function 이름(`List`, `Next`, `Select`)만으로 collection/helper 승격을 결정하지 않는다
+- source 구현을 보고 동작을 추론하지 않는다
 
 ---
 

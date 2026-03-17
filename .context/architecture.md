@@ -63,10 +63,11 @@ Why `Model, error` instead of `Model, bool, error` by default:
 - it may also mean generic success/failure
 - therefore the safer default shape is `Model, error`
 
-For collection-style APIs, the design should prefer **model-mapped lifting first**:
-- if the API is already tied to a known shared model type, it can become a collection/helper candidate
-- if it is not mapped to a known model type, it should remain a regular API
+For the current facade slice, the design should prefer **model-aware routing first**:
+- if the API is tied to a known shared model type in the supported out-param position, it can be routed to model-mapped facade generation
+- if it is not mapped to a known model type, it should remain a regular API when otherwise supported
 - pattern naming alone should not be treated as the primary decision source
+- source implementation details must not be used to infer higher-level helper behavior
 
 ## Current implementation note (2026-03-16)
 
@@ -76,8 +77,8 @@ For collection-style APIs, the design should prefer **model-mapped lifting first
 - Current classification effect is still intentionally partial:
   - model/facade semantic classification is determined only by explicit config (`files.model`, `files.facade`).
   - `model` headers can emit Go enum models and auto-project `IsAAMaster`-style getter/setter classes into Go structs.
-  - `facade` headers now generate phase-1 Go facade wrappers for supported free functions and still do not emit Go model files.
-  - current facade support is limited to primitive-parameter free functions with primitive/bool/string returns.
-  - facade class methods that fill known `files.model` types via `Model&` / `Model*` out-params can now be lifted into `Model, error` Go methods.
+  - `facade` headers now generate phase-1 Go facade wrappers and still do not emit Go model files.
+  - the base supported facade surface is primitive-parameter free functions with primitive/bool/string returns.
+  - as a current type-driven extension, facade class methods that fill known `files.model` types via `Model&` / `Model*` out-params can be lifted into `Model, error` Go methods.
   - namespaced facade functions that would collide in Go export names are rejected during generation.
-- Typedef/DTO model generation, model-mapped collection facade generation, callback facade generation, and richer type-driven facade lifting beyond the first out-param pattern are not implemented yet.
+- Typedef/DTO model generation, model-mapped collection facade generation, callback facade generation, and richer type-driven facade lifting beyond the first out-param pattern are not implemented yet. The current implementation focus is routing cleanup, not collection helper inference.
