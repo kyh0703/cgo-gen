@@ -37,8 +37,8 @@ ls /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchai
 
 **Docs**
 - Modify: `README.md` — describe this phase as model-aware routing cleanup, not collection inference.
-- Modify: `.context/roadmap.md` — replace the immediate-next wording with the approved routing-focused milestone.
-- Modify: `.context/architecture.md` — remove collection-oriented language for this slice and align the narrative with routing-only scope.
+- Modify: `docs/roadmaps/current-roadmap.md` — replace the immediate-next wording with the approved routing-focused milestone.
+- Modify: `docs/ARCHITECTURE.md` — remove collection-oriented language for this slice and align the narrative with routing-only scope.
 
 **Spec reference**
 - Reference only: `docs/superpowers/specs/2026-03-17-model-aware-facade-routing-design.md`
@@ -274,8 +274,8 @@ git commit -m "test: preserve facade routing across multi-header generation"
 
 **Files:**
 - Modify: `README.md:124-193`
-- Modify: `.context/roadmap.md:36-78`
-- Modify: `.context/architecture.md`
+- Modify: `docs/roadmaps/current-roadmap.md:36-78`
+- Modify: `docs/ARCHITECTURE.md`
 
 - [ ] **Step 1: Update README language from collection direction to routing direction for this phase**
 
@@ -292,13 +292,13 @@ Immediate next target:
 - separate model-aware facade routing from rendering and lock it with regression tests
 ```
 
-- [ ] **Step 3: Update `.context/architecture.md` so this slice is described as routing cleanup, not collection helper work**
+- [ ] **Step 3: Update `docs/ARCHITECTURE.md` so this slice is described as routing cleanup, not collection helper work**
 
 - [ ] **Step 4: Run a quick diff review and markdown sanity check**
 
 Run:
 ```bash
-git diff -- README.md .context/roadmap.md .context/architecture.md
+git diff -- README.md docs/roadmaps/current-roadmap.md docs/ARCHITECTURE.md
 ```
 
 Expected:
@@ -307,7 +307,7 @@ Expected:
 - [ ] **Step 5: Commit the documentation updates**
 
 ```bash
-git add README.md .context/roadmap.md .context/architecture.md
+git add README.md docs/roadmaps/current-roadmap.md docs/ARCHITECTURE.md
 git commit -m "docs: clarify model-aware facade routing scope"
 ```
 
@@ -342,7 +342,7 @@ Expected:
 
 Run:
 ```bash
-git diff --stat -- src/facade.rs tests/facade_generate.rs tests/multi_header_generate.rs README.md .context/roadmap.md .context/architecture.md
+git diff --stat -- src/facade.rs tests/facade_generate.rs tests/multi_header_generate.rs README.md docs/roadmaps/current-roadmap.md docs/ARCHITECTURE.md
 ```
 
 Expected:
@@ -351,6 +351,6 @@ Expected:
 - [ ] **Step 4: Create the final implementation handoff commit if needed**
 
 ```bash
-git add src/facade.rs tests/facade_generate.rs tests/multi_header_generate.rs README.md .context/roadmap.md .context/architecture.md
+git add src/facade.rs tests/facade_generate.rs tests/multi_header_generate.rs README.md docs/roadmaps/current-roadmap.md docs/ARCHITECTURE.md
 git commit -m "feat: clarify model-aware facade routing"
 ```
