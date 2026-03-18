@@ -1,6 +1,6 @@
 # Documentation Map
 
-This repository keeps durable project documentation under `docs/` instead of `.context/`.
+This repository keeps durable project documentation under `docs/`.
 
 ## Core docs
 
@@ -21,5 +21,3 @@ This repository keeps durable project documentation under `docs/` instead of `.c
 ## References
 
 - `references/`: CLI, config, IR, limitations, and hardening notes
-
-The `.context/README.md` file remains only as a redirect for older references.
