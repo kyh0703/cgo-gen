@@ -2,6 +2,8 @@
 
 `c-go`는 보수적인 C++ 헤더 subset을 파싱해서 C ABI wrapper를 생성하는 Rust CLI입니다.
 
+문서 구조는 [`docs/README.md`](docs/README.md)에 정리되어 있습니다. 핵심 문서는 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/PRODUCT.md`](docs/PRODUCT.md), [`docs/roadmaps/current-roadmap.md`](docs/roadmaps/current-roadmap.md)에서 확인할 수 있습니다.
+
 현재 기준 동작은 다음과 같습니다.
 
 - 입력: 하나의 YAML config
