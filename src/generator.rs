@@ -89,27 +89,39 @@ fn collect_known_model_projections(
 }
 
 pub fn generate(config: &Config, ir: &IrModule, write_ir: bool) -> Result<()> {
-    fs::create_dir_all(&config.output.dir).with_context(|| {
+    fs::create_dir_all(config.raw_output_dir()).with_context(|| {
         format!(
-            "failed to create output dir: {}",
-            config.output.dir.display()
+            "failed to create raw output dir: {}",
+            config.raw_output_dir().display()
         )
     })?;
 
-    let header_path = config.output.dir.join(&config.output.header);
-    let source_path = config.output.dir.join(&config.output.source);
-    let ir_path = config.output.dir.join(&config.output.ir);
+    let header_path = config.raw_output_dir().join(&config.output.header);
+    let source_path = config.raw_output_dir().join(&config.output.source);
+    let ir_path = config.raw_output_dir().join(&config.output.ir);
     fs::write(&header_path, render_header(config, ir))
         .with_context(|| format!("failed to write header: {}", header_path.display()))?;
     fs::write(&source_path, render_source(config, ir))
         .with_context(|| format!("failed to write source: {}", source_path.display()))?;
     for go_model in model::render_go_models(config, ir)? {
-        let go_path = config.output.dir.join(&go_model.filename);
+        fs::create_dir_all(config.model_output_dir()).with_context(|| {
+            format!(
+                "failed to create model output dir: {}",
+                config.model_output_dir().display()
+            )
+        })?;
+        let go_path = config.model_output_dir().join(&go_model.filename);
         fs::write(&go_path, go_model.contents)
             .with_context(|| format!("failed to write Go models: {}", go_path.display()))?;
     }
     for go_facade in facade::render_go_facade(config, ir)? {
-        let go_path = config.output.dir.join(&go_facade.filename);
+        fs::create_dir_all(config.facade_output_dir()).with_context(|| {
+            format!(
+                "failed to create facade output dir: {}",
+                config.facade_output_dir().display()
+            )
+        })?;
+        let go_path = config.facade_output_dir().join(&go_facade.filename);
         fs::write(&go_path, go_facade.contents)
             .with_context(|| format!("failed to write Go facade: {}", go_path.display()))?;
     }

@@ -297,6 +297,22 @@ impl Config {
         format!("{stem}.go")
     }
 
+    pub fn raw_output_dir(&self) -> PathBuf {
+        self.output.dir.join("raw")
+    }
+
+    pub fn model_output_dir(&self) -> PathBuf {
+        self.output.dir.join("model")
+    }
+
+    pub fn facade_output_dir(&self) -> PathBuf {
+        self.output.dir.join("facade")
+    }
+
+    pub fn raw_include_for_go(&self, header: &str) -> String {
+        format!("../raw/{header}")
+    }
+
     fn apply_output_defaults(&mut self) {
         if !self.uses_default_output_names() {
             return;

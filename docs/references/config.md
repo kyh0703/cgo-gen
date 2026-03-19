@@ -17,3 +17,8 @@ Top-level sections:
 - `policies.*`
 
 Relative paths are resolved from the config file location.
+
+Current output layout:
+- raw native artifacts: `output.dir/raw/`
+- Go model artifacts: `output.dir/model/`
+- Go facade artifacts: `output.dir/facade/`

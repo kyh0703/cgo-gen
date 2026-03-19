@@ -119,13 +119,15 @@ fn collect_facade_classes<'a>(
             continue;
         }
 
+        ensure_unique_method_exports(owner, &general_methods, &model_mapped_methods)?;
+
         let Some(constructor) = constructors.get(owner).copied() else {
             bail!("facade class `{owner}` has renderable methods but no constructor wrapper");
         };
         if !constructor
             .params
             .iter()
-            .all(|param| matches!(param.ty.kind.as_str(), "primitive" | "string" | "c_string"))
+            .all(|param| go_param_supported(&param.ty))
         {
             bail!("facade class `{owner}` constructor params are not supported yet");
         }
@@ -226,7 +228,7 @@ fn render_go_facade_file(
 }
 
 fn collect_include_headers(config: &Config, classes: &[AnalyzedFacadeClass<'_>]) -> Vec<String> {
-    let mut includes = BTreeSet::from([config.output.header.clone()]);
+    let mut includes = BTreeSet::from([config.raw_include_for_go(&config.output.header)]);
     for projection in collect_used_models(classes) {
         includes.insert(projection.output_header.clone());
     }
@@ -379,7 +381,7 @@ fn render_model_mapped_method(
         "func ({} *{}) {}({}) ({}, error) {{\n",
         receiver,
         class.go_name,
-        go_export_name(method_name(method.function)),
+        go_method_export_name(method.function, true),
         params,
         method.model.go_name
     ));
@@ -443,7 +445,7 @@ fn render_general_api_method(
         "func ({} *{}) {}({})",
         receiver,
         class.go_name,
-        go_export_name(method_name(function)),
+        go_method_export_name(function, false),
         params
     ));
     match function.returns.kind.as_str() {
@@ -587,14 +589,52 @@ fn ensure_unique_go_exports(functions: &[&IrFunction]) -> Result<()> {
     bail!("facade export collision detected: {detail}");
 }
 
+fn ensure_unique_method_exports(
+    owner: &str,
+    general_methods: &[&IrFunction],
+    model_mapped_methods: &[ModelMappedMethod<'_>],
+) -> Result<()> {
+    let mut by_export = BTreeMap::<String, Vec<String>>::new();
+    for function in general_methods {
+        by_export
+            .entry(go_method_export_name(function, false))
+            .or_default()
+            .push(function.cpp_name.clone());
+    }
+    for method in model_mapped_methods {
+        by_export
+            .entry(go_method_export_name(method.function, true))
+            .or_default()
+            .push(method.function.cpp_name.clone());
+    }
+
+    let collisions = by_export
+        .into_iter()
+        .filter(|(_, names)| names.len() > 1)
+        .collect::<Vec<_>>();
+    if collisions.is_empty() {
+        return Ok(());
+    }
+
+    let detail = collisions
+        .into_iter()
+        .map(|(export, names)| {
+            format!(
+                "Go facade method `{owner}.{export}` collides for: {}",
+                names.join(", ")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    bail!("facade export collision detected: {detail}");
+}
+
 fn free_function_supported(function: &IrFunction) -> bool {
-    matches!(
-        function.returns.kind.as_str(),
-        "void" | "primitive" | "string" | "c_string"
-    ) && function
-        .params
-        .iter()
-        .all(|param| matches!(param.ty.kind.as_str(), "primitive" | "string" | "c_string"))
+    go_return_supported(&function.returns)
+        && function
+            .params
+            .iter()
+            .all(|param| go_param_supported(&param.ty))
 }
 
 fn classify_facade_method<'a>(
@@ -613,15 +653,12 @@ fn classify_facade_method<'a>(
 
 fn general_method_supported(function: &IrFunction) -> bool {
     model_out_param(function).is_none()
-        && matches!(
-            function.returns.kind.as_str(),
-            "void" | "primitive" | "string" | "c_string"
-        )
+        && go_return_supported(&function.returns)
         && function
             .params
             .iter()
             .skip(1)
-            .all(|param| matches!(param.ty.kind.as_str(), "primitive" | "string" | "c_string"))
+            .all(|param| go_param_supported(&param.ty))
 }
 
 fn liftable_method_supported(function: &IrFunction) -> bool {
@@ -638,7 +675,7 @@ fn liftable_method_supported(function: &IrFunction) -> bool {
         .iter()
         .skip(1)
         .take(function.params.len() - 2)
-        .all(|param| matches!(param.ty.kind.as_str(), "primitive" | "string" | "c_string"))
+        .all(|param| go_param_supported(&param.ty))
 }
 
 fn model_projection_for_out_param(
@@ -697,6 +734,15 @@ fn indented_lines(lines: &[String]) -> String {
 
 fn has_string_params<'a>(mut params: impl Iterator<Item = &'a crate::ir::IrParam>) -> bool {
     params.any(|param| matches!(param.ty.kind.as_str(), "string" | "c_string"))
+}
+
+fn go_param_supported(ty: &IrType) -> bool {
+    matches!(ty.kind.as_str(), "string" | "c_string")
+        || (ty.kind == "primitive" && go_type_for_ir(ty).is_some())
+}
+
+fn go_return_supported(ty: &IrType) -> bool {
+    ty.kind == "void" || go_param_supported(ty)
 }
 
 fn zero_value_for_go_type(go_type: &str) -> &'static str {
@@ -783,7 +829,63 @@ fn go_export_name(value: &str) -> String {
 }
 
 fn go_facade_export_name(function: &IrFunction) -> String {
-    go_export_name(&leaf_cpp_name(&function.cpp_name))
+    let base = go_export_name(&leaf_cpp_name(&function.cpp_name));
+    if !function.name.contains("__") {
+        return base;
+    }
+
+    format!("{base}{}", go_overload_suffix(function, false))
+}
+
+fn go_method_export_name(function: &IrFunction, drop_model_out_param: bool) -> String {
+    let base = go_export_name(method_name(function));
+    if !function.name.contains("__") {
+        return base;
+    }
+
+    format!(
+        "{base}{}",
+        go_overload_suffix(function, drop_model_out_param)
+    )
+}
+
+fn go_overload_suffix(function: &IrFunction, drop_model_out_param: bool) -> String {
+    let mut params = function.params.iter().collect::<Vec<_>>();
+    if function.method_of.is_some() && !params.is_empty() {
+        params.remove(0);
+    }
+    if drop_model_out_param && !params.is_empty() {
+        params.pop();
+    }
+
+    let mut suffix = params
+        .iter()
+        .map(|param| go_overload_token(&param.ty))
+        .collect::<String>();
+    if suffix.is_empty() {
+        suffix = "Void".to_string();
+    }
+    if function.is_const == Some(true) {
+        suffix.push_str("Const");
+    }
+    suffix
+}
+
+fn go_overload_token(ty: &IrType) -> String {
+    match ty.kind.as_str() {
+        "string" | "c_string" => "String".to_string(),
+        "primitive" => go_type_for_ir(ty)
+            .map(go_export_name)
+            .unwrap_or_else(|| go_export_name(&sanitize_go_token(&ty.cpp_type))),
+        _ => go_export_name(&sanitize_go_token(&ty.cpp_type)),
+    }
+}
+
+fn sanitize_go_token(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+        .collect()
 }
 
 fn method_name(function: &IrFunction) -> &str {
