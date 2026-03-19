@@ -203,7 +203,7 @@ pub fn collect_known_model_projections(
             cpp_type: projection.cpp_type,
             handle_name: projection.handle_name,
             go_name: projection.go_name,
-            output_header: config.output.header.clone(),
+            output_header: config.raw_include_for_go(&config.output.header),
             fields: projection
                 .fields
                 .into_iter()

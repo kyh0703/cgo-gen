@@ -1,6 +1,6 @@
 # SIL Conversion Status
 
-Updated: 2026-03-16
+Updated: 2026-03-19
 
 ## Summary
 
@@ -29,6 +29,9 @@ This keeps SIL configs smaller and matches the current intended workflow.
   - `tests/function_pointer_skip.rs`
 - Added typedef alias auto-resolution coverage
   - `tests/typedef_alias_resolution.rs`
+- Added explicit facade routing regression coverage
+  - known model out-param positive lift cases
+  - negative routing cases where unknown or misplaced model types must not lift
 
 ## Real SIL Parsing Findings
 
@@ -90,27 +93,65 @@ Examples:
 
 This means users do **not** need to redundantly define typedef aliases in YAML.
 
-## Current Remaining Blocker for Full `iSiLib` Generation
+### Facade routing cleanup
 
-`iSiLib.h` still references many SIL model types beyond `IsAAMaster`, for example:
+Facade generation now classifies class methods before rendering:
 
-- `IsSipHeaderRelay&`
-- `IsSipHeaderGroup&`
-- `IsCluster&`
-- and many more
+- known supported model out-param in the final supported position
+  - route to model-mapped Go API generation
+- otherwise supported primitive/string method
+  - keep on the general facade API path
 
-These currently fail unless one of the following is implemented:
+This keeps `files.model` as the only semantic source of truth for model-aware lifting and avoids name-based collection inference.
 
-1. more SIL model headers are added to `files.model`
-2. unknown model-reference facade methods are skipped in v1
-3. broader SIL model/header onboarding is added
+### Raw-first unknown model handling
+
+Unknown non-classified model reference/pointer declarations are no longer treated as an automatic declaration-level failure when the raw layer can still represent them safely.
+
+- raw header/source generation keeps them as opaque-handle-based wrapper APIs
+- Go facade/model generation still excludes them unless they map to `files.model`
+
+This keeps C/raw coverage broader without weakening the `files.model` contract for Go-facing output.
+
+### Raw-unsafe by-value object handling
+
+Declarations that use unsupported by-value object types are now skipped at declaration level instead of aborting normalization for the whole header.
+
+- skipped declarations are recorded in `ir.support.skipped_declarations`
+- supported methods in the same header still generate normally
+- raw and Go output both exclude the raw-unsafe by-value declaration
+
+This keeps internal/native-only object types from leaking into the Go surface while preserving as much verified output as possible from the same header.
+
+## Real `iSiLib` Verification Status
+
+The current macOS local IPRON environment now verifies the real `iSiLib` flow end to end:
+
+1. `check` succeeds with the local include roots
+2. `ir` succeeds and emits full normalized IR
+3. `generate --dump-ir` succeeds and writes raw/Go artifacts
+
+What changed to make this possible:
+
+- deterministic overload-safe raw wrapper naming now disambiguates repeated symbols such as `GetAAMaster`, `Init`, `GetNodeTenant`
+- Go facade generation now filters non-renderable primitive typedef aliases conservatively instead of panicking
+- renderable overloads now get deterministic Go export suffixes such as:
+  - `GetAAMasterUint32(...)`
+  - `GetAAMasterString(...)`
+
+Observed real-SIL evidence:
+
+- `support.skipped_declarations` count is 8 in the current local `iSiLib` IR dump
+- the skipped set is limited to:
+  - function-pointer declarations such as `SetHACallback`
+  - raw-unsafe by-value object declarations such as `SetUserMaster`, `SetDnTrsf`, `RestoreSubsData`
+- real SIL types that carry `NsMap*` / `DsMap*` internals, such as `IsCluster` and `IsCSTASession`, can remain raw-visible without leaking those internal collection details into the generated Go facade
 
 ## Recommended Next Step
 
 For practical progress, prefer:
 
 1. keep `IsAAMaster` as the verified real model path
-2. make facade generation skip methods that reference unknown non-primitive,
-   non-classified SIL model types
-3. then inspect the partially generated `iSiLib` surface and decide which model
-   headers to onboard next
+2. inspect the real `iSiLib` IR/output and classify raw-only internal types versus candidate public model headers
+3. decide which additional model headers, if any, should be onboarded into `files.model`
+4. avoid widening the Go boundary just because a SIL class transitively contains `NsMap*` or other internal storage helpers

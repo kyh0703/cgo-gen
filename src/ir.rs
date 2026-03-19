@@ -116,6 +116,7 @@ pub fn normalize(config: &Config, api: &ParsedApi) -> Result<IrModule> {
 
     collect_referenced_opaque_types(&mut opaque_types, &functions);
 
+    assign_unique_function_symbols(&mut functions);
     ensure_unique_function_symbols(&functions)?;
 
     Ok(IrModule {
@@ -136,7 +137,7 @@ pub fn normalize(config: &Config, api: &ParsedApi) -> Result<IrModule> {
                 ];
                 if !skipped_declarations.is_empty() {
                     notes.push(
-                        "Declarations using function pointer types are skipped in v1 and recorded in support.skipped_declarations.".to_string(),
+                        "Skipped declarations are recorded in support.skipped_declarations when v1 cannot safely express them in raw output.".to_string(),
                     );
                 }
                 notes
@@ -175,6 +176,35 @@ fn collect_referenced_opaque_types(opaque_types: &mut Vec<OpaqueType>, functions
     }
 }
 
+fn assign_unique_function_symbols(functions: &mut [IrFunction]) {
+    let mut by_symbol: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    for (index, function) in functions.iter().enumerate() {
+        by_symbol
+            .entry(function.name.clone())
+            .or_default()
+            .push(index);
+    }
+
+    for (base_name, indexes) in by_symbol {
+        if indexes.len() < 2 {
+            continue;
+        }
+
+        let mut assigned: BTreeMap<String, usize> = BTreeMap::new();
+        for index in indexes {
+            let suffix = overload_suffix(&functions[index]);
+            let candidate = format!("{base_name}__{suffix}");
+            let occurrence = assigned.entry(candidate.clone()).or_insert(0);
+            *occurrence += 1;
+            if *occurrence == 1 {
+                functions[index].name = candidate;
+            } else {
+                functions[index].name = format!("{candidate}_{}", occurrence);
+            }
+        }
+    }
+}
+
 fn ensure_unique_function_symbols(functions: &[IrFunction]) -> Result<()> {
     let mut by_symbol: BTreeMap<&str, Vec<&IrFunction>> = BTreeMap::new();
     for function in functions {
@@ -206,9 +236,7 @@ fn ensure_unique_function_symbols(functions: &[IrFunction]) -> Result<()> {
         .collect::<Vec<_>>()
         .join("; ");
 
-    bail!(
-        "overload collision detected; deterministic overload-safe naming is not implemented yet: {message}"
-    )
+    bail!("overload collision detected after suffix assignment: {message}")
 }
 
 fn normalize_class(
@@ -346,6 +374,13 @@ fn normalize_method(
         skipped_declarations.push(SkippedDeclaration { cpp_name, reason });
         return Ok(None);
     }
+    if let Some(reason) = raw_unsafe_by_value_reason(
+        Some((&method.return_type, &method.return_canonical_type)),
+        &method.params,
+    ) {
+        skipped_declarations.push(SkippedDeclaration { cpp_name, reason });
+        return Ok(None);
+    }
     let mut params = Vec::new();
     params.push(IrParam {
         name: "self".to_string(),
@@ -399,6 +434,13 @@ fn normalize_function(
             &function.return_canonical_type,
             function.return_is_function_pointer,
         )),
+        &function.params,
+    ) {
+        skipped_declarations.push(SkippedDeclaration { cpp_name, reason });
+        return Ok(None);
+    }
+    if let Some(reason) = raw_unsafe_by_value_reason(
+        Some((&function.return_type, &function.return_canonical_type)),
         &function.params,
     ) {
         skipped_declarations.push(SkippedDeclaration { cpp_name, reason });
@@ -474,6 +516,64 @@ fn function_pointer_reason(
     (!issues.is_empty()).then(|| issues.join("; "))
 }
 
+fn raw_unsafe_by_value_reason(
+    return_type: Option<(&str, &str)>,
+    params: &[CppParam],
+) -> Option<String> {
+    let mut issues = Vec::new();
+
+    if let Some((display, canonical)) = return_type
+        && is_raw_unsafe_by_value_type(display, canonical)
+    {
+        issues.push(format!(
+            "return type `{}` uses a raw-unsafe by-value object type",
+            format_type_for_reason(display, canonical)
+        ));
+    }
+
+    for param in params {
+        if is_raw_unsafe_by_value_type(&param.ty, &param.canonical_ty) {
+            issues.push(format!(
+                "parameter `{}` type `{}` uses a raw-unsafe by-value object type",
+                param.name,
+                format_type_for_reason(&param.ty, &param.canonical_ty)
+            ));
+        }
+    }
+
+    (!issues.is_empty()).then(|| issues.join("; "))
+}
+
+fn is_raw_unsafe_by_value_type(display: &str, canonical: &str) -> bool {
+    let display = display.trim();
+    let canonical = canonical.trim();
+
+    if normalize_type(display).is_ok() {
+        return false;
+    }
+    if !canonical.is_empty() && canonical != display && normalize_type(canonical).is_ok() {
+        return false;
+    }
+
+    [display, canonical]
+        .into_iter()
+        .filter(|candidate| !candidate.is_empty())
+        .any(is_raw_unsafe_by_value_object_candidate)
+}
+
+fn is_raw_unsafe_by_value_object_candidate(cpp_type: &str) -> bool {
+    let trimmed = cpp_type.trim();
+    if trimmed.is_empty() || trimmed == "void" || trimmed.ends_with('&') || trimmed.ends_with('*') {
+        return false;
+    }
+
+    let base = base_model_cpp_type(trimmed);
+    !base.is_empty()
+        && !base.contains('<')
+        && !base.starts_with("std::")
+        && !is_supported_primitive(&base)
+}
+
 fn format_type_for_reason(display: &str, canonical: &str) -> String {
     if canonical.is_empty() || canonical == display {
         display.to_string()
@@ -483,18 +583,18 @@ fn format_type_for_reason(display: &str, canonical: &str) -> String {
 }
 
 fn normalize_type_with_canonical(
-    config: &Config,
+    _config: &Config,
     cpp_type: &str,
     canonical_type: &str,
 ) -> Result<IrType> {
     let trimmed = cpp_type.trim();
-    if let Ok(ty) = normalize_type(config, trimmed) {
+    if let Ok(ty) = normalize_type(trimmed) {
         return Ok(ty);
     }
 
     let canonical_trimmed = canonical_type.trim();
     if canonical_trimmed != trimmed {
-        if let Ok(mut ty) = normalize_type(config, canonical_trimmed) {
+        if let Ok(mut ty) = normalize_type(canonical_trimmed) {
             ty.cpp_type = trimmed.to_string();
             return Ok(ty);
         }
@@ -504,7 +604,7 @@ fn normalize_type_with_canonical(
     bail!("unsupported C++ type in v1: {trimmed}");
 }
 
-fn normalize_type(config: &Config, cpp_type: &str) -> Result<IrType> {
+fn normalize_type(cpp_type: &str) -> Result<IrType> {
     let trimmed = cpp_type.trim();
     match trimmed {
         "void" => Ok(primitive_type(trimmed)),
@@ -565,12 +665,8 @@ fn normalize_type(config: &Config, cpp_type: &str) -> Result<IrType> {
                 handle: None,
             })
         }
-        _ if trimmed.ends_with('&') && config.is_known_model_type(trimmed) => {
-            let model_type = trimmed
-                .trim_end_matches('&')
-                .trim()
-                .trim_start_matches("const ");
-            let handle_name = format!("{}Handle", flatten_qualified_cpp_name(model_type));
+        _ if trimmed.ends_with('&') && raw_safe_model_handle_name(trimmed).is_some() => {
+            let handle_name = raw_safe_model_handle_name(trimmed).unwrap();
             Ok(IrType {
                 kind: "model_reference".to_string(),
                 cpp_type: trimmed.to_string(),
@@ -578,12 +674,8 @@ fn normalize_type(config: &Config, cpp_type: &str) -> Result<IrType> {
                 handle: Some(handle_name),
             })
         }
-        _ if trimmed.ends_with('*') && config.is_known_model_type(trimmed) => {
-            let model_type = trimmed
-                .trim_end_matches('*')
-                .trim()
-                .trim_start_matches("const ");
-            let handle_name = format!("{}Handle", flatten_qualified_cpp_name(model_type));
+        _ if trimmed.ends_with('*') && raw_safe_model_handle_name(trimmed).is_some() => {
+            let handle_name = raw_safe_model_handle_name(trimmed).unwrap();
             Ok(IrType {
                 kind: "model_pointer".to_string(),
                 cpp_type: trimmed.to_string(),
@@ -650,6 +742,100 @@ fn symbol_name(config: &Config, namespace: &[String], owner: &str, tail: &str) -
     parts.join("_")
 }
 
+fn overload_suffix(function: &IrFunction) -> String {
+    let params = if function.method_of.is_some() {
+        &function.params[1..]
+    } else {
+        &function.params[..]
+    };
+
+    let mut parts = if params.is_empty() {
+        vec!["void".to_string()]
+    } else {
+        params
+            .iter()
+            .map(|param| type_signature_token(&param.ty))
+            .collect::<Vec<_>>()
+    };
+
+    if function.kind == "method" {
+        parts.push(
+            if function.is_const == Some(true) {
+                "const"
+            } else {
+                "mut"
+            }
+            .to_string(),
+        );
+    }
+
+    parts.join("_")
+}
+
+fn type_signature_token(ty: &IrType) -> String {
+    match ty.kind.as_str() {
+        "primitive" | "void" => sanitize_symbol_token(&ty.cpp_type),
+        "c_string" => {
+            if ty.cpp_type.contains("const")
+                || matches!(ty.cpp_type.as_str(), "NPCSTR" | "NPSTRC" | "NPCSTRC")
+            {
+                "c_str".to_string()
+            } else {
+                "mut_c_str".to_string()
+            }
+        }
+        "string" => "string".to_string(),
+        "pointer" => format!(
+            "ptr_{}",
+            sanitize_symbol_token(ty.cpp_type.trim_end_matches('*'))
+        ),
+        "reference" => format!(
+            "ref_{}",
+            sanitize_symbol_token(ty.cpp_type.trim_end_matches('&'))
+        ),
+        "opaque" => format!(
+            "opaque_{}",
+            sanitize_symbol_token(&base_model_cpp_type(&ty.cpp_type))
+        ),
+        "model_reference" => format!(
+            "model_ref_{}",
+            sanitize_symbol_token(&base_model_cpp_type(&ty.cpp_type))
+        ),
+        "model_pointer" => format!(
+            "model_ptr_{}",
+            sanitize_symbol_token(&base_model_cpp_type(&ty.cpp_type))
+        ),
+        _ => sanitize_symbol_token(&ty.cpp_type),
+    }
+}
+
+fn sanitize_symbol_token(value: &str) -> String {
+    let mut out = String::new();
+    let mut last_was_underscore = false;
+
+    for ch in value.chars() {
+        let normalized = if ch.is_ascii_alphanumeric() {
+            Some(ch.to_ascii_lowercase())
+        } else {
+            None
+        };
+
+        match normalized {
+            Some(ch) => {
+                out.push(ch);
+                last_was_underscore = false;
+            }
+            None if !last_was_underscore => {
+                out.push('_');
+                last_was_underscore = true;
+            }
+            None => {}
+        }
+    }
+
+    out.trim_matches('_').to_string()
+}
+
 fn format_symbol_part(config: &Config, value: &str) -> String {
     match config.naming.style.as_str() {
         "preserve" => value.to_string(),
@@ -685,4 +871,17 @@ fn base_model_cpp_type(value: &str) -> String {
         .trim_end_matches('*')
         .trim()
         .to_string()
+}
+
+fn raw_safe_model_handle_name(cpp_type: &str) -> Option<String> {
+    let base = base_model_cpp_type(cpp_type);
+    if base.is_empty()
+        || base.contains('<')
+        || base.starts_with("std::")
+        || is_supported_primitive(&base)
+    {
+        return None;
+    }
+
+    Some(format!("{}Handle", flatten_qualified_cpp_name(&base)))
 }

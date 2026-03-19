@@ -16,4 +16,3 @@
 
 - [ ] Add unsupported-feature diagnostics for templates, overloaded methods, and exception-bearing APIs.
 - [ ] Add more compile-and-run smoke tests across multiple fixture shapes.
-- [ ] Upgrade overload handling from collision detection to deterministic overload-safe wrapper naming.

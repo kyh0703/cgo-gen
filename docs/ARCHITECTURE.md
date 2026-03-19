@@ -24,16 +24,19 @@
 - Lowest-level generated wrapper output.
 - Bridges C++ to stable C ABI.
 - Owns `wrapper.h` / `wrapper.cpp` style artifacts.
-- Hides constructors, destructors, overload flattening, and C++-specific details.
+- Emits physical files under `output.dir/raw/`.
+- Hides constructors, destructors, overload-safe symbol suffixing, and other C++-specific details.
 
 ### Shared model layer
 - Built from files classified as `model`.
 - Produces shared Go structs, enums, typedef mappings, and class projections.
+- Emits physical files under `output.dir/model/`.
 - Represents the common data contracts IE modules should import and reuse.
 
 ### Shared facade layer
 - Built from files classified as `facade`.
 - Produces common Go functions/helpers that return shared Go models.
+- Emits physical files under `output.dir/facade/`.
 - Hides raw iteration, callbacks, native error codes, and native calling conventions.
 
 ## Design principle
@@ -63,13 +66,13 @@ Why `Model, error` instead of `Model, bool, error` by default:
 - it may also mean generic success/failure
 - therefore the safer default shape is `Model, error`
 
-For the current facade slice, the design should prefer **model-aware routing first**:
+For the current facade slice, the design now applies **model-aware routing first**:
 - if the API is tied to a known shared model type in the supported out-param position, it can be routed to model-mapped facade generation
 - if it is not mapped to a known model type, it should remain a regular API when otherwise supported
 - pattern naming alone should not be treated as the primary decision source
 - source implementation details must not be used to infer higher-level helper behavior
 
-## Current implementation note (2026-03-16)
+## Current implementation note (2026-03-19)
 
 - Raw native wrapper generation is implemented and remains the current stable base layer.
 - File-level classification config now exists via `files.model` and `files.facade`.
@@ -78,7 +81,14 @@ For the current facade slice, the design should prefer **model-aware routing fir
   - model/facade semantic classification is determined only by explicit config (`files.model`, `files.facade`).
   - `model` headers can emit Go enum models and auto-project `IsAAMaster`-style getter/setter classes into Go structs.
   - `facade` headers now generate phase-1 Go facade wrappers and still do not emit Go model files.
+  - generated files are now physically separated by layer under `raw/`, `model/`, and `facade/` subdirectories inside `output.dir`.
   - the base supported facade surface is primitive-parameter free functions with primitive/bool/string returns.
   - as a current type-driven extension, facade class methods that fill known `files.model` types via `Model&` / `Model*` out-params can be lifted into `Model, error` Go methods.
+  - unknown non-classified model reference/pointer declarations can now remain in raw wrapper output as opaque handles when the raw renderer can express them safely.
+  - the same unknown model declarations are still filtered out from Go facade/model projection layers unless they map to `files.model`.
+  - raw-unsafe by-value object declarations are now skipped at declaration level and recorded in `support.skipped_declarations` instead of aborting the whole header.
+  - facade method analysis is now separated from rendering so model-mapped methods and general APIs are classified explicitly before Go code generation.
+  - overloaded raw wrapper symbols are now disambiguated deterministically from parameter signatures instead of aborting normalization.
+  - overloaded Go facade exports are also disambiguated for renderable methods such as `GetAAMasterUint32(...)` versus `GetAAMasterString(...)`.
   - namespaced facade functions that would collide in Go export names are rejected during generation.
-- Typedef/DTO model generation, model-mapped collection facade generation, callback facade generation, and richer type-driven facade lifting beyond the first out-param pattern are not implemented yet. The current implementation focus is routing cleanup, not collection helper inference.
+- Typedef/DTO model generation, model-mapped collection facade generation, callback facade generation, and richer type-driven facade lifting beyond the first out-param pattern are not implemented yet. The next implementation focus is inspecting the verified real `iSiLib` output and deciding which additional model headers should be onboarded next without widening the Go boundary unnecessarily.

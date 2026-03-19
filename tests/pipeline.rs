@@ -44,9 +44,9 @@ fn generates_wrapper_files() {
     let ir = ir::normalize(&config, &parsed).unwrap();
     generator::generate(&config, &ir, true).unwrap();
 
-    let header = fs::read_to_string(config.output.dir.join(&config.output.header)).unwrap();
-    let source = fs::read_to_string(config.output.dir.join(&config.output.source)).unwrap();
-    let ir_yaml = fs::read_to_string(config.output.dir.join(&config.output.ir)).unwrap();
+    let header = fs::read_to_string(config.raw_output_dir().join(&config.output.header)).unwrap();
+    let source = fs::read_to_string(config.raw_output_dir().join(&config.output.source)).unwrap();
+    let ir_yaml = fs::read_to_string(config.raw_output_dir().join(&config.output.ir)).unwrap();
 
     assert!(header.contains("typedef struct fooBarHandle fooBarHandle;"));
     assert!(header.contains("int cgowrap_foo_add(int lhs, int rhs);"));

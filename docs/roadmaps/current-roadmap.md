@@ -8,7 +8,7 @@
 - fixture tests
 - libclang parser backend
 - richer type mapping
-- overload collision detection
+- deterministic overload-safe raw/facade naming
 - stronger diagnostics
 - per-header generation support
 - class projection support for selected getter/setter models
@@ -20,7 +20,7 @@
 - [x] validate that classified files are also present in `input.headers`
 - [x] reject overlapping `model` + `facade` classification for the same header
 - [x] treat file classification as the first source of generation intent for current Go projection gating
-- [ ] propagate file classification deeper into dedicated model/facade generation pipelines
+- [x] propagate file classification deeper into dedicated model/facade generation pipelines
 
 ### Phase 2 - raw wrapper stabilization
 - keep raw wrapper generation as the base output layer
@@ -38,6 +38,7 @@
 - [x] support primitive/bool/string return handling in phase-1 facade output
 - [x] reject Go export collisions for namespaced facade functions
 - [x] type-driven single-model facade lifting from `iSiLib`-style out-params
+- [x] separate model-aware facade routing from rendering with regression coverage
 - [ ] model-mapped collection facade generation
 - [ ] callback helper generation
 - [ ] make facade output depend on shared generated models instead of raw/native values
@@ -47,7 +48,7 @@
 - verify model/facade separation in generated outputs
 - prepare the shared wrapping package for IE module adoption
 
-## Current checkpoint (2026-03-16)
+## Current checkpoint (2026-03-19)
 
 Completed in code:
 - config-level `files.model` / `files.facade`
@@ -61,20 +62,20 @@ Completed in code:
 - facade export collision detection with regression tests
 - model out-param recognition in IR/raw wrapper generation
 - `bool Foo(..., Model&/* out)` -> `Foo(...) (Model, error)` facade lifting with regression tests
+- model-aware facade method analysis separated from Go rendering via analyzed facade classes
+- raw-first preservation of unknown model reference/pointer declarations with Go-only filtering
+- declaration-level skip handling for raw-unsafe by-value object types with regression coverage
+- deterministic overload-safe wrapper symbol naming with regression coverage
+- deterministic Go facade overload suffixing for renderable methods and free functions
+- physical output layout separation under `raw/`, `model/`, and `facade/`
 - regression tests for classification loading, validation, and multi-header behavior
 
 Immediate next target:
-- separate model-aware facade routing from rendering and lock the type-based rule with regression tests
+- inspect the verified real `iSiLib` output and decide which additional model headers should be onboarded next
 
 Detailed next steps:
-1. split facade method analysis from Go rendering in `src/facade.rs`
-2. classify facade class methods by explicit signature only:
-   - known supported model out-param -> model-mapped API
-   - otherwise supported primitive/string method -> general API
-3. keep `files.model` as the sole semantic source of truth for model-aware routing
-4. add regression coverage for:
-   - `Model&` out-param
-   - `Model*` out-param
-   - names that look like lookup/list APIs but have no known model type
-   - known model type outside the final supported out-param position
-5. defer iterator/list helper inference until after routing cleanup is stable
+1. keep `files.model` as the sole semantic source of truth for model-aware routing
+2. inspect the resulting `support.skipped_declarations` and distinguish raw-only internal types from candidate public model headers
+3. decide whether any of the currently raw-only SIL model references should become explicit `files.model` onboarding candidates
+4. rerun the facade and multi-header suites, then the full `cargo test` flow in the configured macOS libclang environment
+5. decide which additional model headers should be onboarded next without weakening the Go public boundary
