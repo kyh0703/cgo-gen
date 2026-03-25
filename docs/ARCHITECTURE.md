@@ -91,4 +91,5 @@ For the current facade slice, the design now applies **model-aware routing first
   - overloaded raw wrapper symbols are now disambiguated deterministically from parameter signatures instead of aborting normalization.
   - overloaded Go facade exports are also disambiguated for renderable methods such as `GetAAMasterUint32(...)` versus `GetAAMasterString(...)`.
   - namespaced facade functions that would collide in Go export names are rejected during generation.
-- Typedef/DTO model generation, model-mapped collection facade generation, callback facade generation, and richer type-driven facade lifting beyond the first out-param pattern are not implemented yet. The next implementation focus is inspecting the verified real `iSiLib` output and deciding which additional model headers should be onboarded next without widening the Go boundary unnecessarily.
+- Typedef/DTO model generation, model-mapped collection facade generation, callback facade generation, and richer type-driven facade lifting beyond the first out-param pattern are not implemented yet.
+- Review note (2026-03-25): the current durable real-SIL evidence still supports keeping `IsAAMaster.h` as the only verified checked-in `files.model` path. Raw-visible types such as `IsCluster` and `IsCSTASession` remain non-onboarded until a narrower public-model case is proven.

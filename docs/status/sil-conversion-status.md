@@ -147,11 +147,28 @@ Observed real-SIL evidence:
   - raw-unsafe by-value object declarations such as `SetUserMaster`, `SetDnTrsf`, `RestoreSubsData`
 - real SIL types that carry `NsMap*` / `DsMap*` internals, such as `IsCluster` and `IsCSTASession`, can remain raw-visible without leaking those internal collection details into the generated Go facade
 
+## Reviewed onboarding decision (2026-03-25)
+
+Current durable evidence is still not strong enough to approve any additional checked-in `files.model` header beyond `IsAAMaster.h`.
+
+Reviewed classification:
+
+- keep `IsAAMaster.h` as the verified checked-in `files.model` path
+- keep `iSiLib.h` as the real facade verification surface, not a shared model header
+- keep `IsCluster.h` raw-only for now
+- keep `IsCSTASession.h` raw-only for now
+
+Reason:
+
+- `IsCluster` and `IsCSTASession` are proven raw-visible in the real-SIL flow
+- the current evidence does not yet prove that either header is part of the intended shared Go model contract
+- both types carry transitive `NsMap*` / `DsMap*` style internals, which is exactly the boundary-widening risk this project is trying to avoid
+
 ## Recommended Next Step
 
 For practical progress, prefer:
 
 1. keep `IsAAMaster` as the verified real model path
-2. inspect the real `iSiLib` IR/output and classify raw-only internal types versus candidate public model headers
-3. decide which additional model headers, if any, should be onboarded into `files.model`
+2. treat raw-only internal types as non-onboarded by default unless a narrower public-model case is proven
+3. add a new `files.model` header only after a header-specific review of real `iSiLib` IR/output
 4. avoid widening the Go boundary just because a SIL class transitively contains `NsMap*` or other internal storage helpers

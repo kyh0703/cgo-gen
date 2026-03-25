@@ -1,5 +1,5 @@
 use std::{
-    fs,
+    env, fs,
     path::{Path, PathBuf},
 };
 
@@ -35,7 +35,73 @@ pub fn collect_clang_args(config: &Config, header: &Path) -> Result<Vec<String>>
         args.push("-std=c++17".to_string());
     }
 
+    add_header_parent_include(&mut args, header);
+    add_platform_fallback_includes(&mut args);
+
     Ok(args)
+}
+
+fn add_header_parent_include(args: &mut Vec<String>, header: &Path) {
+    let Some(parent) = header.parent() else {
+        return;
+    };
+    let include = normalize_clang_path(parent);
+    let mut has_parent_include = false;
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        if arg == "-I" || arg == "-isystem" {
+            if iter.next().is_some_and(|value| value == &include) {
+                has_parent_include = true;
+                break;
+            }
+            continue;
+        }
+        if arg == &format!("-I{include}") || arg == &format!("-isystem{include}") {
+            has_parent_include = true;
+            break;
+        }
+    }
+    if !has_parent_include {
+        args.push(format!("-I{include}"));
+    }
+}
+
+fn add_platform_fallback_includes(args: &mut Vec<String>) {
+    if env::consts::OS != "windows" {
+        return;
+    }
+
+    let Some(include) = discover_windows_clang_builtin_include() else {
+        return;
+    };
+    let include = normalize_clang_path(&include);
+    let already_present = args
+        .iter()
+        .any(|arg| arg == &format!("-I{include}") || arg == &format!("-isystem{include}"));
+    if !already_present {
+        args.push(format!("-isystem{include}"));
+    }
+}
+
+fn discover_windows_clang_builtin_include() -> Option<PathBuf> {
+    let roots = [
+        PathBuf::from("C:/msys64/ucrt64/lib/clang"),
+        PathBuf::from("C:/Program Files/LLVM/lib/clang"),
+    ];
+
+    roots
+        .into_iter()
+        .filter_map(|root| latest_versioned_include_dir(&root))
+        .find(|path| path.exists())
+}
+
+fn latest_versioned_include_dir(root: &Path) -> Option<PathBuf> {
+    let entries = fs::read_dir(root).ok()?;
+    entries
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path().join("include"))
+        .filter(|path| path.join("mm_malloc.h").exists())
+        .max()
 }
 
 fn read_compile_db_args(path: &Path, header: &Path) -> Result<Vec<String>> {
@@ -146,9 +212,18 @@ fn resolve_path_base(db_dir: &Path, path: &Path) -> PathBuf {
 fn resolve_include(base: &Path, value: &str) -> String {
     let path = Path::new(value);
     if path.is_absolute() {
-        value.to_string()
+        normalize_clang_path(path)
     } else {
-        base.join(path).display().to_string()
+        normalize_clang_path(&base.join(path))
+    }
+}
+
+fn normalize_clang_path(path: &Path) -> String {
+    let value = path.display().to_string();
+    if env::consts::OS == "windows" {
+        value.strip_prefix(r"\\?\").unwrap_or(&value).to_string()
+    } else {
+        value
     }
 }
 

@@ -71,11 +71,11 @@ Completed in code:
 - regression tests for classification loading, validation, and multi-header behavior
 
 Immediate next target:
-- inspect the verified real `iSiLib` output and decide which additional model headers should be onboarded next
+- keep `IsAAMaster` as the only verified checked-in `files.model` path until a narrower additional public-model header is proven from real `iSiLib` evidence
 
 Detailed next steps:
 1. keep `files.model` as the sole semantic source of truth for model-aware routing
 2. inspect the resulting `support.skipped_declarations` and distinguish raw-only internal types from candidate public model headers
-3. decide whether any of the currently raw-only SIL model references should become explicit `files.model` onboarding candidates
+3. treat currently raw-only SIL model references such as `IsCluster` and `IsCSTASession` as non-onboarded until they satisfy an explicit public-model review
 4. rerun the facade and multi-header suites, then the full `cargo test` flow in the configured macOS libclang environment
-5. decide which additional model headers should be onboarded next without weakening the Go public boundary
+5. only add a new `files.model` header when real-SIL evidence shows it does not widen the Go public boundary unnecessarily

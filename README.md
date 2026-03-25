@@ -205,7 +205,7 @@ func GetAAMaster(...) (IsAAMaster, error)
 - method/function 이름(`List`, `Next`, `Select`)만으로 collection/helper 승격을 결정하지 않는다
 - source 구현을 보고 동작을 추론하지 않는다
 
-현재 다음 구현 타깃은 실제 IPRON include 환경 기준 partial SIL verification과, 그 결과에 따라 어떤 SIL 헤더를 추가로 `files.model`에 onboard할지 정리하는 것이다.
+현재 checked-in 판단은 보수적으로 유지한다: `IsAAMaster`만 검증된 `files.model` 경로로 두고, `IsCluster` / `IsCSTASession` 같은 raw-visible SIL 타입은 추가 public-model 근거가 생기기 전까지 onboard하지 않는다.
 
 ---
 
