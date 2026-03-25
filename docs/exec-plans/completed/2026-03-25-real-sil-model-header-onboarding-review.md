@@ -461,6 +461,16 @@ Expected result:
 - Commit recorded:
   - `a18173a678eaac1ae24f79065f7d259ee8bb21c7` - `docs: record sil model onboarding review`
 - Finalize should:
-  - move this plan to `docs/exec-plans/completed/`
+  - keep this plan under `docs/exec-plans/completed/`
   - preserve the reviewed decision that no additional checked-in `files.model` header is approved yet
   - keep the Windows `libclang` include-path robustness fix as part of this completed review slice
+
+## Close summary
+
+- Close path: close complete + follow-up milestone needed
+- Closed scope:
+  - durable docs now record the reviewed SIL model-header boundary
+  - checked-in policy stays conservative with `IsAAMaster.h` as the only verified checked-in `files.model` path
+  - Windows `libclang` include-path handling is stabilized for the repository's targeted facade-generation checks
+- Follow-up milestone:
+  - if a future local real-SIL rerun provides narrower public-model evidence, start a new plan to review exactly one additional candidate header at a time
