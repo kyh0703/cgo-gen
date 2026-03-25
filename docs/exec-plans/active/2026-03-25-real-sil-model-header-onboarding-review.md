@@ -84,8 +84,8 @@ Out of scope:
 - Strategy: direct execution
 - Status: completed
 - Ready for verify: yes
-- Ready for finalize: no
-- Commit evidence: none yet in this workspace
+- Ready for finalize: yes
+- Commit evidence: `a18173a678eaac1ae24f79065f7d259ee8bb21c7` (`docs: record sil model onboarding review`)
 
 ## Task 1: Reconstruct the exact header-classification decision surface
 
@@ -447,7 +447,7 @@ Expected result:
 
 ## Commit evidence
 
-- pending
+- `a18173a678eaac1ae24f79065f7d259ee8bb21c7` - `docs: record sil model onboarding review`
 
 ## Finalize entry criteria
 
@@ -457,4 +457,10 @@ Expected result:
 
 ## Handoff to finalize
 
-- Ready for finalize once commit evidence is recorded and this plan is moved to `completed/`.
+- Verify completed with no blocking issues.
+- Commit recorded:
+  - `a18173a678eaac1ae24f79065f7d259ee8bb21c7` - `docs: record sil model onboarding review`
+- Finalize should:
+  - move this plan to `docs/exec-plans/completed/`
+  - preserve the reviewed decision that no additional checked-in `files.model` header is approved yet
+  - keep the Windows `libclang` include-path robustness fix as part of this completed review slice
