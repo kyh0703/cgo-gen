@@ -1,3 +1,8 @@
+---
+version: v2
+status: completed
+source: docs/v2/completed/2026-03-19-output-layout-separation.md
+---
 # Output Layout Separation Plan
 
 ## Why this plan exists
@@ -169,8 +174,8 @@ Status: done
 Docs to update:
 - `/Users/kyh0703/Project/cgo-gen/README.md`
 - `/Users/kyh0703/Project/cgo-gen/docs/ARCHITECTURE.md`
-- `/Users/kyh0703/Project/cgo-gen/docs/roadmaps/current-roadmap.md`
-- `/Users/kyh0703/Project/cgo-gen/docs/exec-plans/active/2026-03-19-output-layout-separation.md`
+- `/Users/kyh0703/Project/cgo-gen/docs/v2/research/roadmaps/current-roadmap.md`
+- `/Users/kyh0703/Project/cgo-gen/docs/v2/plans/2026-03-19-output-layout-separation.md`
 
 Expected result:
 - docs distinguish conceptual layer routing from physical output layout and show the new directory tree

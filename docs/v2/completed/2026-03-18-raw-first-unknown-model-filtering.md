@@ -1,3 +1,8 @@
+---
+version: v2
+status: completed
+source: docs/v2/completed/2026-03-18-raw-first-unknown-model-filtering.md
+---
 # Raw-First Unknown-Model Filtering Plan
 
 ## Why this plan exists
@@ -59,8 +64,8 @@ Out of scope:
 - `/Users/kyh0703/Project/cgo-gen/tests/facade_generate.rs`
 - `/Users/kyh0703/Project/cgo-gen/tests/model_out_params.rs`
 - `/Users/kyh0703/Project/cgo-gen/docs/ARCHITECTURE.md`
-- `/Users/kyh0703/Project/cgo-gen/docs/roadmaps/current-roadmap.md`
-- `/Users/kyh0703/Project/cgo-gen/docs/status/sil-conversion-status.md`
+- `/Users/kyh0703/Project/cgo-gen/docs/v2/research/roadmaps/current-roadmap.md`
+- `/Users/kyh0703/Project/cgo-gen/docs/v2/research/status/sil-conversion-status.md`
 
 ## Task 1: Lock the intended raw-first behavior with regression tests
 
@@ -184,7 +189,7 @@ cargo test raw_unknown_model_reference --test facade_generate -- --nocapture
 ```
 
 Expected result:
-- the new red test moves from “missing wrapper symbol” toward the intended raw-preserved shape
+- the new red test moves from "missing wrapper symbol" toward the intended raw-preserved shape
 
 ## Task 3: Filter unknown models only in Go facade analysis
 
@@ -203,7 +208,7 @@ Target behavior:
 - declarations with unknown model refs/pointers are excluded from Go facade generation instead of being lifted or rendered as general APIs
 
 Suggested substeps:
-1. add a small helper that detects “has model ref/pointer but no known projection”
+1. add a small helper that detects "has model ref/pointer but no known projection"
 2. keep returning `None` from facade classification for those declarations
 3. leave known-model lifting and primitive/string general API behavior unchanged
 
@@ -248,7 +253,7 @@ Assertions to add:
 - generated `.go` does not contain the same method
 
 Expected result:
-- the test proves “raw survives, Go filters”
+- the test proves "raw survives, Go filters"
 
 ### 4.2 Run targeted tests
 
@@ -298,8 +303,8 @@ Integration: docs should describe the landed behavior, not the temporary skip
 Docs to update:
 - `/Users/kyh0703/Project/cgo-gen/README.md`
 - `/Users/kyh0703/Project/cgo-gen/docs/ARCHITECTURE.md`
-- `/Users/kyh0703/Project/cgo-gen/docs/roadmaps/current-roadmap.md`
-- `/Users/kyh0703/Project/cgo-gen/docs/status/sil-conversion-status.md`
+- `/Users/kyh0703/Project/cgo-gen/docs/v2/research/roadmaps/current-roadmap.md`
+- `/Users/kyh0703/Project/cgo-gen/docs/v2/research/status/sil-conversion-status.md`
 
 Update goals:
 - clarify that unknown model reference/pointer declarations can survive in raw wrappers
@@ -308,8 +313,8 @@ Update goals:
 
 Commands:
 ```bash
-rg -n "unknown model|raw|facade|files.model|skip" /Users/kyh0703/Project/cgo-gen/README.md /Users/kyh0703/Project/cgo-gen/docs/ARCHITECTURE.md /Users/kyh0703/Project/cgo-gen/docs/roadmaps/current-roadmap.md /Users/kyh0703/Project/cgo-gen/docs/status/sil-conversion-status.md
-git diff -- /Users/kyh0703/Project/cgo-gen/README.md /Users/kyh0703/Project/cgo-gen/docs/ARCHITECTURE.md /Users/kyh0703/Project/cgo-gen/docs/roadmaps/current-roadmap.md /Users/kyh0703/Project/cgo-gen/docs/status/sil-conversion-status.md
+rg -n "unknown model|raw|facade|files.model|skip" /Users/kyh0703/Project/cgo-gen/README.md /Users/kyh0703/Project/cgo-gen/docs/ARCHITECTURE.md /Users/kyh0703/Project/cgo-gen/docs/v2/research/roadmaps/current-roadmap.md /Users/kyh0703/Project/cgo-gen/docs/v2/research/status/sil-conversion-status.md
+git diff -- /Users/kyh0703/Project/cgo-gen/README.md /Users/kyh0703/Project/cgo-gen/docs/ARCHITECTURE.md /Users/kyh0703/Project/cgo-gen/docs/v2/research/roadmaps/current-roadmap.md /Users/kyh0703/Project/cgo-gen/docs/v2/research/status/sil-conversion-status.md
 ```
 
 Expected result:
@@ -322,7 +327,7 @@ Parallelizable: final step only
 Integration: keeps active plan inventory accurate
 
 Steps:
-1. after implementation and verification, move this file to `/Users/kyh0703/Project/cgo-gen/docs/exec-plans/completed/` if that directory exists, or create it as part of doc lifecycle cleanup if the team wants completed-plan tracking
+1. after implementation and verification, move this file to `/Users/kyh0703/Project/cgo-gen/docs/v2/completed/` if that directory exists, or create it as part of doc lifecycle cleanup if the team wants completed-plan tracking
 2. if `/Users/kyh0703/Project/cgo-gen/docs/AGENTS.md` and `/Users/kyh0703/Project/cgo-gen/docs/PLANS.md` are still absent, note that future planner runs will continue to rely on repository-root guidance and ad hoc plan discovery
 
 Expected result:

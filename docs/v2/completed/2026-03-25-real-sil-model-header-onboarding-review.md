@@ -1,3 +1,8 @@
+---
+version: v2
+status: completed
+source: docs/v2/completed/2026-03-25-real-sil-model-header-onboarding-review.md
+---
 # Real SIL Model Header Onboarding Review Plan
 
 ## Why this plan exists
@@ -21,9 +26,9 @@ Planning gaps discovered while preparing this plan:
 
 - `/Users/kyh0703/Project/cgo-gen/docs/AGENTS.md` is missing in this repository layout
 - `/Users/kyh0703/Project/cgo-gen/docs/PLANS.md` is missing in this repository layout
-- `/Users/kyh0703/Project/cgo-gen/docs/references/exec-plan-template.md` is missing
-- `/Users/kyh0703/Project/cgo-gen/docs/references/plan-quality-checklist.md` is missing
-- `/Users/kyh0703/Project/cgo-gen/docs/references/docs-update-rules.md` is missing
+- `/Users/kyh0703/Project/cgo-gen/docs/v2/research/references/exec-plan-template.md` is missing
+- `/Users/kyh0703/Project/cgo-gen/docs/v2/research/references/plan-quality-checklist.md` is missing
+- `/Users/kyh0703/Project/cgo-gen/docs/v2/research/references/docs-update-rules.md` is missing
 
 This plan therefore uses the repository's existing completed exec-plan style as the local source of truth.
 
@@ -67,10 +72,10 @@ Out of scope:
 ## Files to read first
 
 - `/Users/kyh0703/Project/cgo-gen/docs/ARCHITECTURE.md`
-- `/Users/kyh0703/Project/cgo-gen/docs/PRODUCT.md`
-- `/Users/kyh0703/Project/cgo-gen/docs/roadmaps/current-roadmap.md`
-- `/Users/kyh0703/Project/cgo-gen/docs/status/sil-conversion-status.md`
-- `/Users/kyh0703/Project/cgo-gen/docs/design-docs/wrapping-package-plan.md`
+- `/Users/kyh0703/Project/cgo-gen/docs/v2/designs/PRODUCT.md`
+- `/Users/kyh0703/Project/cgo-gen/docs/v2/research/roadmaps/current-roadmap.md`
+- `/Users/kyh0703/Project/cgo-gen/docs/v2/research/status/sil-conversion-status.md`
+- `/Users/kyh0703/Project/cgo-gen/docs/v2/designs/wrapping-package-plan.md`
 - `/Users/kyh0703/Project/cgo-gen/configs/sil-wrapper.example.yaml`
 - `/Users/kyh0703/Project/cgo-gen/src/config.rs`
 - `/Users/kyh0703/Project/cgo-gen/src/model.rs`
@@ -99,13 +104,13 @@ Status: completed
 Read:
 
 - `/Users/kyh0703/Project/cgo-gen/docs/ARCHITECTURE.md`
-- `/Users/kyh0703/Project/cgo-gen/docs/status/sil-conversion-status.md`
-- `/Users/kyh0703/Project/cgo-gen/docs/roadmaps/current-roadmap.md`
+- `/Users/kyh0703/Project/cgo-gen/docs/v2/research/status/sil-conversion-status.md`
+- `/Users/kyh0703/Project/cgo-gen/docs/v2/research/roadmaps/current-roadmap.md`
 
 Verification:
 
 ```bash
-rg -n "files.model|raw-only|raw-first|skipped_declarations|iSiLib|IsAAMaster|NsMap|DsMap" docs/ARCHITECTURE.md docs/status/sil-conversion-status.md docs/roadmaps/current-roadmap.md
+rg -n "files.model|raw-only|raw-first|skipped_declarations|iSiLib|IsAAMaster|NsMap|DsMap" docs/ARCHITECTURE.md docs/v2/research/status/sil-conversion-status.md docs/v2/research/roadmaps/current-roadmap.md
 ```
 
 Expected result:
@@ -145,8 +150,8 @@ Execution notes:
 
 - documented boundary rules were confirmed from:
   - `/Users/kyh0703/Project/cgo-gen/docs/ARCHITECTURE.md`
-  - `/Users/kyh0703/Project/cgo-gen/docs/status/sil-conversion-status.md`
-  - `/Users/kyh0703/Project/cgo-gen/docs/roadmaps/current-roadmap.md`
+  - `/Users/kyh0703/Project/cgo-gen/docs/v2/research/status/sil-conversion-status.md`
+  - `/Users/kyh0703/Project/cgo-gen/docs/v2/research/roadmaps/current-roadmap.md`
 - checked-in SIL example config keeps a narrow boundary already:
   - `files.model`: `IsAAMaster.h`
   - `files.facade`: `IsAAUser.h`
@@ -218,7 +223,7 @@ Execution notes:
 
 - no local real-SIL rerun was performed in this workspace because the repository does not include machine-specific IPRON include roots
 - durable evidence already checked into:
-  - `/Users/kyh0703/Project/cgo-gen/docs/status/sil-conversion-status.md`
+  - `/Users/kyh0703/Project/cgo-gen/docs/v2/research/status/sil-conversion-status.md`
   - `/Users/kyh0703/Project/cgo-gen/docs/ARCHITECTURE.md`
   was used as the review source of truth
 - based on that evidence, `IsCluster.h` and `IsCSTASession.h` remain raw-only and non-onboarded
@@ -246,18 +251,18 @@ Expected result:
 
 - a single explicit decision with rationale
 
-### 3.2 If the decision is “no new header,” update only docs/status evidence
+### 3.2 If the decision is "no new header," update only docs/status evidence
 
 Modify if needed:
 
-- `/Users/kyh0703/Project/cgo-gen/docs/status/sil-conversion-status.md`
-- `/Users/kyh0703/Project/cgo-gen/docs/roadmaps/current-roadmap.md`
+- `/Users/kyh0703/Project/cgo-gen/docs/v2/research/status/sil-conversion-status.md`
+- `/Users/kyh0703/Project/cgo-gen/docs/v2/research/roadmaps/current-roadmap.md`
 
 Expected result:
 
 - docs say the review was completed and no additional onboarding was approved yet
 
-### 3.3 If the decision is “one new header,” keep the code/config diff narrow
+### 3.3 If the decision is "one new header," keep the code/config diff narrow
 
 Modify only as needed:
 
@@ -293,9 +298,9 @@ Docs to update:
 
 - `/Users/kyh0703/Project/cgo-gen/README.md`
 - `/Users/kyh0703/Project/cgo-gen/docs/ARCHITECTURE.md`
-- `/Users/kyh0703/Project/cgo-gen/docs/roadmaps/current-roadmap.md`
-- `/Users/kyh0703/Project/cgo-gen/docs/status/sil-conversion-status.md`
-- `/Users/kyh0703/Project/cgo-gen/docs/exec-plans/active/2026-03-25-real-sil-model-header-onboarding-review.md`
+- `/Users/kyh0703/Project/cgo-gen/docs/v2/research/roadmaps/current-roadmap.md`
+- `/Users/kyh0703/Project/cgo-gen/docs/v2/research/status/sil-conversion-status.md`
+- `/Users/kyh0703/Project/cgo-gen/docs/v2/plans/2026-03-25-real-sil-model-header-onboarding-review.md`
 
 Required doc changes:
 
@@ -307,7 +312,7 @@ Required doc changes:
 Verification:
 
 ```bash
-rg -n "files.model|raw-only|Go-visible|onboard|iSiLib|IsAAMaster|NsMap|DsMap" README.md docs/ARCHITECTURE.md docs/roadmaps/current-roadmap.md docs/status/sil-conversion-status.md
+rg -n "files.model|raw-only|Go-visible|onboard|iSiLib|IsAAMaster|NsMap|DsMap" README.md docs/ARCHITECTURE.md docs/v2/research/roadmaps/current-roadmap.md docs/v2/research/status/sil-conversion-status.md
 ```
 
 Expected result:
@@ -380,9 +385,9 @@ Expected result:
 
 - `/Users/kyh0703/Project/cgo-gen/README.md`
 - `/Users/kyh0703/Project/cgo-gen/docs/ARCHITECTURE.md`
-- `/Users/kyh0703/Project/cgo-gen/docs/roadmaps/current-roadmap.md`
-- `/Users/kyh0703/Project/cgo-gen/docs/status/sil-conversion-status.md`
-- `/Users/kyh0703/Project/cgo-gen/docs/exec-plans/active/2026-03-25-real-sil-model-header-onboarding-review.md`
+- `/Users/kyh0703/Project/cgo-gen/docs/v2/research/roadmaps/current-roadmap.md`
+- `/Users/kyh0703/Project/cgo-gen/docs/v2/research/status/sil-conversion-status.md`
+- `/Users/kyh0703/Project/cgo-gen/docs/v2/plans/2026-03-25-real-sil-model-header-onboarding-review.md`
 
 ### Code updated in this turn
 
@@ -403,8 +408,8 @@ Expected result:
 | --- | --- | --- | --- |
 | `IsAAMaster.h` | durable docs + checked-in example config | keep `files.model` | already verified shared model path and the only checked-in public-model classification |
 | `iSiLib.h` | durable docs describing real-SIL verification surface | keep facade-only status | real facade verification surface, not a shared model header |
-| `IsCluster.h` | durable real-SIL evidence in `docs/status/sil-conversion-status.md` | keep raw-only for now | raw-visible, but not yet justified as a Go-visible shared model and carries transitive internal storage concerns |
-| `IsCSTASession.h` | durable real-SIL evidence in `docs/status/sil-conversion-status.md` | keep raw-only for now | raw-visible, but not yet justified as a Go-visible shared model and carries transitive internal storage concerns |
+| `IsCluster.h` | durable real-SIL evidence in `docs/v2/research/status/sil-conversion-status.md` | keep raw-only for now | raw-visible, but not yet justified as a Go-visible shared model and carries transitive internal storage concerns |
+| `IsCSTASession.h` | durable real-SIL evidence in `docs/v2/research/status/sil-conversion-status.md` | keep raw-only for now | raw-visible, but not yet justified as a Go-visible shared model and carries transitive internal storage concerns |
 
 ## Verify entry criteria
 
@@ -428,8 +433,8 @@ Expected result:
 - Updated docs:
   - `README.md`
   - `docs/ARCHITECTURE.md`
-  - `docs/roadmaps/current-roadmap.md`
-  - `docs/status/sil-conversion-status.md`
+  - `docs/v2/research/roadmaps/current-roadmap.md`
+  - `docs/v2/research/status/sil-conversion-status.md`
 - Additional code fix required by verification:
   - `src/compiler.rs`
 - Remaining risk:
@@ -453,7 +458,7 @@ Expected result:
 
 - verify review has no unresolved blocker for the chosen narrow classification decision
 - the active plan records final decision, evidence, and any remaining follow-up
-- the plan is ready to move to `docs/exec-plans/completed/`
+- the plan is ready to move to `docs/v2/completed/`
 
 ## Handoff to finalize
 
@@ -461,7 +466,7 @@ Expected result:
 - Commit recorded:
   - `a18173a678eaac1ae24f79065f7d259ee8bb21c7` - `docs: record sil model onboarding review`
 - Finalize should:
-  - keep this plan under `docs/exec-plans/completed/`
+  - keep this plan under `docs/v2/completed/`
   - preserve the reviewed decision that no additional checked-in `files.model` header is approved yet
   - keep the Windows `libclang` include-path robustness fix as part of this completed review slice
 
