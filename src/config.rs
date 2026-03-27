@@ -51,6 +51,8 @@ pub struct InputConfig {
     pub compile_commands: Option<PathBuf>,
     #[serde(default)]
     pub clang_args: Vec<String>,
+    #[serde(default)]
+    pub allow_diagnostics: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

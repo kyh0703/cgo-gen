@@ -122,6 +122,10 @@ pub fn parse(config: &Config) -> Result<ParsedApi> {
 
             let diagnostics = collect_diagnostics(translation_unit);
             if !diagnostics.is_empty() {
+                if config.input.allow_diagnostics {
+                    clang_disposeTranslationUnit(translation_unit);
+                    continue;
+                }
                 clang_disposeTranslationUnit(translation_unit);
                 bail!(
                     "libclang reported diagnostics while parsing {}:\n{}",
