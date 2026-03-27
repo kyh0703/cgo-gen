@@ -1,3 +1,8 @@
+---
+version: v2
+status: completed
+source: docs/v2/completed/2026-03-19-internal-type-go-boundary.md
+---
 # Internal-Type Go Boundary Plan
 
 ## Why this plan exists
@@ -15,9 +20,9 @@ The currently in-progress raw-first work already covers unknown reference/pointe
 Planning gaps discovered while preparing this plan:
 - `/Users/kyh0703/Project/cgo-gen/docs/AGENTS.md` is missing
 - `/Users/kyh0703/Project/cgo-gen/docs/PLANS.md` is missing
-- `/Users/kyh0703/Project/cgo-gen/docs/references/exec-plan-template.md` is missing
-- `/Users/kyh0703/Project/cgo-gen/docs/references/plan-quality-checklist.md` is missing
-- `/Users/kyh0703/Project/cgo-gen/docs/references/docs-update-rules.md` is missing
+- `/Users/kyh0703/Project/cgo-gen/docs/v2/research/references/exec-plan-template.md` is missing
+- `/Users/kyh0703/Project/cgo-gen/docs/v2/research/references/plan-quality-checklist.md` is missing
+- `/Users/kyh0703/Project/cgo-gen/docs/v2/research/references/docs-update-rules.md` is missing
 - `NsMap` does not appear in the repository today; treat it as a real-SIL example from the external IPRON header surface, not as an in-repo fixture name
 
 ## Outcome
@@ -32,7 +37,7 @@ Planning gaps discovered while preparing this plan:
 In scope:
 - policy for unknown by-value argument and return types
 - IR normalization behavior for raw-unsafe internal/non-model declarations
-- regression coverage for “Go must not know this type”
+- regression coverage for "Go must not know this type"
 - real `iSiLib` verification flow using the correct local include roots
 - documentation updates after the policy is locked
 
@@ -58,8 +63,8 @@ Out of scope:
 - `/Users/kyh0703/Project/cgo-gen/tests/facade_generate.rs`
 - `/Users/kyh0703/Project/cgo-gen/tests/function_pointer_skip.rs`
 - `/Users/kyh0703/Project/cgo-gen/docs/ARCHITECTURE.md`
-- `/Users/kyh0703/Project/cgo-gen/docs/roadmaps/current-roadmap.md`
-- `/Users/kyh0703/Project/cgo-gen/docs/status/sil-conversion-status.md`
+- `/Users/kyh0703/Project/cgo-gen/docs/v2/research/roadmaps/current-roadmap.md`
+- `/Users/kyh0703/Project/cgo-gen/docs/v2/research/status/sil-conversion-status.md`
 - `/Users/kyh0703/Project/cgo-gen/configs/sil-wrapper.example.yaml`
 
 ## Execution status
@@ -275,11 +280,11 @@ Actual result:
   - `IsCSTASession.h` includes `NsMapStr.h`
   - `IEMemory.h` defines many `DsMap*` / `NsMap*` aliases for SIL storage
 
-### 3.3 Decide whether any “internal” types were misclassified and should actually be onboarded
+### 3.3 Decide whether any "internal" types were misclassified and should actually be onboarded
 
 Read:
 - generated IR and skipped declaration output from 3.2
-- `/Users/kyh0703/Project/cgo-gen/docs/design-docs/wrapping-package-plan.md`
+- `/Users/kyh0703/Project/cgo-gen/docs/v2/designs/wrapping-package-plan.md`
 
 Expected result:
 - document a small allowlist of truly public shared model headers if needed
@@ -300,9 +305,9 @@ Status: done
 Docs to update:
 - `/Users/kyh0703/Project/cgo-gen/README.md`
 - `/Users/kyh0703/Project/cgo-gen/docs/ARCHITECTURE.md`
-- `/Users/kyh0703/Project/cgo-gen/docs/roadmaps/current-roadmap.md`
-- `/Users/kyh0703/Project/cgo-gen/docs/status/sil-conversion-status.md`
-- `/Users/kyh0703/Project/cgo-gen/docs/exec-plans/active/2026-03-19-internal-type-go-boundary.md`
+- `/Users/kyh0703/Project/cgo-gen/docs/v2/research/roadmaps/current-roadmap.md`
+- `/Users/kyh0703/Project/cgo-gen/docs/v2/research/status/sil-conversion-status.md`
+- `/Users/kyh0703/Project/cgo-gen/docs/v2/plans/2026-03-19-internal-type-go-boundary.md`
 
 Required doc changes:
 - state that Go-visible model/facade types are gated by `files.model`
@@ -312,11 +317,11 @@ Required doc changes:
 
 Commands:
 ```bash
-rg -n "files.model|unknown model|raw-first|by-value|iSiLib|skip" /Users/kyh0703/Project/cgo-gen/README.md /Users/kyh0703/Project/cgo-gen/docs/ARCHITECTURE.md /Users/kyh0703/Project/cgo-gen/docs/roadmaps/current-roadmap.md /Users/kyh0703/Project/cgo-gen/docs/status/sil-conversion-status.md
+rg -n "files.model|unknown model|raw-first|by-value|iSiLib|skip" /Users/kyh0703/Project/cgo-gen/README.md /Users/kyh0703/Project/cgo-gen/docs/ARCHITECTURE.md /Users/kyh0703/Project/cgo-gen/docs/v2/research/roadmaps/current-roadmap.md /Users/kyh0703/Project/cgo-gen/docs/v2/research/status/sil-conversion-status.md
 ```
 
 Expected result:
-- docs explain the boundary cleanly enough that “Go does not need to know `NsMap`” is an explicit project rule, not just tribal knowledge
+- docs explain the boundary cleanly enough that "Go does not need to know `NsMap`" is an explicit project rule, not just tribal knowledge
 
 ## Task 5: Final verification and plan lifecycle
 
@@ -340,7 +345,7 @@ Expected result:
 - real-SIL verification evidence is captured separately if the external environment is available
 
 Completion notes:
-- once implementation and docs are complete, move this file to `docs/exec-plans/completed/`
+- once implementation and docs are complete, move this file to `docs/v2/completed/`
 - final report should call out:
   - changed files
   - simplifications made at the Go boundary

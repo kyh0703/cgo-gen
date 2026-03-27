@@ -1,6 +1,12 @@
 # SIL Conversion Status
 
-Updated: 2026-03-19
+Updated: 2026-03-27
+
+## Reset state
+
+- 상태: archived snapshot
+- 활성 SIL 작업: none
+- 남아 있던 문서 작업은 모두 종료 처리되었습니다.
 
 ## Summary
 
