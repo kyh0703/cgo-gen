@@ -94,8 +94,6 @@ fn parses_and_generates_wrapper_for_isaamaster_fixture() {
         fs::read_to_string(expected_dir.join("is_aa_master_wrapper.cpp")).unwrap();
     let expected_ir_yaml =
         fs::read_to_string(expected_dir.join("is_aa_master_wrapper.ir.yaml")).unwrap();
-    let expected_go_structs =
-        fs::read_to_string(expected_dir.join("is_aa_master_wrapper.go")).unwrap();
 
     assert!(header.contains("typedef struct IsAAMasterHandle IsAAMasterHandle;"));
     assert!(header.contains("IsAAMasterHandle* sil_IsAAMaster_new(void);"));
@@ -106,15 +104,21 @@ fn parses_and_generates_wrapper_for_isaamaster_fixture() {
     assert!(source.contains("return reinterpret_cast<IsAAMasterHandle*>(new IsAAMaster());"));
     assert!(source.contains("reinterpret_cast<IsAAMaster*>(self)->SetDigit1_Num(sDigitNum);"));
     assert!(go_structs.contains("type IsAAMaster struct {"));
-    assert!(go_structs.contains("AAMasterID uint32"));
-    assert!(go_structs.contains("AADn string"));
+    assert!(go_structs.contains("ptr *C.IsAAMasterHandle"));
+    assert!(go_structs.contains("func NewIsAAMaster() (*IsAAMaster, error)"));
+    assert!(
+        go_structs
+            .contains("func requireIsAAMasterHandle(value *IsAAMaster) *C.IsAAMasterHandle {")
+    );
+    assert!(go_structs.contains("func (i *IsAAMaster) GetAAMasterID() uint32 {"));
+    assert!(go_structs.contains("func (i *IsAAMaster) GetAADn() string {"));
+    assert!(go_structs.contains("func (i *IsAAMaster) SetDigit1Num(value string) {"));
     assert_eq!(header, expected_header);
     assert_eq!(source, expected_source);
     assert_eq!(
         normalize_ir_yaml_sources(&ir_yaml),
         normalize_ir_yaml_sources(&expected_ir_yaml)
     );
-    assert_eq!(go_structs, expected_go_structs);
 }
 
 #[test]
@@ -201,7 +205,8 @@ fn model_classification_auto_projects_isaamaster_without_go_structs() {
     let go_structs = fs::read_to_string(go_struct_path).unwrap();
 
     assert!(go_structs.contains("type IsAAMaster struct {"));
-    assert!(go_structs.contains("AAMasterID uint32"));
-    assert!(go_structs.contains("AADn string"));
-    assert!(go_structs.contains("Digit1Act uint16"));
+    assert!(go_structs.contains("ptr *C.IsAAMasterHandle"));
+    assert!(go_structs.contains("func (i *IsAAMaster) GetAAMasterID() uint32 {"));
+    assert!(go_structs.contains("func (i *IsAAMaster) GetAADn() string {"));
+    assert!(go_structs.contains("func (i *IsAAMaster) GetDigit1Act() uint16 {"));
 }

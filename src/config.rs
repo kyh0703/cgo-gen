@@ -41,6 +41,7 @@ pub struct KnownModelField {
     pub go_name: String,
     pub go_type: String,
     pub getter_symbol: String,
+    pub setter_symbol: String,
     pub return_kind: String,
 }
 
@@ -181,6 +182,72 @@ fn default_skip() -> String {
     "skip".to_string()
 }
 
+fn resolve_relative_clang_args(args: &mut Vec<String>, base_dir: &Path) {
+    let mut resolved = Vec::with_capacity(args.len());
+    let mut index = 0;
+
+    while index < args.len() {
+        let arg = &args[index];
+
+        if arg == "-I" || arg == "-isystem" {
+            resolved.push(arg.clone());
+            if let Some(value) = args.get(index + 1) {
+                resolved.push(resolve_relative_clang_path_arg(value, base_dir));
+                index += 2;
+                continue;
+            }
+            index += 1;
+            continue;
+        }
+
+        if let Some(value) = arg.strip_prefix("-I") {
+            resolved.push(format!(
+                "-I{}",
+                resolve_relative_clang_path_arg(value, base_dir)
+            ));
+            index += 1;
+            continue;
+        }
+
+        if let Some(value) = arg.strip_prefix("-isystem") {
+            resolved.push(format!(
+                "-isystem{}",
+                resolve_relative_clang_path_arg(value, base_dir)
+            ));
+            index += 1;
+            continue;
+        }
+
+        resolved.push(arg.clone());
+        index += 1;
+    }
+
+    *args = resolved;
+}
+
+fn resolve_relative_clang_path_arg(value: &str, base_dir: &Path) -> String {
+    if value.is_empty() {
+        return String::new();
+    }
+
+    let path = Path::new(value);
+    if path.is_absolute() {
+        return value.to_string();
+    }
+
+    let joined = base_dir.join(path);
+    normalize_clang_config_path(&joined.canonicalize().unwrap_or(joined))
+}
+
+fn normalize_clang_config_path(path: &Path) -> String {
+    let value = path.display().to_string();
+    if cfg!(windows) {
+        value.strip_prefix(r"\\?\").unwrap_or(&value).to_string()
+    } else {
+        value
+    }
+}
+
 impl Config {
     pub fn load(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
@@ -228,6 +295,7 @@ impl Config {
                 *compdb = canonical;
             }
         }
+        resolve_relative_clang_args(&mut self.input.clang_args, base_dir);
         for header in &mut self.files.model {
             if header.is_relative() {
                 *header = base_dir.join(&*header);
@@ -304,15 +372,15 @@ impl Config {
     }
 
     pub fn model_output_dir(&self) -> PathBuf {
-        self.output.dir.join("model")
+        self.output.dir.clone()
     }
 
     pub fn facade_output_dir(&self) -> PathBuf {
-        self.output.dir.join("facade")
+        self.output.dir.clone()
     }
 
     pub fn raw_include_for_go(&self, header: &str) -> String {
-        format!("../raw/{header}")
+        format!("raw/{header}")
     }
 
     fn apply_output_defaults(&mut self) {

@@ -83,7 +83,8 @@ naming:
 
     assert!(go_facade.contains("import \"errors\""));
     assert!(go_facade.contains("func IsReady() bool {"));
-    assert!(go_facade.contains("return bool(C.cgowrap_is_ready())"));
+    assert!(go_facade.contains("result := C.cgowrap_is_ready()"));
+    assert!(go_facade.contains("return bool(result)"));
     assert!(go_facade.contains("func Version() (string, error) {"));
     assert!(go_facade.contains("raw := C.cgowrap_version()"));
     assert!(go_facade.contains("defer C.cgowrap_string_free(raw)"));
@@ -147,7 +148,7 @@ naming:
 }
 
 #[test]
-fn lifts_known_model_out_param_methods_into_model_returning_facade_methods() {
+fn renders_known_model_methods_as_handle_backed_wrapper_calls() {
     let root = temp_output_dir("model-method");
     let include_dir = root.join("include");
     fs::create_dir_all(&include_dir).unwrap();
@@ -209,7 +210,20 @@ naming:
     let config = Config::load(&config_path).unwrap();
     generator::generate_all(&config, true).unwrap();
 
-    let go_facade = fs::read_to_string(root.join("out/facade/api_wrapper.go")).unwrap();
+    let go_model = fs::read_to_string(root.join("out/thing_model_wrapper.go")).unwrap();
+    let go_facade = fs::read_to_string(root.join("out/api_wrapper.go")).unwrap();
+
+    assert!(go_model.contains("type ThingModel struct {"));
+    assert!(go_model.contains("ptr *C.ThingModelHandle"));
+    assert!(go_model.contains("func NewThingModel() (*ThingModel, error) {"));
+    assert!(
+        go_model.contains("func requireThingModelHandle(value *ThingModel) *C.ThingModelHandle {")
+    );
+    assert!(
+        go_model.contains("func optionalThingModelHandle(value *ThingModel) *C.ThingModelHandle {")
+    );
+    assert!(go_model.contains("func (t *ThingModel) GetValue() int {"));
+    assert!(go_model.contains("func (t *ThingModel) SetValue(value int) {"));
 
     assert!(go_facade.contains("type Api struct {"));
     assert!(go_facade.contains("ptr *C.ApiHandle"));
@@ -218,21 +232,23 @@ naming:
     assert!(go_facade.contains("func (a *Api) Close() {"));
     assert!(go_facade.contains("C.cgowrap_Api_delete(a.ptr)"));
     assert!(go_facade.contains("func (a *Api) IsReady() bool {"));
-    assert!(go_facade.contains("return bool(C.cgowrap_Api_IsReady(a.ptr))"));
+    assert!(go_facade.contains("result := C.cgowrap_Api_IsReady(a.ptr)"));
+    assert!(go_facade.contains("return bool(result)"));
     assert!(go_facade.contains("func (a *Api) Clear() int {"));
-    assert!(go_facade.contains("return int(C.cgowrap_Api_Clear(a.ptr))"));
-    assert!(go_facade.contains("func (a *Api) GetThing(id int) (ThingModel, error) {"));
-    assert!(go_facade.contains("out := C.cgowrap_ThingModel_new()"));
-    assert!(go_facade.contains("C.cgowrap_Api_GetThing(a.ptr, C.int(id), out)"));
-    assert!(go_facade.contains("return mapThingModelFromHandle(out), nil"));
-    assert!(go_facade.contains("func (a *Api) GetThingByKey(key string) (ThingModel, error) {"));
+    assert!(go_facade.contains("result := C.cgowrap_Api_Clear(a.ptr)"));
+    assert!(go_facade.contains("return int(result)"));
+    assert!(go_facade.contains("func (a *Api) GetThing(id int, out *ThingModel) bool {"));
+    assert!(go_facade.contains(
+        "result := C.cgowrap_Api_GetThing(a.ptr, C.int(id), requireThingModelHandle(out))"
+    ));
+    assert!(go_facade.contains("return bool(result)"));
+    assert!(go_facade.contains("func (a *Api) GetThingByKey(key string, out *ThingModel) bool {"));
     assert!(go_facade.contains("cArg0 := C.CString(key)"));
     assert!(go_facade.contains("defer C.free(unsafe.Pointer(cArg0))"));
-    assert!(go_facade.contains("C.cgowrap_Api_GetThingByKey(a.ptr, cArg0, out)"));
-    assert!(
-        go_facade.contains("func mapThingModelFromHandle(handle *C.ThingModelHandle) ThingModel {")
-    );
-    assert!(go_facade.contains("model.Value = int(C.cgowrap_ThingModel_GetValue(handle))"));
+    assert!(go_facade.contains(
+        "result := C.cgowrap_Api_GetThingByKey(a.ptr, cArg0, optionalThingModelHandle(out))"
+    ));
+    assert!(!go_facade.contains("mapThingModelFromHandle"));
 }
 
 #[test]
@@ -312,7 +328,7 @@ naming:
     let raw_header = fs::read_to_string(root.join("out/raw/api_wrapper.h")).unwrap();
     let raw_source = fs::read_to_string(root.join("out/raw/api_wrapper.cpp")).unwrap();
     let ir_yaml = fs::read_to_string(root.join("out/raw/api_wrapper.ir.yaml")).unwrap();
-    let go_facade = fs::read_to_string(root.join("out/facade/api_wrapper.go")).unwrap();
+    let go_facade = fs::read_to_string(root.join("out/api_wrapper.go")).unwrap();
 
     assert!(raw_header.contains("typedef struct UnknownThingHandle UnknownThingHandle;"));
     assert!(raw_header.contains(
@@ -322,8 +338,9 @@ naming:
     assert!(raw_source.contains("*reinterpret_cast<UnknownThing*>(out)"));
     assert!(ir_yaml.contains("cpp_name: Api::GetUnknown"));
     assert!(go_facade.contains("func (a *Api) Count() int {"));
-    assert!(go_facade.contains("return int(C.cgowrap_Api_Count(a.ptr))"));
-    assert!(go_facade.contains("func (a *Api) GetThing(id int) (ThingModel, error) {"));
+    assert!(go_facade.contains("result := C.cgowrap_Api_Count(a.ptr)"));
+    assert!(go_facade.contains("return int(result)"));
+    assert!(go_facade.contains("func (a *Api) GetThing(id int, out *ThingModel) bool {"));
     assert!(!go_facade.contains("GetUnknown("));
     assert!(!go_facade.contains("UnknownThingHandle"));
 }
@@ -409,7 +426,7 @@ naming:
     let raw_header = fs::read_to_string(root.join("out/raw/api_wrapper.h")).unwrap();
     let raw_source = fs::read_to_string(root.join("out/raw/api_wrapper.cpp")).unwrap();
     let ir_yaml = fs::read_to_string(root.join("out/raw/api_wrapper.ir.yaml")).unwrap();
-    let go_facade = fs::read_to_string(root.join("out/facade/api_wrapper.go")).unwrap();
+    let go_facade = fs::read_to_string(root.join("out/api_wrapper.go")).unwrap();
 
     assert!(
         raw_header
@@ -434,7 +451,7 @@ naming:
     assert!(ir_yaml.contains("cpp_name: Api::BuildUnknown"));
     assert!(ir_yaml.contains("raw-unsafe by-value"));
     assert!(go_facade.contains("func (a *Api) Count() int {"));
-    assert!(go_facade.contains("func (a *Api) GetThing(id int) (ThingModel, error) {"));
+    assert!(go_facade.contains("func (a *Api) GetThing(id int, out *ThingModel) bool {"));
     assert!(!go_facade.contains("SaveUnknown("));
     assert!(!go_facade.contains("BuildUnknown("));
 }
@@ -482,17 +499,18 @@ naming:
     let config = Config::load(&config_path).unwrap();
     generator::generate_all(&config, true).unwrap();
 
-    let go_facade = fs::read_to_string(root.join("out/facade/api_wrapper.go")).unwrap();
+    let go_facade = fs::read_to_string(root.join("out/api_wrapper.go")).unwrap();
 
     assert!(go_facade.contains("func (a *Api) ListThing(id int) bool {"));
-    assert!(go_facade.contains("return bool(C.cgowrap_Api_ListThing(a.ptr, C.int(id)))"));
+    assert!(go_facade.contains("result := C.cgowrap_Api_ListThing(a.ptr, C.int(id))"));
+    assert!(go_facade.contains("return bool(result)"));
     assert!(go_facade.contains("func (a *Api) NextThing(cursor int) int {"));
     assert!(!go_facade.contains("(ThingModel, error)"));
     assert!(!go_facade.contains("mapThingModelFromHandle"));
 }
 
 #[test]
-fn does_not_lift_known_model_when_it_is_not_the_final_supported_out_param() {
+fn keeps_known_model_params_supported_even_when_they_are_not_last() {
     let root = temp_output_dir("model-not-last");
     let include_dir = root.join("include");
     fs::create_dir_all(&include_dir).unwrap();
@@ -552,11 +570,99 @@ naming:
     let config = Config::load(&config_path).unwrap();
     generator::generate_all(&config, true).unwrap();
 
-    let go_facade = fs::read_to_string(root.join("out/facade/api_wrapper.go")).unwrap();
+    let go_facade = fs::read_to_string(root.join("out/api_wrapper.go")).unwrap();
 
     assert!(go_facade.contains("type Api struct {"));
     assert!(go_facade.contains("func (a *Api) IsReady() bool {"));
-    assert!(!go_facade.contains("func (a *Api) GetThing("));
+    assert!(go_facade.contains("func (a *Api) GetThing(out *ThingModel, id int) bool {"));
+    assert!(go_facade.contains(
+        "result := C.cgowrap_Api_GetThing(a.ptr, requireThingModelHandle(out), C.int(id))"
+    ));
+    assert!(go_facade.contains("return bool(result)"));
     assert!(!go_facade.contains("(ThingModel, error)"));
     assert!(!go_facade.contains("mapThingModelFromHandle"));
+}
+
+#[test]
+fn renders_next_style_methods_with_reference_cursor_and_handle_backed_model_out_param() {
+    let root = temp_output_dir("next-style-method");
+    let include_dir = root.join("include");
+    fs::create_dir_all(&include_dir).unwrap();
+
+    fs::write(
+        include_dir.join("IsWebHook.hpp"),
+        r#"
+        class IsWebHook {
+        public:
+            IsWebHook() = default;
+            ~IsWebHook() = default;
+            const char* GetUrl() const;
+            void SetUrl(const char* value);
+        };
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        include_dir.join("ISiLib.hpp"),
+        r#"
+        #include "IsWebHook.hpp"
+        #include <stdint.h>
+
+        class ISiLib {
+        public:
+            ISiLib() = default;
+            ~ISiLib() = default;
+            bool NextWebHook(int32_t& pos, IsWebHook& out);
+        };
+        "#,
+    )
+    .unwrap();
+
+    let config_path = root.join("cppgo-wrap.yaml");
+    fs::write(
+        &config_path,
+        r#"
+version: 1
+input:
+  headers:
+    - include/IsWebHook.hpp
+    - include/ISiLib.hpp
+files:
+  model:
+    - include/IsWebHook.hpp
+  facade:
+    - include/ISiLib.hpp
+output:
+  dir: out
+naming:
+  prefix: sil
+  style: preserve
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(&config_path).unwrap();
+    generator::generate_all(&config, true).unwrap();
+
+    let go_model = fs::read_to_string(root.join("out/is_web_hook_wrapper.go")).unwrap();
+    let go_facade = fs::read_to_string(root.join("out/i_si_lib_wrapper.go")).unwrap();
+    let raw_source = fs::read_to_string(root.join("out/raw/i_si_lib_wrapper.cpp")).unwrap();
+
+    assert!(go_model.contains("type IsWebHook struct {"));
+    assert!(go_model.contains("ptr *C.IsWebHookHandle"));
+    assert!(go_model.contains("func (i *IsWebHook) SetURL(value string) {"));
+
+    assert!(go_facade.contains("func (i *ISiLib) NextWebHook(pos *int32, out *IsWebHook) bool {"));
+    assert!(go_facade.contains("if pos == nil {"));
+    assert!(go_facade.contains("panic(\"pos reference is nil\")"));
+    assert!(go_facade.contains("cArg0 := C.int32_t(*pos)"));
+    assert!(go_facade.contains(
+        "result := C.sil_ISiLib_NextWebHook(i.ptr, &cArg0, requireIsWebHookHandle(out))"
+    ));
+    assert!(go_facade.contains("*pos = int32(cArg0)"));
+    assert!(go_facade.contains("return bool(result)"));
+
+    assert!(raw_source.contains(
+        "return reinterpret_cast<ISiLib*>(self)->NextWebHook(*pos, *reinterpret_cast<IsWebHook*>(out));"
+    ));
 }
