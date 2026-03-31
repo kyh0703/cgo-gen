@@ -2,25 +2,25 @@ version: 1
 
 input:
   headers:
-    - ../../IPRON/IE/SIL/IsAAMaster.h
+    - ../../../../IPRON/IE/SIL/IsAAMaster.h
   clang_args:
     - -std=c++11
     - -x
     - c++
-    - -I../../ICOREv6/inc
-    - -I../../ICOREv6/inc/iCore
-    - -I../../ICOREv6/inc/iSqlLib
-    - -I../../ICOREv6/inc/iJson
-    - -I../../IPRON/IE/inc
-    - -I../../IPRON/LIB/inc
-    - -I../../IPRON/LIB/inc/iUtil
+    - -I../../../../ICOREv6/inc
+    - -I../../../../ICOREv6/inc/iCore
+    - -I../../../../ICOREv6/inc/iSqlLib
+    - -I../../../../ICOREv6/inc/iJson
+    - -I../../../../IPRON/IE/inc
+    - -I../../../../IPRON/LIB/inc
+    - -I../../../../IPRON/LIB/inc/iUtil
 
 output:
-  dir: ../../IPRON/IE/PSC/pkg/sil
+  dir: ../../../../IPRON/IE/PSC/pkg/sil
 
 files:
   model:
-    - ../../IPRON/IE/SIL/IsAAMaster.h
+    - ../../../../IPRON/IE/SIL/IsAAMaster.h
 
 naming:
   prefix: sil
