@@ -1,6 +1,15 @@
-use std::{env, fs};
+use std::{env, fs, path::Path};
 
 use c_go::config::{Config, HeaderRole};
+
+fn normalize_expected_path(path: &Path) -> String {
+    let value = path.canonicalize().unwrap().display().to_string();
+    if cfg!(windows) {
+        value.strip_prefix(r"\\?\").unwrap_or(&value).to_string()
+    } else {
+        value
+    }
+}
 
 #[test]
 fn loads_yaml_config() {
@@ -88,8 +97,8 @@ output:
     assert_eq!(config.output.ir, "foo_wrapper.ir.yaml");
     assert_eq!(config.go_filename("Foo"), "foo_wrapper.go");
     assert!(config.raw_output_dir().ends_with("gen/raw"));
-    assert!(config.model_output_dir().ends_with("gen/model"));
-    assert!(config.facade_output_dir().ends_with("gen/facade"));
+    assert!(config.model_output_dir().ends_with("gen"));
+    assert!(config.facade_output_dir().ends_with("gen"));
 }
 
 #[test]
@@ -209,4 +218,69 @@ fn sil_wrapper_example_scopes_per_header_output_names() {
     assert_eq!(user.output.ir, "is_aa_user_wrapper.ir.yaml");
     assert_eq!(user.go_filename(""), "is_aa_user_wrapper.go");
     assert_eq!(user.header_role(&user.input.headers[0]), HeaderRole::Facade);
+}
+
+#[test]
+fn resolves_relative_clang_include_args_from_config_dir() {
+    let mut dir = env::temp_dir();
+    dir.push(format!(
+        "c_go_config_relative_clang_args_test_{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("include")).unwrap();
+    fs::create_dir_all(dir.join("deps/inc")).unwrap();
+    fs::create_dir_all(dir.join("deps/sys")).unwrap();
+    fs::write(dir.join("include/foo.hpp"), "int foo();").unwrap();
+
+    let config_path = dir.join("cppgo-wrap.yaml");
+    fs::write(
+        &config_path,
+        r#"
+version: 1
+input:
+  headers:
+    - include/foo.hpp
+  clang_args:
+    - -Ideps/inc
+    - -isystem
+    - deps/sys
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(&config_path).unwrap();
+
+    assert_eq!(
+        config.input.clang_args,
+        vec![
+            format!("-I{}", normalize_expected_path(&dir.join("deps/inc"))),
+            "-isystem".to_string(),
+            normalize_expected_path(&dir.join("deps/sys")),
+        ]
+    );
+}
+
+#[test]
+fn loads_real_sil_model_config() {
+    let config = Config::load("configs/sil-real-model.yaml").unwrap();
+
+    assert_eq!(config.naming.prefix, "sil");
+    assert_eq!(config.input.headers.len(), 1);
+    assert_eq!(config.files.model.len(), 1);
+    assert_eq!(
+        config.header_role(&config.files.model[0]),
+        HeaderRole::Model
+    );
+    assert!(
+        config.output.dir.ends_with(
+            Path::new("IPRON")
+                .join("IE")
+                .join("PSC")
+                .join("pkg")
+                .join("sil")
+        )
+    );
 }

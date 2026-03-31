@@ -67,17 +67,16 @@ naming:
 
     let output_dir = root.join("gen");
     let raw_dir = output_dir.join("raw");
-    let model_dir = output_dir.join("model");
 
     let alpha_header = raw_dir.join("alpha_thing_wrapper.h");
     let alpha_source = raw_dir.join("alpha_thing_wrapper.cpp");
     let alpha_ir = raw_dir.join("alpha_thing_wrapper.ir.yaml");
-    let alpha_go = model_dir.join("alpha_thing_wrapper.go");
+    let alpha_go = output_dir.join("alpha_thing_wrapper.go");
 
     let beta_header = raw_dir.join("beta_thing_wrapper.h");
     let beta_source = raw_dir.join("beta_thing_wrapper.cpp");
     let beta_ir = raw_dir.join("beta_thing_wrapper.ir.yaml");
-    let beta_go = model_dir.join("beta_thing_wrapper.go");
+    let beta_go = output_dir.join("beta_thing_wrapper.go");
 
     for path in [
         &alpha_header,
@@ -100,11 +99,13 @@ naming:
     assert!(alpha_header_text.contains("AlphaThingHandle"));
     assert!(!alpha_header_text.contains("BetaThingHandle"));
     assert!(alpha_go_text.contains("type AlphaThing struct {"));
+    assert!(alpha_go_text.contains("ptr *C.AlphaThingHandle"));
     assert!(!alpha_go_text.contains("type BetaThing struct {"));
 
     assert!(beta_header_text.contains("BetaThingHandle"));
     assert!(!beta_header_text.contains("AlphaThingHandle"));
     assert!(beta_go_text.contains("type BetaThing struct {"));
+    assert!(beta_go_text.contains("ptr *C.BetaThingHandle"));
     assert!(!beta_go_text.contains("type AlphaThing struct {"));
 }
 
@@ -161,16 +162,18 @@ naming:
     generator::generate_all(&config, true).unwrap();
 
     let output_dir = root.join("gen");
-    let model_go = fs::read_to_string(output_dir.join("model/model_thing_wrapper.go")).unwrap();
-    let facade_go_path = output_dir.join("facade/facade_thing_wrapper.go");
+    let model_go = fs::read_to_string(output_dir.join("model_thing_wrapper.go")).unwrap();
+    let facade_go_path = output_dir.join("facade_thing_wrapper.go");
     let facade_go = fs::read_to_string(&facade_go_path).unwrap();
 
     assert!(model_go.contains("type ModelThing struct {"));
+    assert!(model_go.contains("ptr *C.ModelThingHandle"));
     assert!(!model_go.contains("type FacadeThing struct {"));
     assert!(
         facade_go.contains("type FacadeThing struct {")
             && facade_go.contains("ptr *C.FacadeThingHandle")
-            && !facade_go.contains("    Count int"),
+            && !facade_go.contains("func requireFacadeThingHandle")
+            && !facade_go.contains("func optionalFacadeThingHandle"),
         "facade-classified headers should not emit Go model projections"
     );
 }
@@ -213,7 +216,7 @@ naming:
     generator::generate_all(&config, true).unwrap();
 
     let output_dir = root.join("gen");
-    let go_models = fs::read_to_string(output_dir.join("model/model_types_wrapper.go")).unwrap();
+    let go_models = fs::read_to_string(output_dir.join("model_types_wrapper.go")).unwrap();
 
     assert!(go_models.contains("type Mode int64"));
     assert!(go_models.contains("MODE_A Mode = 0"));
@@ -255,14 +258,14 @@ naming:
     let config = Config::load(&config_path).unwrap();
     generator::generate_all(&config, true).unwrap();
 
-    let facade_go_path = root.join("gen/model/thing_wrapper.go");
-    let facade_layer_go_path = root.join("gen/facade/thing_wrapper.go");
+    let model_go_path = root.join("gen/thing_wrapper.go");
+    let facade_go_path = root.join("gen/thing_wrapper.go");
     assert!(
-        !facade_go_path.exists(),
+        !model_go_path.exists(),
         "unclassified headers should not emit Go model files"
     );
     assert!(
-        !facade_layer_go_path.exists(),
+        !facade_go_path.exists(),
         "unclassified headers should not emit Go facade files"
     );
 }

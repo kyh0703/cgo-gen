@@ -1,6 +1,6 @@
 # Architecture
 
-`c-go` now targets a two-layer output model built on top of the existing native wrapper pipeline.
+`c-go` now targets a raw C ABI layer plus a shared Go package built on top of the native wrapper pipeline.
 
 ## Core flow
 
@@ -14,8 +14,8 @@
    - C ABI wrapper headers/sources for C++ classes and functions.
    - raw type/data bridge artifacts when needed.
 6. Generate upper Go-facing shared output.
-   - shared Go models from `model` files.
-   - shared Go facade APIs from `facade` files.
+   - handle-backed Go model wrappers from `model` files.
+   - shared Go facade APIs from `facade` files in the same Go package.
 7. Downstream IE process modules consume the shared Go package and keep business logic outside the generated wrapping layer.
 
 ## Layer responsibilities
@@ -29,14 +29,14 @@
 
 ### Shared model layer
 - Built from files classified as `model`.
-- Produces shared Go structs, enums, typedef mappings, and class projections.
-- Emits physical files under `output.dir/model/`.
-- Represents the common data contracts IE modules should import and reuse.
+- Produces handle-backed Go wrappers, enums, typedef mappings, and class projections.
+- Emits physical files under `output.dir/`.
+- Represents the common native-backed model contracts IE modules should import and reuse.
 
 ### Shared facade layer
 - Built from files classified as `facade`.
-- Produces common Go functions/helpers that return shared Go models.
-- Emits physical files under `output.dir/facade/`.
+- Produces common Go functions/helpers that operate on shared Go model wrappers.
+- Emits physical files under `output.dir/`.
 - Hides raw iteration, callbacks, native error codes, and native calling conventions.
 
 ## Design principle
@@ -51,23 +51,23 @@ Primary reference surface:
 - `src/IE/SIL/iSiLib.h`
 - `iSiLib-ini.h` should also be included once its local path is confirmed
 
-The key principle is **type-driven facade lifting**:
+The key principle is **type-driven facade routing**:
 
 - if a facade API fills a known model type from `files.model`
 - and that model appears directly in the signature as an out-parameter
-- then the wrapper layer should prefer generating a Go API that returns the shared model directly
+- then the wrapper layer should prefer generating a Go API that accepts the shared model wrapper directly
 
-Examples of desired lifting:
-- `bool GetAAMaster(..., IsAAMaster& out)` -> `GetAAMaster(...) (IsAAMaster, error)`
-- `bool GetAAMaster(..., IsAAMaster* out)` -> `GetAAMaster(...) (IsAAMaster, error)`
+Examples of desired routing:
+- `bool GetAAMaster(..., IsAAMaster& out)` -> `GetAAMaster(..., out *IsAAMaster) bool`
+- `bool GetAAMaster(..., IsAAMaster* out)` -> `GetAAMaster(..., out *IsAAMaster) bool`
 
-Why `Model, error` instead of `Model, bool, error` by default:
-- the C++ `bool` is not guaranteed to mean `found/not found`
-- it may also mean generic success/failure
-- therefore the safer default shape is `Model, error`
+Why wrapper-first `*Model` + raw `bool`:
+- the native object must stay mutable through the original handle
+- preserving the wrapper shape avoids reverse DTO-to-handle reconstruction
+- the raw `bool` semantics stay explicit instead of being reinterpreted by the generator
 
 For the current facade slice, the design now applies **model-aware routing first**:
-- if the API is tied to a known shared model type in the supported out-param position, it can be routed to model-mapped facade generation
+- if the API is tied to a known shared model type, it can be routed to handle-backed facade generation
 - if it is not mapped to a known model type, it should remain a regular API when otherwise supported
 - pattern naming alone should not be treated as the primary decision source
 - source implementation details must not be used to infer higher-level helper behavior
@@ -79,15 +79,15 @@ For the current facade slice, the design now applies **model-aware routing first
 - A dedicated Go model rendering path now exists beside raw wrapper generation.
 - Current classification effect is still intentionally partial:
   - model/facade semantic classification is determined only by explicit config (`files.model`, `files.facade`).
-  - `model` headers can emit Go enum models and auto-project `IsAAMaster`-style getter/setter classes into Go structs.
+  - `model` headers can emit Go enum models and auto-project `IsAAMaster`-style getter/setter classes into handle-backed Go wrappers.
   - `facade` headers now generate phase-1 Go facade wrappers and still do not emit Go model files.
-  - generated files are now physically separated by layer under `raw/`, `model/`, and `facade/` subdirectories inside `output.dir`.
-  - the base supported facade surface is primitive-parameter free functions with primitive/bool/string returns.
-  - as a current type-driven extension, facade class methods that fill known `files.model` types via `Model&` / `Model*` out-params can be lifted into `Model, error` Go methods.
+  - generated files now emit under `raw/` for native artifacts and directly under `output.dir/` for Go artifacts.
+  - the base supported facade surface includes primitive/string free functions plus known-model `Model&` / `Model*` params routed as `*Model` wrappers.
+  - facade class methods preserve raw `bool`/primitive/string returns instead of lifting known-model out-params into DTO-style return values.
   - unknown non-classified model reference/pointer declarations can now remain in raw wrapper output as opaque handles when the raw renderer can express them safely.
   - the same unknown model declarations are still filtered out from Go facade/model projection layers unless they map to `files.model`.
   - raw-unsafe by-value object declarations are now skipped at declaration level and recorded in `support.skipped_declarations` instead of aborting the whole header.
-  - facade method analysis is now separated from rendering so model-mapped methods and general APIs are classified explicitly before Go code generation.
+  - known-model Go helpers now enforce `Model&` as non-nil live handles and allow `Model*` to pass `nil` through when requested.
   - overloaded raw wrapper symbols are now disambiguated deterministically from parameter signatures instead of aborting normalization.
   - overloaded Go facade exports are also disambiguated for renderable methods such as `GetAAMasterUint32(...)` versus `GetAAMasterString(...)`.
   - namespaced facade functions that would collide in Go export names are rejected during generation.

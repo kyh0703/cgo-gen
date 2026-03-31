@@ -3,13 +3,20 @@ version: 1
 input:
   headers:
     - cpp/ThingModel.hpp
+    - cpp/ThingApi.hpp
+  clang_args:
+    - -std=c++17
+    - -x
+    - c++
 
 output:
-  dir: pkg/model
+  dir: pkg/demo
 
 files:
   model:
     - cpp/ThingModel.hpp
+  facade:
+    - cpp/ThingApi.hpp
 
 naming:
   prefix: cgowrap
