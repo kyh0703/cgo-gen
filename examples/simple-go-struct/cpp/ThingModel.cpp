@@ -4,9 +4,9 @@ ThingModel::ThingModel() : value_(0), name_("default") {}
 
 ThingModel::~ThingModel() = default;
 
-int ThingModel::GetValue() const { return value_; }
+int32_t ThingModel::GetValue() const { return value_; }
 
-void ThingModel::SetValue(int value) { value_ = value; }
+void ThingModel::SetValue(int32_t value) { value_ = value; }
 
 const char* ThingModel::GetName() const { return name_.c_str(); }
 
