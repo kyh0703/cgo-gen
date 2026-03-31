@@ -3,7 +3,11 @@ use std::{env, fs, path::Path};
 use c_go::config::{Config, HeaderRole};
 
 fn normalize_expected_path(path: &Path) -> String {
-    let value = path.canonicalize().unwrap().display().to_string();
+    let value = path
+        .canonicalize()
+        .unwrap_or_else(|_| path.to_path_buf())
+        .display()
+        .to_string();
     if cfg!(windows) {
         value.strip_prefix(r"\\?\").unwrap_or(&value).to_string()
     } else {
@@ -145,6 +149,64 @@ output:
 }
 
 #[test]
+fn config_infers_model_headers_from_facade_only_classification() {
+    let mut dir = env::temp_dir();
+    dir.push(format!(
+        "c_go_config_facade_only_inference_test_{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("include")).unwrap();
+    fs::write(dir.join("include/model.hpp"), "class ModelThing {};").unwrap();
+    fs::write(dir.join("include/facade.hpp"), "int init();").unwrap();
+
+    let config_path = dir.join("cppgo-wrap.yaml");
+    fs::write(
+        &config_path,
+        r#"
+version: 1
+input:
+  header_dirs:
+    - include
+files:
+  facade:
+    - include/facade.hpp
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(&config_path).unwrap();
+
+    assert_eq!(config.input.headers.len(), 2);
+    assert_eq!(config.files.model.len(), 1);
+    assert_eq!(config.files.facade.len(), 1);
+    assert!(
+        config
+            .input
+            .headers
+            .iter()
+            .any(|path| path.ends_with("model.hpp"))
+    );
+    assert!(
+        config
+            .input
+            .headers
+            .iter()
+            .any(|path| path.ends_with("facade.hpp"))
+    );
+    assert_eq!(
+        config.header_role(&config.files.model[0]),
+        HeaderRole::Model
+    );
+    assert_eq!(
+        config.header_role(&config.files.facade[0]),
+        HeaderRole::Facade
+    );
+}
+
+#[test]
 fn rejects_overlapping_file_roles() {
     let mut dir = env::temp_dir();
     dir.push(format!(
@@ -176,6 +238,71 @@ output:
 
     let error = Config::load(&config_path).unwrap_err().to_string();
     assert!(error.contains("both model and facade"));
+}
+
+#[test]
+fn config_resolves_project_root_header_dirs_and_include_dirs() {
+    let mut dir = env::temp_dir();
+    dir.push(format!(
+        "c_go_config_project_root_test_{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("project/include/models")).unwrap();
+    fs::create_dir_all(dir.join("project/deps/inc")).unwrap();
+    fs::create_dir_all(dir.join("project/config")).unwrap();
+    fs::write(
+        dir.join("project/include/models/model.hpp"),
+        "class ModelThing {};",
+    )
+    .unwrap();
+
+    let config_path = dir.join("project/config/cppgo-wrap.yaml");
+    fs::write(
+        &config_path,
+        r#"
+version: 1
+project_root: ..
+input:
+  header_dirs:
+    - include
+  include_dirs:
+    - deps/inc
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(&config_path).unwrap();
+
+    let expected_project_root = normalize_expected_path(&dir.join("project"));
+    assert_eq!(
+        config
+            .project_root
+            .as_deref()
+            .map(normalize_expected_path)
+            .as_deref(),
+        Some(expected_project_root.as_str())
+    );
+    assert_eq!(config.input.headers.len(), 1);
+    assert_eq!(
+        config.input.headers[0],
+        dir.join("project/include/models/model.hpp")
+            .canonicalize()
+            .unwrap()
+    );
+    assert_eq!(
+        config.input.clang_args,
+        vec![format!(
+            "-I{}",
+            normalize_expected_path(&dir.join("project/deps/inc"))
+        )]
+    );
+    assert_eq!(
+        normalize_expected_path(&config.output.dir),
+        normalize_expected_path(&dir.join("project").join("gen"))
+    );
 }
 
 #[test]
