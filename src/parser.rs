@@ -23,6 +23,7 @@ pub struct ParsedApi {
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CppClass {
+    pub source_header: PathBuf,
     pub namespace: Vec<String>,
     pub name: String,
     pub methods: Vec<CppMethod>,
@@ -33,6 +34,7 @@ pub struct CppClass {
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CppFunction {
+    pub source_header: PathBuf,
     pub namespace: Vec<String>,
     pub name: String,
     pub return_type: String,
@@ -66,6 +68,7 @@ pub struct CppParam {
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CppEnum {
+    pub source_header: PathBuf,
     pub namespace: Vec<String>,
     pub name: String,
     pub variants: Vec<CppEnumVariant>,
@@ -75,6 +78,32 @@ pub struct CppEnum {
 pub struct CppEnumVariant {
     pub name: String,
     pub value: Option<String>,
+}
+
+impl ParsedApi {
+    pub fn filter_to_header(&self, header: &Path) -> Self {
+        let mut filtered = Self::default();
+        filtered.headers = vec![header.display().to_string()];
+        filtered.functions = self
+            .functions
+            .iter()
+            .filter(|function| same_path(&function.source_header, header))
+            .cloned()
+            .collect();
+        filtered.classes = self
+            .classes
+            .iter()
+            .filter(|class| same_path(&class.source_header, header))
+            .cloned()
+            .collect();
+        filtered.enums = self
+            .enums
+            .iter()
+            .filter(|item| same_path(&item.source_header, header))
+            .cloned()
+            .collect();
+        filtered
+    }
 }
 
 pub fn parse(config: &Config) -> Result<ParsedApi> {
@@ -278,6 +307,8 @@ fn parse_class(
 ) -> Result<CppClass> {
     let name = cursor_spelling(cursor)
         .ok_or_else(|| anyhow!("anonymous classes are unsupported in v1"))?;
+    let source_header = normalized_cursor_file_path(cursor)
+        .ok_or_else(|| anyhow!("failed to determine source header for class `{name}`"))?;
     let is_struct = unsafe { clang_getCursorKind(cursor) == CXCursor_StructDecl };
     let mut methods = Vec::new();
     let mut constructors = Vec::new();
@@ -319,6 +350,7 @@ fn parse_class(
     }
 
     Ok(CppClass {
+        source_header,
         namespace,
         name,
         methods,
@@ -329,10 +361,14 @@ fn parse_class(
 }
 
 fn parse_function(cursor: CXCursor, namespace: Vec<String>) -> Result<CppFunction> {
+    let name = cursor_spelling(cursor)
+        .ok_or_else(|| anyhow!("encountered unnamed function declaration"))?;
+    let source_header = normalized_cursor_file_path(cursor)
+        .ok_or_else(|| anyhow!("failed to determine source header for function `{name}`"))?;
     Ok(CppFunction {
+        source_header,
         namespace,
-        name: cursor_spelling(cursor)
-            .ok_or_else(|| anyhow!("encountered unnamed function declaration"))?,
+        name,
         return_type: result_type_name(cursor),
         return_canonical_type: result_canonical_type_name(cursor),
         return_is_function_pointer: result_is_function_pointer(cursor),
@@ -341,6 +377,7 @@ fn parse_function(cursor: CXCursor, namespace: Vec<String>) -> Result<CppFunctio
 }
 
 fn parse_enum_with_name(cursor: CXCursor, namespace: Vec<String>, name: String) -> CppEnum {
+    let source_header = normalized_cursor_file_path(cursor).unwrap_or_default();
     let variants = direct_children(cursor)
         .into_iter()
         .filter(|child| unsafe { clang_getCursorKind(*child) } == CXCursor_EnumConstantDecl)
@@ -351,6 +388,7 @@ fn parse_enum_with_name(cursor: CXCursor, namespace: Vec<String>, name: String) 
         .collect();
 
     CppEnum {
+        source_header,
         namespace,
         name,
         variants,
@@ -515,6 +553,11 @@ fn same_path(path: &Path, target: &Path) -> bool {
         (Ok(path), Ok(target)) => path == target,
         _ => false,
     }
+}
+
+fn normalized_cursor_file_path(cursor: CXCursor) -> Option<PathBuf> {
+    let path = cursor_file_path(cursor)?;
+    Some(path.canonicalize().unwrap_or(path))
 }
 
 fn is_main_file(cursor: CXCursor) -> bool {

@@ -14,7 +14,7 @@ use crate::{
 };
 
 pub fn generate_all(config: &Config, write_ir: bool) -> Result<()> {
-    let config = prepare_config(config)?;
+    let (config, parsed) = prepare_with_parsed(config)?;
     let generation_headers = generation_headers(&config);
 
     if generation_headers.len() > 1 && !config.uses_default_output_names() {
@@ -29,15 +29,19 @@ pub fn generate_all(config: &Config, write_ir: bool) -> Result<()> {
             .cloned()
             .map(|header| config.scoped_to_header(header))
             .unwrap_or_else(|| config.clone());
-        let parsed = parser::parse(&scoped)?;
-        let ir = crate::ir::normalize(&scoped, &parsed)?;
+        let header_api = scoped
+            .target_header
+            .as_deref()
+            .map(|header| parsed.filter_to_header(header))
+            .unwrap_or_else(|| parsed.clone());
+        let ir = crate::ir::normalize(&scoped, &header_api)?;
         return generate(&scoped, &ir, write_ir);
     }
 
     for header in &generation_headers {
         let scoped = config.scoped_to_header(header.clone());
-        let parsed = parser::parse(&scoped)?;
-        let ir = crate::ir::normalize(&scoped, &parsed)?;
+        let header_api = parsed.filter_to_header(header);
+        let ir = crate::ir::normalize(&scoped, &header_api)?;
         generate(&scoped, &ir, write_ir)?;
     }
 
@@ -71,46 +75,52 @@ fn scan_generation_headers(dir: &Path) -> Result<Vec<PathBuf>> {
 }
 
 pub fn prepare_config(config: &Config) -> Result<Config> {
-    let known_model_types = collect_known_model_types(config)?;
-    let known_model_projections = collect_known_model_projections(config)?;
+    Ok(prepare_with_parsed(config)?.0)
+}
+
+pub fn prepare_with_parsed(config: &Config) -> Result<(Config, parser::ParsedApi)> {
+    let parsed = parser::parse(config)?;
+    let config = prepare_config_from_parsed(config, &parsed)?;
+    Ok((config, parsed))
+}
+
+fn prepare_config_from_parsed(config: &Config, parsed: &parser::ParsedApi) -> Result<Config> {
+    let known_model_types = collect_known_model_types(parsed);
+    let known_model_projections = collect_known_model_projections(config, parsed)?;
     Ok(config
         .clone()
         .with_known_model_types(known_model_types)
         .with_known_model_projections(known_model_projections))
 }
 
-fn collect_known_model_types(config: &Config) -> Result<Vec<String>> {
-    let mut known_model_types = BTreeSet::new();
-
-    for header in generation_headers(config) {
-        let scoped = config
-            .scoped_to_header(header)
-            .with_known_model_types(Vec::new());
-        let parsed = parser::parse(&scoped)?;
-        for class in parsed.classes {
-            let qualified = if class.namespace.is_empty() {
-                class.name
+fn collect_known_model_types(parsed: &parser::ParsedApi) -> Vec<String> {
+    parsed
+        .classes
+        .iter()
+        .map(|class| {
+            if class.namespace.is_empty() {
+                class.name.clone()
             } else {
                 format!("{}::{}", class.namespace.join("::"), class.name)
-            };
-            known_model_types.insert(qualified);
-        }
-    }
-
-    Ok(known_model_types.into_iter().collect())
+            }
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 fn collect_known_model_projections(
     config: &Config,
+    parsed: &parser::ParsedApi,
 ) -> Result<Vec<crate::config::KnownModelProjection>> {
     let mut projections = Vec::new();
 
     for header in generation_headers(config) {
         let scoped = config
-            .scoped_to_header(header)
+            .scoped_to_header(header.clone())
             .with_known_model_types(Vec::new());
-        let parsed = parser::parse(&scoped)?;
-        let ir = crate::ir::normalize(&scoped, &parsed)?;
+        let header_api = parsed.filter_to_header(scoped.target_header.as_deref().unwrap_or(&header));
+        let ir = crate::ir::normalize(&scoped, &header_api)?;
         projections.extend(crate::model::collect_known_model_projections(&scoped, &ir)?);
     }
 
