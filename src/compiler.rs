@@ -58,9 +58,8 @@ pub fn collect_translation_units(config: &Config) -> Result<Vec<PathBuf>> {
         Vec::new()
     };
 
-    if units.is_empty() {
-        units = collect_classified_translation_units(config, dir);
-    }
+    units.extend(collect_classified_translation_units(config, dir)?);
+    units = units.into_iter().collect::<BTreeSet<_>>().into_iter().collect();
 
     if units.is_empty() {
         units = scan_dir_translation_units(dir)?;
@@ -69,28 +68,33 @@ pub fn collect_translation_units(config: &Config) -> Result<Vec<PathBuf>> {
     Ok(units)
 }
 
-fn collect_classified_translation_units(config: &Config, dir: &Path) -> Vec<PathBuf> {
-    let units = config
+fn collect_classified_translation_units(config: &Config, dir: &Path) -> Result<Vec<PathBuf>> {
+    let grouped_dirs = config
         .files
         .model
         .iter()
         .chain(config.files.facade.iter())
         .filter(|path| path_is_within(path, dir))
-        .cloned()
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
+        .filter_map(|path| path.parent().map(Path::to_path_buf))
+        .collect::<BTreeSet<_>>();
 
-    let source_units = units
-        .iter()
-        .filter(|path| is_source_translation_unit_file(path))
-        .cloned()
-        .collect::<Vec<_>>();
+    let mut source_units = BTreeSet::new();
+    let mut header_units = BTreeSet::new();
 
-    if source_units.is_empty() {
-        units
+    for grouped_dir in grouped_dirs {
+        for unit in scan_dir_translation_units(&grouped_dir)? {
+            if is_source_translation_unit_file(&unit) {
+                source_units.insert(unit);
+            } else if is_header_file(&unit) {
+                header_units.insert(unit);
+            }
+        }
+    }
+
+    if !source_units.is_empty() {
+        Ok(source_units.into_iter().collect())
     } else {
-        source_units
+        Ok(header_units.into_iter().collect())
     }
 }
 

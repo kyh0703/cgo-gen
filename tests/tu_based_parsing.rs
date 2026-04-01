@@ -177,3 +177,58 @@ output:
     assert_eq!(units.len(), 1);
     assert!(units[0].ends_with("DBHandler.cpp"));
 }
+
+#[test]
+fn dir_only_config_expands_classified_header_directory_into_all_grouped_headers() {
+    let fixture = temp_fixture_dir("classified_dir_expansion");
+    fs::create_dir_all(fixture.join("include")).unwrap();
+
+    fs::write(
+        fixture.join("include/entry.hpp"),
+        r#"
+        #include "shared.hpp"
+
+        namespace demo {
+        class Entry {
+        public:
+            int GetValue() const { return 7; }
+        };
+        }
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        fixture.join("include/shared.hpp"),
+        r#"
+        namespace demo {
+        class Shared {
+        public:
+            int GetValue() const { return 9; }
+        };
+        }
+        "#,
+    )
+    .unwrap();
+
+    fs::write(
+        fixture.join("config.yaml"),
+        r#"
+version: 1
+input:
+  dir: include
+files:
+  model:
+    - include/entry.hpp
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(fixture.join("config.yaml")).unwrap();
+    let units = compiler::collect_translation_units(&config).unwrap();
+
+    assert_eq!(units.len(), 2);
+    assert!(units.iter().any(|path| path.ends_with("entry.hpp")));
+    assert!(units.iter().any(|path| path.ends_with("shared.hpp")));
+}
