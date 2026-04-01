@@ -83,7 +83,8 @@ naming:
 
     assert!(go_facade.contains("import \"errors\""));
     assert!(go_facade.contains("func IsReady() bool {"));
-    assert!(go_facade.contains("return bool(C.cgowrap_is_ready())"));
+    assert!(go_facade.contains("result := C.cgowrap_is_ready()"));
+    assert!(go_facade.contains("return bool(result)"));
     assert!(go_facade.contains("func Version() (string, error) {"));
     assert!(go_facade.contains("raw := C.cgowrap_version()"));
     assert!(go_facade.contains("defer C.cgowrap_string_free(raw)"));
@@ -408,7 +409,8 @@ naming:
     assert!(go_facade.contains("func (a *Api) Close() {"));
     assert!(go_facade.contains("C.cgowrap_Api_delete(a.ptr)"));
     assert!(go_facade.contains("func (a *Api) IsReady() bool {"));
-    assert!(go_facade.contains("return bool(C.cgowrap_Api_IsReady(a.ptr))"));
+    assert!(go_facade.contains("result := C.cgowrap_Api_IsReady(a.ptr)"));
+    assert!(go_facade.contains("return bool(result)"));
     assert!(go_facade.contains("func (a *Api) Clear() int {"));
     assert!(go_facade.contains("return int(C.cgowrap_Api_Clear(a.ptr))"));
     assert!(go_facade.contains("func (a *Api) GetThing(id int, out *ThingModel) bool {"));
@@ -671,7 +673,8 @@ naming:
     let go_facade = fs::read_to_string(root.join("out/api_wrapper.go")).unwrap();
 
     assert!(go_facade.contains("func (a *Api) ListThing(id int) bool {"));
-    assert!(go_facade.contains("return bool(C.cgowrap_Api_ListThing(a.ptr, C.int(id)))"));
+    assert!(go_facade.contains("result := C.cgowrap_Api_ListThing(a.ptr, C.int(id))"));
+    assert!(go_facade.contains("return bool(result)"));
     assert!(go_facade.contains("func (a *Api) NextThing(cursor int) int {"));
     assert!(!go_facade.contains("mapThingModelFromHandle"));
 }
@@ -743,4 +746,88 @@ naming:
     assert!(go_facade.contains("func (a *Api) IsReady() bool {"));
     assert!(go_facade.contains("func (a *Api) GetThing(out *ThingModel, id int) bool {"));
     assert!(!go_facade.contains("mapThingModelFromHandle"));
+}
+
+#[test]
+fn renders_next_style_methods_with_reference_cursor_and_handle_backed_model_out_param() {
+    let root = temp_output_dir("next-style-method");
+    let include_dir = root.join("include");
+    fs::create_dir_all(&include_dir).unwrap();
+
+    fs::write(
+        include_dir.join("IsWebHook.hpp"),
+        r#"
+        class IsWebHook {
+        public:
+            IsWebHook() = default;
+            ~IsWebHook() = default;
+            const char* GetUrl() const;
+            void SetUrl(const char* value);
+        };
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        include_dir.join("ISiLib.hpp"),
+        r#"
+        #include "IsWebHook.hpp"
+        #include <stdint.h>
+
+        class ISiLib {
+        public:
+            ISiLib() = default;
+            ~ISiLib() = default;
+            bool NextWebHook(int32_t& pos, IsWebHook& out);
+        };
+        "#,
+    )
+    .unwrap();
+
+    let config_path = root.join("cppgo-wrap.yaml");
+    fs::write(
+        &config_path,
+        r#"
+version: 1
+input:
+  headers:
+    - include/IsWebHook.hpp
+    - include/ISiLib.hpp
+files:
+  model:
+    - include/IsWebHook.hpp
+  facade:
+    - include/ISiLib.hpp
+output:
+  dir: out
+naming:
+  prefix: sil
+  style: preserve
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(&config_path).unwrap();
+    generator::generate_all(&config, true).unwrap();
+
+    let go_model = fs::read_to_string(root.join("out/is_web_hook_wrapper.go")).unwrap();
+    let go_facade = fs::read_to_string(root.join("out/i_si_lib_wrapper.go")).unwrap();
+    let raw_source = fs::read_to_string(root.join("out/raw/i_si_lib_wrapper.cpp")).unwrap();
+
+    assert!(go_model.contains("type IsWebHook struct {"));
+    assert!(go_model.contains("ptr *C.IsWebHookHandle"));
+    assert!(go_model.contains("func (i *IsWebHook) SetURL(value string) {"));
+
+    assert!(go_facade.contains("func (i *ISiLib) NextWebHook(pos *int32, out *IsWebHook) bool {"));
+    assert!(go_facade.contains("if pos == nil {"));
+    assert!(go_facade.contains("panic(\"pos reference is nil\")"));
+    assert!(go_facade.contains("cArg0 := C.int32_t(*pos)"));
+    assert!(go_facade.contains(
+        "result := C.sil_ISiLib_NextWebHook(i.ptr, &cArg0, requireIsWebHookHandle(out))"
+    ));
+    assert!(go_facade.contains("*pos = int32(cArg0)"));
+    assert!(go_facade.contains("return bool(result)"));
+
+    assert!(raw_source.contains(
+        "return reinterpret_cast<ISiLib*>(self)->NextWebHook(*pos, *reinterpret_cast<IsWebHook*>(out));"
+    ));
 }

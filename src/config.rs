@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 pub struct Config {
     #[serde(default)]
     pub version: Option<u32>,
+    #[serde(default)]
+    pub project_root: Option<PathBuf>,
     pub input: InputConfig,
     #[serde(default)]
     pub output: OutputConfig,
@@ -32,7 +34,15 @@ pub struct InputConfig {
     #[serde(default)]
     pub headers: Vec<PathBuf>,
     #[serde(default)]
+    pub dirs: Vec<PathBuf>,
+    #[serde(default)]
+    pub header_dirs: Vec<PathBuf>,
+    #[serde(default)]
+    pub translation_units: Vec<PathBuf>,
+    #[serde(default)]
     pub compile_commands: Option<PathBuf>,
+    #[serde(default)]
+    pub include_dirs: Vec<PathBuf>,
     #[serde(default)]
     pub clang_args: Vec<String>,
     #[serde(default)]
@@ -165,6 +175,160 @@ fn default_skip() -> String {
     "skip".to_string()
 }
 
+fn resolve_relative_clang_args(args: &mut Vec<String>, base_dir: &Path) {
+    let mut resolved = Vec::with_capacity(args.len());
+    let mut index = 0;
+
+    while index < args.len() {
+        let arg = &args[index];
+
+        if arg == "-I" || arg == "-isystem" {
+            resolved.push(arg.clone());
+            if let Some(value) = args.get(index + 1) {
+                resolved.push(resolve_relative_clang_path_arg(value, base_dir));
+                index += 2;
+                continue;
+            }
+            index += 1;
+            continue;
+        }
+
+        if let Some(value) = arg.strip_prefix("-I") {
+            resolved.push(format!(
+                "-I{}",
+                resolve_relative_clang_path_arg(value, base_dir)
+            ));
+            index += 1;
+            continue;
+        }
+
+        if let Some(value) = arg.strip_prefix("-isystem") {
+            resolved.push(format!(
+                "-isystem{}",
+                resolve_relative_clang_path_arg(value, base_dir)
+            ));
+            index += 1;
+            continue;
+        }
+
+        resolved.push(arg.clone());
+        index += 1;
+    }
+
+    *args = resolved;
+}
+
+fn resolve_relative_clang_path_arg(value: &str, base_dir: &Path) -> String {
+    if value.is_empty() {
+        return String::new();
+    }
+
+    let path = Path::new(value);
+    if path.is_absolute() {
+        return value.to_string();
+    }
+
+    let joined = base_dir.join(path);
+    normalize_clang_config_path(&joined.canonicalize().unwrap_or(joined))
+}
+
+fn normalize_clang_config_path(path: &Path) -> String {
+    let value = path.display().to_string();
+    if cfg!(windows) {
+        value.strip_prefix(r"\\?\").unwrap_or(&value).to_string()
+    } else {
+        value
+    }
+}
+
+fn resolve_path(path: &mut PathBuf, base_dir: &Path) {
+    if path.is_relative() {
+        *path = base_dir.join(&*path);
+    }
+    if let Ok(canonical) = path.canonicalize() {
+        *path = canonical;
+    }
+}
+
+fn push_unique_path(paths: &mut Vec<PathBuf>, value: PathBuf) {
+    if !paths.iter().any(|candidate| candidate == &value) {
+        paths.push(value);
+    }
+}
+
+fn is_supported_header_path(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|value| value.to_str()),
+        Some("h" | "hh" | "hpp" | "hxx")
+    )
+}
+
+fn is_supported_translation_unit_path(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|value| value.to_str()),
+        Some("cc" | "cpp" | "cxx")
+    )
+}
+
+fn collect_headers_from_dir(dir: &Path, output: &mut Vec<PathBuf>) -> Result<()> {
+    if !dir.exists() {
+        bail!("header directory not found: {}", dir.display());
+    }
+    if !dir.is_dir() {
+        bail!("header_dirs entry must be a directory: {}", dir.display());
+    }
+
+    let mut entries = fs::read_dir(dir)
+        .with_context(|| format!("failed to read header directory: {}", dir.display()))?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .with_context(|| format!("failed to list header directory: {}", dir.display()))?;
+    entries.sort_by_key(|entry| entry.path());
+
+    for entry in entries {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_headers_from_dir(&path, output)?;
+            continue;
+        }
+        if !is_supported_header_path(&path) {
+            continue;
+        }
+        let canonical = path.canonicalize().unwrap_or(path);
+        push_unique_path(output, canonical);
+    }
+
+    Ok(())
+}
+
+fn collect_translation_units_from_dir(dir: &Path, output: &mut Vec<PathBuf>) -> Result<()> {
+    if !dir.exists() {
+        bail!("input.dirs entry not found: {}", dir.display());
+    }
+    if !dir.is_dir() {
+        bail!("input.dirs entry must be a directory: {}", dir.display());
+    }
+
+    let mut entries = fs::read_dir(dir)
+        .with_context(|| format!("failed to read input directory: {}", dir.display()))?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .with_context(|| format!("failed to list input directory: {}", dir.display()))?;
+    entries.sort_by_key(|entry| entry.path());
+
+    for entry in entries {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_translation_units_from_dir(&path, output)?;
+            continue;
+        }
+        if !is_supported_translation_unit_path(&path) {
+            continue;
+        }
+        let canonical = path.canonicalize().unwrap_or(path);
+        push_unique_path(output, canonical);
+    }
+
+    Ok(())
+}
 impl Config {
     pub fn load(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
@@ -179,6 +343,14 @@ impl Config {
 
     pub fn compile_commands_path(&self) -> Option<PathBuf> {
         self.input.compile_commands.clone()
+    }
+
+    pub fn parse_entries(&self) -> Vec<PathBuf> {
+        if self.input.translation_units.is_empty() {
+            self.input.headers.clone()
+        } else {
+            self.input.translation_units.clone()
+        }
     }
 
     pub fn uses_default_output_names(&self) -> bool {
@@ -210,39 +382,77 @@ impl Config {
             }
         }
         for header in &mut self.input.headers {
-            if header.is_relative() {
-                *header = base_dir.join(&*header);
-            }
-            if let Ok(canonical) = header.canonicalize() {
-                *header = canonical;
-            }
+            resolve_path(header, base_dir);
         }
+        for header_dir in &mut self.input.header_dirs {
+            resolve_path(header_dir, base_dir);
+        }
+        for dir in &mut self.input.dirs {
+            resolve_path(dir, base_dir);
+        }
+        for header_dir in &mut self.input.header_dirs {
+            resolve_path(header_dir, base_dir);
+        }
+        for entry in &mut self.input.translation_units {
+            resolve_path(entry, base_dir);
+        }
+        let mut expanded_headers = Vec::new();
+        for header in &self.input.headers {
+            push_unique_path(&mut expanded_headers, header.clone());
+        }
+        let mut expanded_translation_units = Vec::new();
+        for entry in &self.input.translation_units {
+            push_unique_path(&mut expanded_translation_units, entry.clone());
+        }
+        for dir in &self.input.dirs {
+            collect_headers_from_dir(dir, &mut expanded_headers)?;
+            collect_translation_units_from_dir(dir, &mut expanded_translation_units)?;
+        }
+        for header_dir in &self.input.header_dirs {
+            collect_headers_from_dir(header_dir, &mut expanded_headers)?;
+        }
+        self.input.headers = expanded_headers;
+        self.input.translation_units = expanded_translation_units;
         if let Some(compdb) = &mut self.input.compile_commands {
-            if compdb.is_relative() {
-                *compdb = base_dir.join(&*compdb);
-            }
-            if let Ok(canonical) = compdb.canonicalize() {
-                *compdb = canonical;
-            }
+            resolve_path(compdb, base_dir);
+        }
+        for include_dir in &mut self.input.include_dirs {
+            resolve_path(include_dir, base_dir);
+        }
+        resolve_relative_clang_args(&mut self.input.clang_args, base_dir);
+        if !self.input.include_dirs.is_empty() {
+            let mut include_args = self
+                .input
+                .include_dirs
+                .iter()
+                .map(|path| format!("-I{}", normalize_clang_config_path(path)))
+                .collect::<Vec<_>>();
+            include_args.extend(self.input.clang_args.clone());
+            self.input.clang_args = include_args;
         }
         for header in &mut self.files.model {
-            if header.is_relative() {
-                *header = base_dir.join(&*header);
-            }
-            if let Ok(canonical) = header.canonicalize() {
-                *header = canonical;
-            }
+            resolve_path(header, base_dir);
         }
         for header in &mut self.files.facade {
-            if header.is_relative() {
-                *header = base_dir.join(&*header);
-            }
-            if let Ok(canonical) = header.canonicalize() {
-                *header = canonical;
-            }
+            resolve_path(header, base_dir);
         }
         if self.output.dir.is_relative() {
             self.output.dir = base_dir.join(&self.output.dir);
+        }
+        if self.files.model.is_empty() && !self.files.facade.is_empty() {
+            self.files.model = self
+                .input
+                .headers
+                .iter()
+                .filter(|header| {
+                    !self
+                        .files
+                        .facade
+                        .iter()
+                        .any(|candidate| candidate == *header)
+                })
+                .cloned()
+                .collect();
         }
         self.apply_output_defaults();
         Ok(())

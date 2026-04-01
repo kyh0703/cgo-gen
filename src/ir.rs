@@ -621,10 +621,16 @@ fn normalize_type(cpp_type: &str) -> Result<IrType> {
         "int16" => Ok(alias_primitive_type(trimmed, "int16_t")),
         "int32" => Ok(alias_primitive_type(trimmed, "int32_t")),
         "int64" => Ok(alias_primitive_type(trimmed, "int64_t")),
-        "const char *" | "char *" | "const char*" | "char*" => Ok(IrType {
+        "const char *" | "const char*" => Ok(IrType {
             kind: "c_string".to_string(),
             cpp_type: trimmed.to_string(),
-            c_type: trimmed.replace(' ', ""),
+            c_type: "const char*".to_string(),
+            handle: None,
+        }),
+        "char *" | "char*" => Ok(IrType {
+            kind: "c_string".to_string(),
+            cpp_type: trimmed.to_string(),
+            c_type: "char*".to_string(),
             handle: None,
         }),
         "NPCSTR" | "NPSTRC" | "NPCSTRC" => Ok(IrType {
@@ -712,12 +718,20 @@ fn is_supported_primitive(name: &str) -> bool {
         name,
         "bool"
             | "int"
+            | "int8_t"
+            | "int16_t"
+            | "int32_t"
+            | "int64_t"
             | "short"
             | "long"
             | "long long"
             | "float"
             | "double"
             | "size_t"
+            | "uint8_t"
+            | "uint16_t"
+            | "uint32_t"
+            | "uint64_t"
             | "char"
             | "const char"
             | "unsigned"

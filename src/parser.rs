@@ -568,6 +568,69 @@ fn is_system_header(cursor: CXCursor) -> bool {
     unsafe { clang_Location_isInSystemHeader(clang_getCursorLocation(cursor)) != 0 }
 }
 
+fn cursor_source_path(cursor: CXCursor) -> Option<String> {
+    unsafe {
+        let location = clang_getCursorLocation(cursor);
+        let mut file = ptr::null_mut();
+        clang_getExpansionLocation(
+            location,
+            &mut file,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+        );
+        if file.is_null() {
+            return None;
+        }
+        let spelling = cxstring_to_string(clang_getFileName(file));
+        if spelling.is_empty() {
+            return None;
+        }
+        Some(normalize_source_path(Path::new(&spelling)))
+    }
+}
+
+fn normalize_source_path(path: &Path) -> String {
+    let normalized = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let value = normalized.display().to_string();
+    if cfg!(windows) {
+        value.strip_prefix(r"\\?\").unwrap_or(&value).to_string()
+    } else {
+        value
+    }
+}
+
+fn dedupe_parsed_api(api: &mut ParsedApi) {
+    let mut class_keys = HashSet::new();
+    api.classes.retain(|class| {
+        let key = format!("{}::{}", class.namespace.join("::"), class.name);
+        class_keys.insert(key)
+    });
+
+    let mut function_keys = HashSet::new();
+    api.functions.retain(|function| {
+        let key = format!(
+            "{}::{}({})->{}",
+            function.namespace.join("::"),
+            function.name,
+            function
+                .params
+                .iter()
+                .map(|param| param.canonical_ty.clone())
+                .collect::<Vec<_>>()
+                .join(","),
+            function.return_canonical_type
+        );
+        function_keys.insert(key)
+    });
+
+    let mut enum_keys = HashSet::new();
+    api.enums.retain(|cpp_enum| {
+        let key = format!("{}::{}", cpp_enum.namespace.join("::"), cpp_enum.name);
+        enum_keys.insert(key)
+    });
+}
+
 fn cursor_spelling(cursor: CXCursor) -> Option<String> {
     let spelling = unsafe { cxstring_to_string(clang_getCursorSpelling(cursor)) };
     if spelling.is_empty() {
