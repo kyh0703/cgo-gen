@@ -74,10 +74,9 @@ pub fn collect_translation_units(config: &Config) -> Result<Vec<PathBuf>> {
 
 fn collect_classified_translation_units(config: &Config, dir: &Path) -> Result<Vec<PathBuf>> {
     let grouped_dirs = config
-        .files
-        .model
+        .input
+        .headers
         .iter()
-        .chain(config.files.facade.iter())
         .filter(|path| path_is_within(path, dir))
         .filter_map(|path| path.parent().map(Path::to_path_buf))
         .collect::<BTreeSet<_>>();

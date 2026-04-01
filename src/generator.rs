@@ -10,7 +10,6 @@ use crate::{
     config::Config,
     facade,
     ir::{IrCallback, IrEnum, IrFunction, IrModule, IrParam, IrType},
-    model,
     parser,
 };
 
@@ -89,7 +88,7 @@ fn prepare_config_from_parsed(config: &Config, parsed: &parser::ParsedApi) -> Re
     let known_model_types = collect_known_model_types(parsed);
     let scoped = config.clone().with_known_model_types(known_model_types);
     let ir = crate::ir::normalize(&scoped, parsed)?;
-    let known_model_projections = model::collect_known_model_projections(&scoped, &ir)?;
+    let known_model_projections = facade::collect_known_model_projections(&scoped, &ir)?;
     Ok(scoped.with_known_model_projections(known_model_projections))
 }
 
@@ -124,17 +123,6 @@ pub fn generate(config: &Config, ir: &IrModule, write_ir: bool) -> Result<()> {
         .with_context(|| format!("failed to write header: {}", header_path.display()))?;
     fs::write(&source_path, render_source(config, ir))
         .with_context(|| format!("failed to write source: {}", source_path.display()))?;
-    for go_file in model::render_go_models(config, ir)? {
-        fs::create_dir_all(config.go_output_dir()).with_context(|| {
-            format!(
-                "failed to create go output dir: {}",
-                config.go_output_dir().display()
-            )
-        })?;
-        let go_path = config.go_output_dir().join(&go_file.filename);
-        fs::write(&go_path, go_file.contents)
-            .with_context(|| format!("failed to write Go wrapper: {}", go_path.display()))?;
-    }
     for go_file in facade::render_go_facade(config, ir)? {
         fs::create_dir_all(config.go_output_dir()).with_context(|| {
             format!(
@@ -284,7 +272,7 @@ fn render_callback_decl(out: &mut String, callback: &IrCallback) {
     ));
 }
 
-pub use crate::model::GeneratedGoFile;
+pub use crate::facade::GeneratedGoFile;
 
 fn render_function_decl(function: &IrFunction) -> String {
     let params = render_param_list(function);

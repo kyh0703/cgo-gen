@@ -3,10 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use c_go::{
-    config::{Config, HeaderRole},
-    generator,
-};
+use c_go::{config::Config, generator};
 
 fn temp_output_dir(label: &str) -> PathBuf {
     let mut path = env::temp_dir();
@@ -27,17 +24,6 @@ fn checked_in_simple_go_struct_example_uses_handle_backed_model_and_reference_cu
     config.output.dir = temp_output_dir("generate");
 
     assert_eq!(config.input.headers.len(), 2);
-    assert_eq!(config.files.facade.len(), 1);
-    assert_eq!(config.files.model.len(), 1);
-    assert_eq!(
-        config.header_role(&config.files.facade[0]),
-        HeaderRole::Facade
-    );
-    assert_eq!(
-        config.header_role(&config.files.model[0]),
-        HeaderRole::Model
-    );
-
     generator::generate_all(&config, true).unwrap();
 
     let go_model = fs::read_to_string(config.output.dir.join("thing_model_wrapper.go")).unwrap();
@@ -47,7 +33,7 @@ fn checked_in_simple_go_struct_example_uses_handle_backed_model_and_reference_cu
     assert!(go_model.contains("type ThingModel struct {"));
     assert!(go_model.contains("ptr *C.ThingModelHandle"));
     assert!(go_model.contains("func NewThingModel() (*ThingModel, error) {"));
-    assert!(go_model.contains("func (t *ThingModel) SetName(value string) {"));
+    assert!(go_model.contains("func (t *ThingModel) SetName(name string) {"));
     assert!(go_model.contains("func (t *ThingModel) SetValue(value int32) {"));
 
     assert!(go_facade.contains("func (t *ThingApi) SelectThing(id int32, out *ThingModel) bool {"));

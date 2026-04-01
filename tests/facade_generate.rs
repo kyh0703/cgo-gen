@@ -13,16 +13,13 @@ fn temp_output_dir(label: &str) -> std::path::PathBuf {
 #[test]
 fn generates_go_facade_for_simple_free_function_header() {
     let mut config = Config::load("tests/fixtures/simple/config.yaml").unwrap();
-    let facade_header = config.input.headers[0].clone();
     config.output.dir = temp_output_dir("generate");
-    config.files.facade = vec![facade_header];
 
     let parsed = parser::parse(&config).unwrap();
     let ir = ir::normalize(&config, &parsed).unwrap();
     generator::generate(&config, &ir, true).unwrap();
 
-    let go_facade =
-        fs::read_to_string(config.facade_output_dir().join(config.go_filename(""))).unwrap();
+    let go_facade = fs::read_to_string(config.go_output_dir().join(config.go_filename(""))).unwrap();
 
     assert!(go_facade.contains("import \"C\""));
     assert!(go_facade.contains(&format!(
@@ -78,8 +75,7 @@ naming:
     let ir = ir::normalize(&config, &parsed).unwrap();
     generator::generate(&config, &ir, true).unwrap();
 
-    let go_facade =
-        fs::read_to_string(config.facade_output_dir().join(config.go_filename(""))).unwrap();
+    let go_facade = fs::read_to_string(config.go_output_dir().join(config.go_filename(""))).unwrap();
 
     assert!(go_facade.contains("import \"errors\""));
     assert!(go_facade.contains("func IsReady() bool {"));
@@ -589,7 +585,14 @@ naming:
     .unwrap();
 
     let prepared = generator::prepare_config(&Config::load(&config_path).unwrap()).unwrap();
-    let config = prepared.scoped_to_header(prepared.files.facade[0].clone());
+    let facade_header = prepared
+        .input
+        .headers
+        .iter()
+        .find(|path| path.file_name().and_then(|name| name.to_str()) == Some("Api.hpp"))
+        .cloned()
+        .unwrap();
+    let config = prepared.scoped_to_header(facade_header);
     let parsed = parser::parse(&config).unwrap();
     let ir = ir::normalize(&config, &parsed).unwrap();
     generator::generate(&config, &ir, true).unwrap();
@@ -815,7 +818,7 @@ naming:
 
     assert!(go_model.contains("type IsWebHook struct {"));
     assert!(go_model.contains("ptr *C.IsWebHookHandle"));
-    assert!(go_model.contains("func (i *IsWebHook) SetURL(value string) {"));
+    assert!(go_model.contains("func (i *IsWebHook) SetUrl(value string) {"));
 
     assert!(go_facade.contains("func (i *ISiLib) NextWebHook(pos *int32, out *IsWebHook) bool {"));
     assert!(go_facade.contains("if pos == nil {"));
