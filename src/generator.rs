@@ -11,17 +11,16 @@ use crate::{
 
 pub fn generate_all(config: &Config, write_ir: bool) -> Result<()> {
     let config = prepare_config(config)?;
+    let generation_headers = generation_headers(&config);
 
-    if config.input.headers.len() > 1 && !config.uses_default_output_names() {
+    if generation_headers.len() > 1 && !config.uses_default_output_names() {
         bail!(
             "multi-header generation does not support explicit output.header/source/ir overrides; leave them as defaults to emit one wrapper set per header"
         );
     }
 
-    if config.input.headers.len() <= 1 {
-        let scoped = config
-            .input
-            .headers
+    if generation_headers.len() <= 1 {
+        let scoped = generation_headers
             .first()
             .cloned()
             .map(|header| config.scoped_to_header(header))
@@ -31,7 +30,7 @@ pub fn generate_all(config: &Config, write_ir: bool) -> Result<()> {
         return generate(&scoped, &ir, write_ir);
     }
 
-    for header in &config.input.headers {
+    for header in &generation_headers {
         let scoped = config.scoped_to_header(header.clone());
         let parsed = parser::parse(&scoped)?;
         let ir = crate::ir::normalize(&scoped, &parsed)?;
@@ -39,6 +38,22 @@ pub fn generate_all(config: &Config, write_ir: bool) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn generation_headers(config: &Config) -> Vec<std::path::PathBuf> {
+    if config.input.dir.is_some() {
+        return config
+            .files
+            .model
+            .iter()
+            .chain(config.files.facade.iter())
+            .cloned()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+    }
+
+    config.input.headers.clone()
 }
 
 pub fn prepare_config(config: &Config) -> Result<Config> {
