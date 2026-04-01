@@ -1,7 +1,9 @@
 #![allow(non_upper_case_globals)]
 use std::{
+    collections::HashSet,
     ffi::{CStr, CString},
     os::raw::{c_int, c_uint, c_void},
+    path::Path,
     ptr,
 };
 
@@ -77,16 +79,23 @@ pub struct CppEnumVariant {
 
 pub fn parse(config: &Config) -> Result<ParsedApi> {
     let mut api = ParsedApi::default();
+    let target_headers = config
+        .input
+        .headers
+        .iter()
+        .map(|path| normalize_source_path(path))
+        .collect::<HashSet<_>>();
+    let parse_entries = config.parse_entries();
     unsafe {
         let index = clang_createIndex(0, 0);
         if index.is_null() {
             bail!("failed to create libclang index");
         }
 
-        for header in &config.input.headers {
-            compiler::ensure_header_exists(header)?;
-            let args = compiler::collect_clang_args(config, header)?;
-            let c_header = CString::new(header.to_string_lossy().to_string())?;
+        for parse_entry in &parse_entries {
+            compiler::ensure_parse_entry_exists(parse_entry)?;
+            let args = compiler::collect_clang_args(config, parse_entry)?;
+            let c_header = CString::new(parse_entry.to_string_lossy().to_string())?;
             let c_args = args
                 .iter()
                 .map(|arg| CString::new(arg.as_str()))
@@ -110,14 +119,14 @@ pub fn parse(config: &Config) -> Result<ParsedApi> {
             if error != CXError_Success || translation_unit.is_null() {
                 bail!(
                     "failed to parse {} with libclang (error code {})",
-                    header.display(),
+                    parse_entry.display(),
                     error
                 );
             }
 
             let root = clang_getTranslationUnitCursor(translation_unit);
             for child in direct_children(root) {
-                collect_entity(child, &[], &mut api)?;
+                collect_entity(child, &[], &mut api, &target_headers)?;
             }
 
             let diagnostics = collect_diagnostics(translation_unit);
@@ -129,7 +138,7 @@ pub fn parse(config: &Config) -> Result<ParsedApi> {
                 clang_disposeTranslationUnit(translation_unit);
                 bail!(
                     "libclang reported diagnostics while parsing {}:\n{}",
-                    header.display(),
+                    parse_entry.display(),
                     diagnostics.join("\n")
                 );
             }
@@ -140,6 +149,7 @@ pub fn parse(config: &Config) -> Result<ParsedApi> {
         clang_disposeIndex(index);
     }
 
+    dedupe_parsed_api(&mut api);
     api.headers = config
         .input
         .headers
@@ -149,8 +159,13 @@ pub fn parse(config: &Config) -> Result<ParsedApi> {
     Ok(api)
 }
 
-fn collect_entity(cursor: CXCursor, namespace: &[String], api: &mut ParsedApi) -> Result<()> {
-    if !is_main_file(cursor) || is_system_header(cursor) {
+fn collect_entity(
+    cursor: CXCursor,
+    namespace: &[String],
+    api: &mut ParsedApi,
+    target_headers: &HashSet<String>,
+) -> Result<()> {
+    if !belongs_to_target_header(cursor, target_headers) || is_system_header(cursor) {
         return Ok(());
     }
 
@@ -162,7 +177,7 @@ fn collect_entity(cursor: CXCursor, namespace: &[String], api: &mut ParsedApi) -
             let mut next_namespace = namespace.to_vec();
             next_namespace.push(name);
             for child in direct_children(cursor) {
-                collect_entity(child, &next_namespace, api)?;
+                collect_entity(child, &next_namespace, api, target_headers)?;
             }
         }
         CXCursor_ClassDecl | CXCursor_StructDecl => {
@@ -170,7 +185,7 @@ fn collect_entity(cursor: CXCursor, namespace: &[String], api: &mut ParsedApi) -
                 return Ok(());
             }
             if cursor_spelling(cursor).is_some() {
-                let parsed = parse_class(cursor, namespace.to_vec())?;
+                let parsed = parse_class(cursor, namespace.to_vec(), target_headers)?;
                 if parsed.has_declared_constructor
                     || parsed.has_destructor
                     || !parsed.methods.is_empty()
@@ -196,7 +211,11 @@ fn collect_entity(cursor: CXCursor, namespace: &[String], api: &mut ParsedApi) -
     Ok(())
 }
 
-fn parse_class(cursor: CXCursor, namespace: Vec<String>) -> Result<CppClass> {
+fn parse_class(
+    cursor: CXCursor,
+    namespace: Vec<String>,
+    target_headers: &HashSet<String>,
+) -> Result<CppClass> {
     let name = cursor_spelling(cursor)
         .ok_or_else(|| anyhow!("anonymous classes are unsupported in v1"))?;
     let is_struct = unsafe { clang_getCursorKind(cursor) == CXCursor_StructDecl };
@@ -206,7 +225,7 @@ fn parse_class(cursor: CXCursor, namespace: Vec<String>) -> Result<CppClass> {
     let mut has_declared_constructor = false;
 
     for child in direct_children(cursor) {
-        if !is_main_file(child) {
+        if !belongs_to_target_header(child, target_headers) {
             continue;
         }
         let accessible = matches!(unsafe { clang_getCXXAccessSpecifier(child) }, CX_CXXPublic)
@@ -385,12 +404,77 @@ fn collect_diagnostics(translation_unit: CXTranslationUnit) -> Vec<String> {
     diagnostics
 }
 
-fn is_main_file(cursor: CXCursor) -> bool {
-    unsafe { clang_Location_isFromMainFile(clang_getCursorLocation(cursor)) != 0 }
+fn belongs_to_target_header(cursor: CXCursor, target_headers: &HashSet<String>) -> bool {
+    cursor_source_path(cursor)
+        .map(|path| target_headers.contains(&path))
+        .unwrap_or(false)
 }
 
 fn is_system_header(cursor: CXCursor) -> bool {
     unsafe { clang_Location_isInSystemHeader(clang_getCursorLocation(cursor)) != 0 }
+}
+
+fn cursor_source_path(cursor: CXCursor) -> Option<String> {
+    unsafe {
+        let location = clang_getCursorLocation(cursor);
+        let mut file = ptr::null_mut();
+        clang_getExpansionLocation(
+            location,
+            &mut file,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+        );
+        if file.is_null() {
+            return None;
+        }
+        let spelling = cxstring_to_string(clang_getFileName(file));
+        if spelling.is_empty() {
+            return None;
+        }
+        Some(normalize_source_path(Path::new(&spelling)))
+    }
+}
+
+fn normalize_source_path(path: &Path) -> String {
+    let normalized = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let value = normalized.display().to_string();
+    if cfg!(windows) {
+        value.strip_prefix(r"\\?\").unwrap_or(&value).to_string()
+    } else {
+        value
+    }
+}
+
+fn dedupe_parsed_api(api: &mut ParsedApi) {
+    let mut class_keys = HashSet::new();
+    api.classes.retain(|class| {
+        let key = format!("{}::{}", class.namespace.join("::"), class.name);
+        class_keys.insert(key)
+    });
+
+    let mut function_keys = HashSet::new();
+    api.functions.retain(|function| {
+        let key = format!(
+            "{}::{}({})->{}",
+            function.namespace.join("::"),
+            function.name,
+            function
+                .params
+                .iter()
+                .map(|param| param.canonical_ty.clone())
+                .collect::<Vec<_>>()
+                .join(","),
+            function.return_canonical_type
+        );
+        function_keys.insert(key)
+    });
+
+    let mut enum_keys = HashSet::new();
+    api.enums.retain(|cpp_enum| {
+        let key = format!("{}::{}", cpp_enum.namespace.join("::"), cpp_enum.name);
+        enum_keys.insert(key)
+    });
 }
 
 fn cursor_spelling(cursor: CXCursor) -> Option<String> {
