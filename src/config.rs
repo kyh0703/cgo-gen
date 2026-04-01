@@ -46,6 +46,9 @@ pub struct KnownModelField {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct InputConfig {
+    #[serde(default)]
+    pub dir: Option<PathBuf>,
+    #[serde(default)]
     pub headers: Vec<PathBuf>,
     #[serde(default)]
     pub compile_commands: Option<PathBuf>,
@@ -205,6 +208,7 @@ impl Config {
 
     pub fn scoped_to_header(&self, header: PathBuf) -> Self {
         let mut scoped = self.clone();
+        scoped.input.dir = None;
         scoped.input.headers = vec![header];
         scoped.apply_output_defaults();
         scoped
@@ -212,6 +216,14 @@ impl Config {
 
     fn resolve_relative_paths(&mut self, config_path: &Path) -> Result<()> {
         let base_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
+        if let Some(dir) = &mut self.input.dir {
+            if dir.is_relative() {
+                *dir = base_dir.join(&*dir);
+            }
+            if let Ok(canonical) = dir.canonicalize() {
+                *dir = canonical;
+            }
+        }
         for header in &mut self.input.headers {
             if header.is_relative() {
                 *header = base_dir.join(&*header);
@@ -252,11 +264,18 @@ impl Config {
     }
 
     fn validate(&self) -> Result<()> {
-        if self.input.headers.is_empty() {
-            bail!("config.input.headers must not be empty");
+        if self.input.dir.is_none() && self.input.headers.is_empty() {
+            bail!("config.input.dir or config.input.headers must be set");
         }
+        if let Some(dir) = &self.input.dir {
+            if dir.exists() && !dir.is_dir() {
+                bail!("config.input.dir must point to a directory: {}", dir.display());
+            }
+        }
+        let enforces_header_membership = !self.input.headers.is_empty();
         for header in &self.files.model {
-            if !self
+            if enforces_header_membership
+                && !self
                 .input
                 .headers
                 .iter()
@@ -269,7 +288,8 @@ impl Config {
             }
         }
         for header in &self.files.facade {
-            if !self
+            if enforces_header_membership
+                && !self
                 .input
                 .headers
                 .iter()

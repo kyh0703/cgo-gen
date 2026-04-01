@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     env, fs,
     path::{Path, PathBuf},
 };
@@ -39,6 +40,45 @@ pub fn collect_clang_args(config: &Config, header: &Path) -> Result<Vec<String>>
     add_platform_fallback_includes(&mut args);
 
     Ok(args)
+}
+
+pub fn collect_translation_units(config: &Config) -> Result<Vec<PathBuf>> {
+    if !config.input.headers.is_empty() {
+        return Ok(config.input.headers.clone());
+    }
+
+    let Some(dir) = &config.input.dir else {
+        return Ok(Vec::new());
+    };
+
+    let mut units = if let Some(path) = config.compile_commands_path() {
+        read_compile_db_translation_units(&path, dir)?
+    } else {
+        Vec::new()
+    };
+
+    if units.is_empty() {
+        units = collect_classified_translation_units(config, dir);
+    }
+
+    if units.is_empty() {
+        units = scan_dir_translation_units(dir)?;
+    }
+
+    Ok(units)
+}
+
+fn collect_classified_translation_units(config: &Config, dir: &Path) -> Vec<PathBuf> {
+    config
+        .files
+        .model
+        .iter()
+        .chain(config.files.facade.iter())
+        .filter(|path| path_is_within(path, dir))
+        .cloned()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 fn add_header_parent_include(args: &mut Vec<String>, header: &Path) {
@@ -183,6 +223,54 @@ fn read_compile_db_args(path: &Path, header: &Path) -> Result<Vec<String>> {
     Ok(resolved)
 }
 
+fn read_compile_db_translation_units(path: &Path, dir: &Path) -> Result<Vec<PathBuf>> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let content = fs::read_to_string(path)
+        .with_context(|| format!("failed to read compile_commands.json: {}", path.display()))?;
+    let commands: Vec<CompileCommand> = serde_json::from_str(&content)
+        .with_context(|| format!("failed to parse compile_commands.json: {}", path.display()))?;
+    let db_dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let mut units = BTreeSet::new();
+
+    for command in &commands {
+        let file = resolve_command_file(db_dir, command);
+        if !is_translation_unit_file(&file) || !path_is_within(&file, dir) {
+            continue;
+        }
+        units.insert(file);
+    }
+
+    Ok(units.into_iter().collect())
+}
+
+fn scan_dir_translation_units(dir: &Path) -> Result<Vec<PathBuf>> {
+    let entries = fs::read_dir(dir)
+        .with_context(|| format!("failed to read input directory: {}", dir.display()))?;
+    let mut source_units = BTreeSet::new();
+    let mut header_units = BTreeSet::new();
+
+    for entry in entries {
+        let path = entry?.path();
+        if !path.is_file() {
+            continue;
+        }
+        if is_translation_unit_file(&path) {
+            source_units.insert(path);
+        } else if is_header_file(&path) {
+            header_units.insert(path);
+        }
+    }
+
+    if !source_units.is_empty() {
+        Ok(source_units.into_iter().collect())
+    } else {
+        Ok(header_units.into_iter().collect())
+    }
+}
+
 fn resolve_command_file(db_dir: &Path, command: &CompileCommand) -> PathBuf {
     if command.file.is_absolute() {
         command.file.clone()
@@ -225,6 +313,26 @@ fn normalize_clang_path(path: &Path) -> String {
     } else {
         value
     }
+}
+
+fn path_is_within(path: &Path, dir: &Path) -> bool {
+    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let dir = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    path.starts_with(dir)
+}
+
+fn is_translation_unit_file(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|ext| ext.to_str()),
+        Some("c" | "cc" | "cpp" | "cxx" | "h" | "hh" | "hpp" | "hxx")
+    )
+}
+
+fn is_header_file(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|ext| ext.to_str()),
+        Some("h" | "hh" | "hpp" | "hxx")
+    )
 }
 
 fn split_command_line(command: &str) -> Vec<String> {

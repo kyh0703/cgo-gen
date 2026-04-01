@@ -1,0 +1,29 @@
+version: 1
+
+input:
+  dir: ../tests/fixtures/isaamaster/include
+  compile_commands: ../tests/fixtures/isaamaster/build/compile_commands.json
+  clang_args:
+    - -std=c++11
+    - -x
+    - c++
+    - -I../tests/fixtures/isaamaster/include
+
+output:
+  dir: ./pkg/sil-real-model
+
+files:
+  model:
+    - ../tests/fixtures/isaamaster/include/IsAAMaster.h
+
+naming:
+  prefix: sil
+  style: preserve
+
+policies:
+  string_mode: c_str
+  enum_mode: c_enum
+  unsupported:
+    templates: error
+    stl_containers: skip
+    exceptions: error
