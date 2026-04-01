@@ -113,17 +113,17 @@ fn collect_facade_classes<'a>(
         ensure_unique_method_exports(owner, &general_methods, &model_mapped_methods)?;
 
         let Some(constructor) = constructors.get(owner).copied() else {
-            bail!("facade class `{owner}` has renderable methods but no constructor wrapper");
+            continue;
         };
         if !constructor
             .params
             .iter()
             .all(|param| go_param_supported(&param.ty))
         {
-            bail!("facade class `{owner}` constructor params are not supported yet");
+            continue;
         }
         let Some(destructor) = destructors.get(owner).copied() else {
-            bail!("facade class `{owner}` has renderable methods but no destructor wrapper");
+            continue;
         };
 
         classes.push(AnalyzedFacadeClass {
@@ -480,7 +480,7 @@ fn render_general_api_method(
         }
         _ => out.push_str(&format!(
             "        return {}\n",
-            zero_value_for_go_type(go_type_for_ir(&function.returns).unwrap())
+            zero_value_for_go_type(&go_type_for_ir(&function.returns).unwrap())
         )),
     }
     out.push_str("    }\n");
@@ -728,6 +728,15 @@ fn render_call_prep(params: &[&crate::ir::IrParam]) -> (Vec<String>, Vec<String>
                 cleanup_lines.push(format!("defer C.free(unsafe.Pointer({c_name}))"));
                 args.push(c_name);
             }
+            "model_pointer" => {
+                let c_name = format!("cArg{index}");
+                let handle = param.ty.handle.as_deref().unwrap_or("void");
+                setup_lines.push(format!("var {c_name} *C.{handle}"));
+                setup_lines.push(format!("if {} != nil {{", param.name));
+                setup_lines.push(format!("    {c_name} = {}.ptr", param.name));
+                setup_lines.push("}".to_string());
+                args.push(c_name);
+            }
             _ => args.push(render_c_arg(&param.ty, &param.name)),
         }
     }
@@ -752,6 +761,7 @@ fn has_string_params<'a>(mut params: impl Iterator<Item = &'a crate::ir::IrParam
 fn go_param_supported(ty: &IrType) -> bool {
     matches!(ty.kind.as_str(), "string" | "c_string")
         || (ty.kind == "primitive" && go_type_for_ir(ty).is_some())
+        || (ty.kind == "model_pointer" && ty.handle.is_some())
 }
 
 fn go_return_supported(ty: &IrType) -> bool {
@@ -768,48 +778,52 @@ fn zero_value_for_go_type(go_type: &str) -> &'static str {
     }
 }
 
-fn go_type_for_ir(ty: &IrType) -> Option<&'static str> {
+fn go_type_for_ir(ty: &IrType) -> Option<String> {
     match ty.kind.as_str() {
-        "string" | "c_string" => Some("string"),
+        "string" | "c_string" => Some("string".to_string()),
         "primitive" => match normalize_type_key(&ty.cpp_type).as_str() {
-            "bool" => Some("bool"),
-            "float" => Some("float32"),
-            "double" => Some("float64"),
-            "int8" | "int8_t" => Some("int8"),
-            "int16" | "int16_t" => Some("int16"),
-            "int32" | "int32_t" => Some("int32"),
-            "int64" | "int64_t" => Some("int64"),
-            "uint8" | "uint8_t" => Some("uint8"),
-            "uint16" | "uint16_t" => Some("uint16"),
-            "uint32" | "uint32_t" => Some("uint32"),
-            "uint64" | "uint64_t" => Some("uint64"),
-            "int" => Some("int"),
-            "short" => Some("int16"),
-            "long" => Some("int64"),
-            "size_t" => Some("uintptr"),
+            "bool" => Some("bool".to_string()),
+            "float" => Some("float32".to_string()),
+            "double" => Some("float64".to_string()),
+            "int8" | "int8_t" => Some("int8".to_string()),
+            "int16" | "int16_t" => Some("int16".to_string()),
+            "int32" | "int32_t" => Some("int32".to_string()),
+            "int64" | "int64_t" => Some("int64".to_string()),
+            "uint8" | "uint8_t" => Some("uint8".to_string()),
+            "uint16" | "uint16_t" => Some("uint16".to_string()),
+            "uint32" | "uint32_t" => Some("uint32".to_string()),
+            "uint64" | "uint64_t" => Some("uint64".to_string()),
+            "int" => Some("int".to_string()),
+            "short" => Some("int16".to_string()),
+            "long" => Some("int64".to_string()),
+            "size_t" => Some("uintptr".to_string()),
             _ => None,
         },
+        "model_pointer" => Some(format!("*{}", leaf_cpp_name(&base_model_cpp_type(&ty.cpp_type)))),
         _ => None,
     }
 }
 
-fn cgo_cast_type(ty: &IrType) -> &'static str {
+fn cgo_cast_type(ty: &IrType) -> String {
+    if ty.kind == "model_pointer" {
+        return format!("*C.{}", ty.handle.as_deref().unwrap_or("void"));
+    }
     match normalize_type_key(&ty.cpp_type).as_str() {
-        "bool" => "C.bool",
-        "float" => "C.float",
-        "double" => "C.double",
-        "int8" | "int8_t" => "C.int8_t",
-        "int16" | "int16_t" => "C.int16_t",
-        "int32" | "int32_t" => "C.int32_t",
-        "int64" | "int64_t" => "C.int64_t",
-        "uint8" | "uint8_t" => "C.uint8_t",
-        "uint16" | "uint16_t" => "C.uint16_t",
-        "uint32" | "uint32_t" => "C.uint32_t",
-        "uint64" | "uint64_t" => "C.uint64_t",
-        "short" => "C.short",
-        "long" => "C.long",
-        "size_t" => "C.size_t",
-        _ => "C.int",
+        "bool" => "C.bool".to_string(),
+        "float" => "C.float".to_string(),
+        "double" => "C.double".to_string(),
+        "int8" | "int8_t" => "C.int8_t".to_string(),
+        "int16" | "int16_t" => "C.int16_t".to_string(),
+        "int32" | "int32_t" => "C.int32_t".to_string(),
+        "int64" | "int64_t" => "C.int64_t".to_string(),
+        "uint8" | "uint8_t" => "C.uint8_t".to_string(),
+        "uint16" | "uint16_t" => "C.uint16_t".to_string(),
+        "uint32" | "uint32_t" => "C.uint32_t".to_string(),
+        "uint64" | "uint64_t" => "C.uint64_t".to_string(),
+        "short" => "C.short".to_string(),
+        "long" => "C.long".to_string(),
+        "size_t" => "C.size_t".to_string(),
+        _ => "C.int".to_string(),
     }
 }
 
@@ -896,6 +910,7 @@ fn go_overload_token(ty: &IrType) -> String {
     match ty.kind.as_str() {
         "string" | "c_string" => "String".to_string(),
         "primitive" => go_type_for_ir(ty)
+            .as_deref()
             .map(go_export_name)
             .unwrap_or_else(|| go_export_name(&sanitize_go_token(&ty.cpp_type))),
         _ => go_export_name(&sanitize_go_token(&ty.cpp_type)),
@@ -960,6 +975,16 @@ fn leaf_cpp_name(value: &str) -> String {
 
 fn flatten_qualified_cpp_name(value: &str) -> String {
     value.split("::").collect::<Vec<_>>().join("")
+}
+
+fn base_model_cpp_type(value: &str) -> String {
+    value
+        .trim()
+        .trim_start_matches("const ")
+        .trim_end_matches('&')
+        .trim_end_matches('*')
+        .trim()
+        .to_string()
 }
 
 fn go_package_name(path: &Path) -> String {
