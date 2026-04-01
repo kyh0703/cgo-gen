@@ -22,13 +22,15 @@ fn renders_header_and_source_from_fixture() {
 }
 
 #[test]
-fn skips_go_struct_generation_when_not_configured() {
+fn renders_unified_go_wrapper() {
     let config = Config::load("tests/fixtures/simple/config.yaml").unwrap();
     let parsed = parser::parse(&config).unwrap();
     let ir = ir::normalize(&config, &parsed).unwrap();
 
     let go = render_go_structs(&config, &ir).unwrap();
-    assert!(go.is_empty());
+    assert_eq!(go.len(), 1);
+    assert!(go[0].contents.contains("type Bar struct {"));
+    assert!(go[0].contents.contains("func Add(lhs int, rhs int) int {"));
 }
 
 #[test]
@@ -73,4 +75,46 @@ output:
         .unwrap();
     assert_eq!(marker.returns.cpp_type, "const char");
     assert_eq!(marker.returns.c_type, "const char");
+}
+
+#[test]
+fn renders_typedef_anonymous_enums_with_alias_name() {
+    let root = std::env::temp_dir().join(format!(
+        "c_go_typedef_enum_alias_{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("include")).unwrap();
+    std::fs::write(
+        root.join("include/Api.hpp"),
+        r#"
+        typedef enum {
+            FooDisabled = 0,
+            FooEnabled = 1,
+        } FooState;
+        "#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("config.yaml"),
+        r#"
+version: 1
+input:
+  headers:
+    - include/Api.hpp
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(root.join("config.yaml")).unwrap();
+    let parsed = parser::parse(&config).unwrap();
+    let ir = ir::normalize(&config, &parsed).unwrap();
+    let header = render_header(&config, &ir);
+
+    assert!(parsed.enums.iter().any(|item| item.name == "FooState"));
+    assert!(header.contains("typedef enum FooState {"));
+    assert!(header.contains("} FooState;"));
+    assert!(!header.contains("(unnamed enum at"));
 }
