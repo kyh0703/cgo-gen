@@ -24,31 +24,13 @@ pub struct Config {
     #[serde(skip)]
     pub known_model_types: Vec<String>,
     #[serde(skip)]
-    pub known_model_projections: Vec<KnownModelProjection>,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct KnownModelProjection {
-    pub cpp_type: String,
-    pub handle_name: String,
-    pub go_name: String,
-    pub output_header: String,
-    pub constructor_symbol: String,
-    pub destructor_symbol: Option<String>,
-    pub fields: Vec<KnownModelField>,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct KnownModelField {
-    pub go_name: String,
-    pub go_type: String,
-    pub getter_symbol: String,
-    pub setter_symbol: String,
-    pub return_kind: String,
+    pub target_header: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct InputConfig {
+    #[serde(default)]
+    pub dir: Option<PathBuf>,
     #[serde(default)]
     pub headers: Vec<PathBuf>,
     #[serde(default)]
@@ -379,18 +361,26 @@ impl Config {
 
     pub fn scoped_to_header(&self, header: PathBuf) -> Self {
         let mut scoped = self.clone();
-        scoped.input.headers = vec![header];
+        scoped.target_header = Some(header.clone());
+        if scoped.input.dir.is_none() {
+            scoped.input.headers = vec![header];
+        } else {
+            scoped.input.headers.clear();
+        }
         scoped.apply_output_defaults();
         scoped
     }
 
     fn resolve_relative_paths(&mut self, config_path: &Path) -> Result<()> {
-        let config_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
-        if let Some(project_root) = &mut self.project_root {
-            resolve_path(project_root, config_dir);
+        let base_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
+        if let Some(dir) = &mut self.input.dir {
+            if dir.is_relative() {
+                *dir = base_dir.join(&*dir);
+            }
+            if let Ok(canonical) = dir.canonicalize() {
+                *dir = canonical;
+            }
         }
-        let base_dir = self.project_root.as_deref().unwrap_or(config_dir);
-
         for header in &mut self.input.headers {
             resolve_path(header, base_dir);
         }
@@ -469,19 +459,18 @@ impl Config {
     }
 
     fn validate(&self) -> Result<()> {
-        if self.input.headers.is_empty() {
-            bail!("config.input.headers must not be empty");
+        if self.input.dir.is_none() && self.input.headers.is_empty() {
+            bail!("config.input.dir or config.input.headers must be set");
         }
-        for entry in &self.input.translation_units {
-            if !entry.exists() {
-                bail!(
-                    "config.input.translation_units entry not found: {}",
-                    entry.display()
-                );
+        if let Some(dir) = &self.input.dir {
+            if dir.exists() && !dir.is_dir() {
+                bail!("config.input.dir must point to a directory: {}", dir.display());
             }
         }
+        let enforces_header_membership = !self.input.headers.is_empty();
         for header in &self.files.model {
-            if !self
+            if enforces_header_membership
+                && !self
                 .input
                 .headers
                 .iter()
@@ -494,7 +483,8 @@ impl Config {
             }
         }
         for header in &self.files.facade {
-            if !self
+            if enforces_header_membership
+                && !self
                 .input
                 .headers
                 .iter()
@@ -529,10 +519,14 @@ impl Config {
     }
 
     pub fn model_output_dir(&self) -> PathBuf {
-        self.output.dir.clone()
+        self.go_output_dir()
     }
 
     pub fn facade_output_dir(&self) -> PathBuf {
+        self.go_output_dir()
+    }
+
+    pub fn go_output_dir(&self) -> PathBuf {
         self.output.dir.clone()
     }
 
@@ -554,10 +548,14 @@ impl Config {
     }
 
     fn infer_output_basename(&self) -> Option<String> {
-        if self.input.headers.len() != 1 {
-            return None;
-        }
-        let header = self.input.headers.first()?;
+        let header = if let Some(header) = self.target_header.as_ref() {
+            header
+        } else {
+            if self.input.headers.len() != 1 {
+                return None;
+            }
+            self.input.headers.first()?
+        };
         let stem = header.file_stem()?.to_str()?;
         Some(format!("{}_wrapper", to_snake_case(stem)))
     }
@@ -582,28 +580,10 @@ impl Config {
         self
     }
 
-    pub fn with_known_model_projections(
-        mut self,
-        known_model_projections: Vec<KnownModelProjection>,
-    ) -> Self {
-        self.known_model_projections = known_model_projections;
-        self
-    }
-
     pub fn is_known_model_type(&self, cpp_type: &str) -> bool {
         let base = base_cpp_type_name(cpp_type);
         self.known_model_types.iter().any(|candidate| {
             let normalized = base_cpp_type_name(candidate);
-            normalized == base
-                || normalized.rsplit("::").next().unwrap_or(&normalized) == base
-                || base.rsplit("::").next().unwrap_or(&base) == normalized
-        })
-    }
-
-    pub fn known_model_projection(&self, cpp_type: &str) -> Option<&KnownModelProjection> {
-        let base = base_cpp_type_name(cpp_type);
-        self.known_model_projections.iter().find(|projection| {
-            let normalized = base_cpp_type_name(&projection.cpp_type);
             normalized == base
                 || normalized.rsplit("::").next().unwrap_or(&normalized) == base
                 || base.rsplit("::").next().unwrap_or(&base) == normalized

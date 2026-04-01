@@ -148,7 +148,197 @@ naming:
 }
 
 #[test]
-fn renders_known_model_methods_as_handle_backed_wrapper_calls() {
+fn preserves_numeric_suffix_underscores_in_go_method_names() {
+    let root = temp_output_dir("numeric-underscore");
+    let include_dir = root.join("include");
+    fs::create_dir_all(&include_dir).unwrap();
+
+    let header_path = include_dir.join("Media.hpp");
+    fs::write(
+        &header_path,
+        r#"
+        #pragma once
+
+        class IsMediaDelivery {
+        public:
+            IsMediaDelivery() = default;
+            ~IsMediaDelivery() = default;
+            int GetFailCnt_1() const;
+            int GetFailCnt1() const;
+            void SetFailCnt_1(int value);
+            void SetFailCnt1(int value);
+        };
+        "#,
+    )
+    .unwrap();
+
+    let config_path = root.join("cppgo-wrap.yaml");
+    fs::write(
+        &config_path,
+        r#"
+version: 1
+input:
+  headers:
+    - include/Media.hpp
+files:
+  facade:
+    - include/Media.hpp
+output:
+  dir: out
+naming:
+  prefix: cgowrap
+  style: preserve
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(&config_path).unwrap();
+    let parsed = parser::parse(&config).unwrap();
+    let ir = ir::normalize(&config, &parsed).unwrap();
+    generator::generate(&config, &ir, true).unwrap();
+
+    let go_facade = fs::read_to_string(root.join("out/media_wrapper.go")).unwrap();
+
+    assert!(go_facade.contains("func (i *IsMediaDelivery) GetFailCnt_1() int"));
+    assert!(go_facade.contains("func (i *IsMediaDelivery) GetFailCnt1() int"));
+    assert!(go_facade.contains("func (i *IsMediaDelivery) SetFailCnt_1(value int)"));
+    assert!(go_facade.contains("func (i *IsMediaDelivery) SetFailCnt1(value int)"));
+}
+
+#[test]
+fn supports_facade_classes_with_object_pointer_constructor_params() {
+    let root = temp_output_dir("unsupported-constructor");
+    let include_dir = root.join("include");
+    fs::create_dir_all(&include_dir).unwrap();
+
+    let header_path = include_dir.join("Api.hpp");
+    fs::write(
+        &header_path,
+        r#"
+        #pragma once
+
+        class NsLeg;
+
+        class NsLeg {
+        public:
+            NsLeg(NsLeg* parent);
+            ~NsLeg();
+            int GetValue() const;
+        };
+
+        class Api {
+        public:
+            Api() = default;
+            ~Api() = default;
+            int GetValue() const;
+        };
+        "#,
+    )
+    .unwrap();
+
+    let config_path = root.join("cppgo-wrap.yaml");
+    fs::write(
+        &config_path,
+        r#"
+version: 1
+input:
+  headers:
+    - include/Api.hpp
+files:
+  facade:
+    - include/Api.hpp
+output:
+  dir: out
+naming:
+  prefix: cgowrap
+  style: preserve
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(&config_path).unwrap();
+    generator::generate_all(&config, true).unwrap();
+
+    let go_facade = fs::read_to_string(root.join("out/api_wrapper.go")).unwrap();
+
+    assert!(go_facade.contains("type NsLeg struct {"));
+    assert!(go_facade.contains("func NewNsLeg(parent *NsLeg) (*NsLeg, error) {"));
+    assert!(go_facade.contains("var cArg0 *C.NsLegHandle"));
+    assert!(go_facade.contains("if parent != nil {"));
+    assert!(go_facade.contains("cArg0 = parent.ptr"));
+    assert!(go_facade.contains("func (n *NsLeg) GetValue() int {"));
+    assert!(go_facade.contains("type Api struct {"));
+    assert!(go_facade.contains("func (a *Api) GetValue() int {"));
+}
+
+#[test]
+fn supports_facade_classes_with_object_reference_constructor_params() {
+    let root = temp_output_dir("unsupported-constructor-ref");
+    let include_dir = root.join("include");
+    fs::create_dir_all(&include_dir).unwrap();
+
+    let header_path = include_dir.join("Api.hpp");
+    fs::write(
+        &header_path,
+        r#"
+        #pragma once
+
+        class NsLeg;
+
+        class NsLeg {
+        public:
+            NsLeg(NsLeg& parent);
+            ~NsLeg();
+            int GetValue() const;
+        };
+
+        class Api {
+        public:
+            Api() = default;
+            ~Api() = default;
+            int GetValue() const;
+        };
+        "#,
+    )
+    .unwrap();
+
+    let config_path = root.join("cppgo-wrap.yaml");
+    fs::write(
+        &config_path,
+        r#"
+version: 1
+input:
+  headers:
+    - include/Api.hpp
+files:
+  facade:
+    - include/Api.hpp
+output:
+  dir: out
+naming:
+  prefix: cgowrap
+  style: preserve
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(&config_path).unwrap();
+    generator::generate_all(&config, true).unwrap();
+
+    let go_facade = fs::read_to_string(root.join("out/api_wrapper.go")).unwrap();
+
+    assert!(go_facade.contains("type NsLeg struct {"));
+    assert!(go_facade.contains("func NewNsLeg(parent *NsLeg) (*NsLeg, error) {"));
+    assert!(go_facade.contains("if parent == nil {"));
+    assert!(go_facade.contains("panic(\"reference facade/model argument cannot be nil\")"));
+    assert!(go_facade.contains("cArg0 = parent.ptr"));
+    assert!(go_facade.contains("type Api struct {"));
+    assert!(go_facade.contains("func (a *Api) GetValue() int {"));
+}
+
+
+#[test]
+fn exposes_object_out_params_as_direct_wrapper_pointer_arguments() {
     let root = temp_output_dir("model-method");
     let include_dir = root.join("include");
     fs::create_dir_all(&include_dir).unwrap();
@@ -210,20 +400,7 @@ naming:
     let config = Config::load(&config_path).unwrap();
     generator::generate_all(&config, true).unwrap();
 
-    let go_model = fs::read_to_string(root.join("out/thing_model_wrapper.go")).unwrap();
     let go_facade = fs::read_to_string(root.join("out/api_wrapper.go")).unwrap();
-
-    assert!(go_model.contains("type ThingModel struct {"));
-    assert!(go_model.contains("ptr *C.ThingModelHandle"));
-    assert!(go_model.contains("func NewThingModel() (*ThingModel, error) {"));
-    assert!(
-        go_model.contains("func requireThingModelHandle(value *ThingModel) *C.ThingModelHandle {")
-    );
-    assert!(
-        go_model.contains("func optionalThingModelHandle(value *ThingModel) *C.ThingModelHandle {")
-    );
-    assert!(go_model.contains("func (t *ThingModel) GetValue() int {"));
-    assert!(go_model.contains("func (t *ThingModel) SetValue(value int) {"));
 
     assert!(go_facade.contains("type Api struct {"));
     assert!(go_facade.contains("ptr *C.ApiHandle"));
@@ -235,19 +412,15 @@ naming:
     assert!(go_facade.contains("result := C.cgowrap_Api_IsReady(a.ptr)"));
     assert!(go_facade.contains("return bool(result)"));
     assert!(go_facade.contains("func (a *Api) Clear() int {"));
-    assert!(go_facade.contains("result := C.cgowrap_Api_Clear(a.ptr)"));
-    assert!(go_facade.contains("return int(result)"));
+    assert!(go_facade.contains("return int(C.cgowrap_Api_Clear(a.ptr))"));
     assert!(go_facade.contains("func (a *Api) GetThing(id int, out *ThingModel) bool {"));
-    assert!(go_facade.contains(
-        "result := C.cgowrap_Api_GetThing(a.ptr, C.int(id), requireThingModelHandle(out))"
-    ));
-    assert!(go_facade.contains("return bool(result)"));
+    assert!(go_facade.contains("if out == nil {"));
+    assert!(go_facade.contains("panic(\"reference facade/model argument cannot be nil\")"));
+    assert!(go_facade.contains("C.cgowrap_Api_GetThing(a.ptr, C.int(id), cArg1)"));
     assert!(go_facade.contains("func (a *Api) GetThingByKey(key string, out *ThingModel) bool {"));
     assert!(go_facade.contains("cArg0 := C.CString(key)"));
     assert!(go_facade.contains("defer C.free(unsafe.Pointer(cArg0))"));
-    assert!(go_facade.contains(
-        "result := C.cgowrap_Api_GetThingByKey(a.ptr, cArg0, optionalThingModelHandle(out))"
-    ));
+    assert!(go_facade.contains("C.cgowrap_Api_GetThingByKey(a.ptr, cArg0, cArg1)"));
     assert!(!go_facade.contains("mapThingModelFromHandle"));
 }
 
@@ -338,11 +511,9 @@ naming:
     assert!(raw_source.contains("*reinterpret_cast<UnknownThing*>(out)"));
     assert!(ir_yaml.contains("cpp_name: Api::GetUnknown"));
     assert!(go_facade.contains("func (a *Api) Count() int {"));
-    assert!(go_facade.contains("result := C.cgowrap_Api_Count(a.ptr)"));
-    assert!(go_facade.contains("return int(result)"));
+    assert!(go_facade.contains("return int(C.cgowrap_Api_Count(a.ptr))"));
     assert!(go_facade.contains("func (a *Api) GetThing(id int, out *ThingModel) bool {"));
-    assert!(!go_facade.contains("GetUnknown("));
-    assert!(!go_facade.contains("UnknownThingHandle"));
+    assert!(go_facade.contains("func (a *Api) GetUnknown(id int, out *UnknownThing) bool {"));
 }
 
 #[test]
@@ -505,12 +676,11 @@ naming:
     assert!(go_facade.contains("result := C.cgowrap_Api_ListThing(a.ptr, C.int(id))"));
     assert!(go_facade.contains("return bool(result)"));
     assert!(go_facade.contains("func (a *Api) NextThing(cursor int) int {"));
-    assert!(!go_facade.contains("(ThingModel, error)"));
     assert!(!go_facade.contains("mapThingModelFromHandle"));
 }
 
 #[test]
-fn keeps_known_model_params_supported_even_when_they_are_not_last() {
+fn supports_object_reference_params_even_outside_last_position() {
     let root = temp_output_dir("model-not-last");
     let include_dir = root.join("include");
     fs::create_dir_all(&include_dir).unwrap();
@@ -575,11 +745,6 @@ naming:
     assert!(go_facade.contains("type Api struct {"));
     assert!(go_facade.contains("func (a *Api) IsReady() bool {"));
     assert!(go_facade.contains("func (a *Api) GetThing(out *ThingModel, id int) bool {"));
-    assert!(go_facade.contains(
-        "result := C.cgowrap_Api_GetThing(a.ptr, requireThingModelHandle(out), C.int(id))"
-    ));
-    assert!(go_facade.contains("return bool(result)"));
-    assert!(!go_facade.contains("(ThingModel, error)"));
     assert!(!go_facade.contains("mapThingModelFromHandle"));
 }
 
