@@ -2,6 +2,7 @@ use std::{
     collections::BTreeSet,
     env, fs,
     path::{Path, PathBuf},
+    process::Command,
 };
 
 use anyhow::{Context, Result};
@@ -107,23 +108,26 @@ fn add_header_parent_include(args: &mut Vec<String>, header: &Path) {
 }
 
 fn add_platform_fallback_includes(args: &mut Vec<String>) {
-    if env::consts::OS != "windows" {
-        return;
-    }
-
-    let Some(include) = discover_windows_clang_builtin_include() else {
-        return;
-    };
-    let include = normalize_clang_path(&include);
-    let already_present = args
-        .iter()
-        .any(|arg| arg == &format!("-I{include}") || arg == &format!("-isystem{include}"));
-    if !already_present {
-        args.push(format!("-isystem{include}"));
+    for include in discover_platform_fallback_include_dirs() {
+        let include = normalize_clang_path(&include);
+        let already_present = args
+            .iter()
+            .any(|arg| arg == &format!("-I{include}") || arg == &format!("-isystem{include}"));
+        if !already_present {
+            args.push(format!("-isystem{include}"));
+        }
     }
 }
 
-fn discover_windows_clang_builtin_include() -> Option<PathBuf> {
+fn discover_platform_fallback_include_dirs() -> Vec<PathBuf> {
+    match env::consts::OS {
+        "windows" => discover_windows_fallback_include_dirs(),
+        "linux" => discover_linux_fallback_include_dirs(),
+        _ => Vec::new(),
+    }
+}
+
+fn discover_windows_fallback_include_dirs() -> Vec<PathBuf> {
     let roots = [
         PathBuf::from("C:/msys64/ucrt64/lib/clang"),
         PathBuf::from("C:/Program Files/LLVM/lib/clang"),
@@ -132,7 +136,59 @@ fn discover_windows_clang_builtin_include() -> Option<PathBuf> {
     roots
         .into_iter()
         .filter_map(|root| latest_versioned_include_dir(&root))
-        .find(|path| path.exists())
+        .filter(|path| path.exists())
+        .collect()
+}
+
+fn discover_linux_fallback_include_dirs() -> Vec<PathBuf> {
+    let mut includes = Vec::new();
+
+    if let Some(resource_dir) =
+        discover_command_output_dir(&["clang", "-print-resource-dir"]).map(|dir| dir.join("include"))
+    {
+        includes.push(resource_dir);
+    }
+
+    if let Some(resource_dir) =
+        discover_command_output_dir(&["clang++", "-print-resource-dir"]).map(|dir| dir.join("include"))
+    {
+        includes.push(resource_dir);
+    }
+
+    if let Some(gcc_include) = discover_command_output_dir(&["c++", "-print-file-name=include"]) {
+        includes.push(gcc_include);
+    }
+
+    if let Some(gcc_include) = discover_command_output_dir(&["g++", "-print-file-name=include"]) {
+        includes.push(gcc_include);
+    }
+
+    includes
+        .into_iter()
+        .filter(|path| path.exists())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+fn discover_command_output_dir(command_with_args: &[&str]) -> Option<PathBuf> {
+    let (program, args) = command_with_args.split_first()?;
+    let output = Command::new(program).args(args).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if value.is_empty() {
+        return None;
+    }
+
+    let path = PathBuf::from(value);
+    if path.exists() {
+        Some(path)
+    } else {
+        None
+    }
 }
 
 fn latest_versioned_include_dir(root: &Path) -> Option<PathBuf> {
