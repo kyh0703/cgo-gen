@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 
-use crate::{config::Config, generator, ir, parser};
+use crate::{config::Config, generator, ir};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -56,8 +56,7 @@ pub fn run() -> Result<()> {
             output,
             format,
         } => {
-            let config = generator::prepare_config(&Config::load(config)?)?;
-            let parsed = parser::parse(&config)?;
+            let (config, parsed) = generator::prepare_with_parsed(&Config::load(config)?)?;
             let ir = ir::normalize(&config, &parsed)?;
             match (output, format) {
                 (Some(path), IrFormat::Yaml) => generator::write_ir(&path, &ir)?,
@@ -69,8 +68,7 @@ pub fn run() -> Result<()> {
             }
         }
         Command::Check { config } => {
-            let config = generator::prepare_config(&Config::load(config)?)?;
-            let parsed = parser::parse(&config)?;
+            let (config, parsed) = generator::prepare_with_parsed(&Config::load(config)?)?;
             let ir = ir::normalize(&config, &parsed)?;
             println!(
                 "ok: {} headers, {} classes, {} functions, {} enums, {} abi functions",

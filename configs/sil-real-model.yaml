@@ -1,26 +1,16 @@
 version: 1
 
 input:
-  headers:
-    - ../../../../IPRON/IE/SIL/IsAAMaster.h
+  dir: ../tests/fixtures/isaamaster/includehttps://github.com/kyh0703/cgo-gen/pull/5/conflict?name=src%252Fcompiler.rs&ancestor_oid=da5b8fe21ee9b6239fd30ba42488a5355fe24b97&base_oid=d5aaa9f781d0cf22d5dcd42992638d46640a19a4&head_oid=30f37ab25929450461ef63c3fe3524b35d30ea45
+  compile_commands: ../tests/fixtures/isaamaster/build/compile_commands.json
   clang_args:
     - -std=c++11
     - -x
     - c++
-    - -I../../../../ICOREv6/inc
-    - -I../../../../ICOREv6/inc/iCore
-    - -I../../../../ICOREv6/inc/iSqlLib
-    - -I../../../../ICOREv6/inc/iJson
-    - -I../../../../IPRON/IE/inc
-    - -I../../../../IPRON/LIB/inc
-    - -I../../../../IPRON/LIB/inc/iUtil
+    - -I../tests/fixtures/isaamaster/include
 
 output:
-  dir: ../../../../IPRON/IE/PSC/pkg/sil
-
-files:
-  model:
-    - ../../../../IPRON/IE/SIL/IsAAMaster.h
+  dir: ./pkg/sil-real-model
 
 naming:
   prefix: sil

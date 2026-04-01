@@ -1,9 +1,9 @@
 #![allow(non_upper_case_globals)]
 use std::{
-    collections::HashSet,
+    collections::BTreeSet,
     ffi::{CStr, CString},
     os::raw::{c_int, c_uint, c_void},
-    path::Path,
+    path::{Path, PathBuf},
     ptr,
 };
 
@@ -21,8 +21,9 @@ pub struct ParsedApi {
     pub enums: Vec<CppEnum>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CppClass {
+    pub source_header: PathBuf,
     pub namespace: Vec<String>,
     pub name: String,
     pub methods: Vec<CppMethod>,
@@ -31,8 +32,9 @@ pub struct CppClass {
     pub has_declared_constructor: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CppFunction {
+    pub source_header: PathBuf,
     pub namespace: Vec<String>,
     pub name: String,
     pub return_type: String,
@@ -41,7 +43,7 @@ pub struct CppFunction {
     pub params: Vec<CppParam>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CppMethod {
     pub name: String,
     pub return_type: String,
@@ -51,12 +53,12 @@ pub struct CppMethod {
     pub is_const: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CppConstructor {
     pub params: Vec<CppParam>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CppParam {
     pub name: String,
     pub ty: String,
@@ -64,38 +66,61 @@ pub struct CppParam {
     pub is_function_pointer: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CppEnum {
+    pub source_header: PathBuf,
     pub namespace: Vec<String>,
     pub name: String,
     pub variants: Vec<CppEnumVariant>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CppEnumVariant {
     pub name: String,
     pub value: Option<String>,
 }
 
+impl ParsedApi {
+    pub fn filter_to_header(&self, header: &Path) -> Self {
+        let mut filtered = Self::default();
+        filtered.headers = vec![header.display().to_string()];
+        filtered.functions = self
+            .functions
+            .iter()
+            .filter(|function| same_path(&function.source_header, header))
+            .cloned()
+            .collect();
+        filtered.classes = self
+            .classes
+            .iter()
+            .filter(|class| same_path(&class.source_header, header))
+            .cloned()
+            .collect();
+        filtered.enums = self
+            .enums
+            .iter()
+            .filter(|item| same_path(&item.source_header, header))
+            .cloned()
+            .collect();
+        filtered
+    }
+}
+
 pub fn parse(config: &Config) -> Result<ParsedApi> {
     let mut api = ParsedApi::default();
-    let target_headers = config
-        .input
-        .headers
-        .iter()
-        .map(|path| normalize_source_path(path))
-        .collect::<HashSet<_>>();
-    let parse_entries = config.parse_entries();
+    let filter = ParseFilter::from_config(config);
+    let translation_units = compiler::collect_translation_units(config)?;
+    let mut discovered_headers = BTreeSet::new();
     unsafe {
         let index = clang_createIndex(0, 0);
         if index.is_null() {
             bail!("failed to create libclang index");
         }
 
-        for parse_entry in &parse_entries {
-            compiler::ensure_parse_entry_exists(parse_entry)?;
-            let args = compiler::collect_clang_args(config, parse_entry)?;
-            let c_header = CString::new(parse_entry.to_string_lossy().to_string())?;
+        for translation_unit_path in &translation_units {
+            compiler::ensure_header_exists(translation_unit_path)?;
+            let args = compiler::collect_clang_args(config, translation_unit_path)?;
+            let c_header = CString::new(translation_unit_path.to_string_lossy().to_string())?;
             let c_args = args
                 .iter()
                 .map(|arg| CString::new(arg.as_str()))
@@ -119,14 +144,14 @@ pub fn parse(config: &Config) -> Result<ParsedApi> {
             if error != CXError_Success || translation_unit.is_null() {
                 bail!(
                     "failed to parse {} with libclang (error code {})",
-                    parse_entry.display(),
+                    translation_unit_path.display(),
                     error
                 );
             }
 
             let root = clang_getTranslationUnitCursor(translation_unit);
             for child in direct_children(root) {
-                collect_entity(child, &[], &mut api, &target_headers)?;
+                collect_entity(child, &[], &filter, &mut discovered_headers, &mut api)?;
             }
 
             let diagnostics = collect_diagnostics(translation_unit);
@@ -138,7 +163,7 @@ pub fn parse(config: &Config) -> Result<ParsedApi> {
                 clang_disposeTranslationUnit(translation_unit);
                 bail!(
                     "libclang reported diagnostics while parsing {}:\n{}",
-                    parse_entry.display(),
+                    translation_unit_path.display(),
                     diagnostics.join("\n")
                 );
             }
@@ -149,25 +174,72 @@ pub fn parse(config: &Config) -> Result<ParsedApi> {
         clang_disposeIndex(index);
     }
 
-    dedupe_parsed_api(&mut api);
-    api.headers = config
-        .input
-        .headers
-        .iter()
-        .map(|path| path.display().to_string())
-        .collect();
+    api.headers = if !config.input.headers.is_empty() {
+        config
+            .input
+            .headers
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect()
+    } else {
+        discovered_headers.into_iter().collect()
+    };
+    dedupe_api(&mut api);
     Ok(api)
+}
+
+fn dedupe_api(api: &mut ParsedApi) {
+    api.functions = api
+        .functions
+        .clone()
+        .into_iter()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    api.classes = api
+        .classes
+        .clone()
+        .into_iter()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    api.enums = api
+        .enums
+        .clone()
+        .into_iter()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+}
+
+#[derive(Debug, Clone)]
+struct ParseFilter {
+    main_file_only: bool,
+    owned_dir: Option<PathBuf>,
+    target_header: Option<PathBuf>,
+}
+
+impl ParseFilter {
+    fn from_config(config: &Config) -> Self {
+        Self {
+            main_file_only: config.input.dir.is_none(),
+            owned_dir: config.input.dir.clone(),
+            target_header: config.target_header.clone(),
+        }
+    }
 }
 
 fn collect_entity(
     cursor: CXCursor,
     namespace: &[String],
+    filter: &ParseFilter,
+    discovered_headers: &mut BTreeSet<String>,
     api: &mut ParsedApi,
-    target_headers: &HashSet<String>,
 ) -> Result<()> {
-    if !belongs_to_target_header(cursor, target_headers) || is_system_header(cursor) {
+    if !should_collect_cursor(cursor, filter) {
         return Ok(());
     }
+    record_header_path(cursor, discovered_headers);
 
     match unsafe { clang_getCursorKind(cursor) } {
         CXCursor_Namespace => {
@@ -177,7 +249,7 @@ fn collect_entity(
             let mut next_namespace = namespace.to_vec();
             next_namespace.push(name);
             for child in direct_children(cursor) {
-                collect_entity(child, &next_namespace, api, target_headers)?;
+                collect_entity(child, &next_namespace, filter, discovered_headers, api)?;
             }
         }
         CXCursor_ClassDecl | CXCursor_StructDecl => {
@@ -185,7 +257,7 @@ fn collect_entity(
                 return Ok(());
             }
             if cursor_spelling(cursor).is_some() {
-                let parsed = parse_class(cursor, namespace.to_vec(), target_headers)?;
+                let parsed = parse_class(cursor, namespace.to_vec(), filter, discovered_headers)?;
                 if parsed.has_declared_constructor
                     || parsed.has_destructor
                     || !parsed.methods.is_empty()
@@ -200,9 +272,25 @@ fn collect_entity(
                     .push(parse_function(cursor, namespace.to_vec())?);
             }
         }
+        CXCursor_TypedefDecl => {
+            let Some(name) = cursor_spelling(cursor) else {
+                return Ok(());
+            };
+            let Some(enum_cursor) = direct_children(cursor)
+                .into_iter()
+                .find(|child| unsafe { clang_getCursorKind(*child) } == CXCursor_EnumDecl)
+            else {
+                return Ok(());
+            };
+            if enum_decl_name(enum_cursor).is_none() {
+                api.enums
+                    .push(parse_enum_with_name(enum_cursor, namespace.to_vec(), name));
+            }
+        }
         CXCursor_EnumDecl => {
-            if cursor_spelling(cursor).is_some() {
-                api.enums.push(parse_enum(cursor, namespace.to_vec()));
+            if let Some(name) = enum_decl_name(cursor) {
+                api.enums
+                    .push(parse_enum_with_name(cursor, namespace.to_vec(), name));
             }
         }
         _ => {}
@@ -214,10 +302,13 @@ fn collect_entity(
 fn parse_class(
     cursor: CXCursor,
     namespace: Vec<String>,
-    target_headers: &HashSet<String>,
+    filter: &ParseFilter,
+    discovered_headers: &mut BTreeSet<String>,
 ) -> Result<CppClass> {
     let name = cursor_spelling(cursor)
         .ok_or_else(|| anyhow!("anonymous classes are unsupported in v1"))?;
+    let source_header = normalized_cursor_file_path(cursor)
+        .ok_or_else(|| anyhow!("failed to determine source header for class `{name}`"))?;
     let is_struct = unsafe { clang_getCursorKind(cursor) == CXCursor_StructDecl };
     let mut methods = Vec::new();
     let mut constructors = Vec::new();
@@ -225,9 +316,10 @@ fn parse_class(
     let mut has_declared_constructor = false;
 
     for child in direct_children(cursor) {
-        if !belongs_to_target_header(child, target_headers) {
+        if !should_collect_cursor(child, filter) {
             continue;
         }
+        record_header_path(child, discovered_headers);
         let accessible = matches!(unsafe { clang_getCXXAccessSpecifier(child) }, CX_CXXPublic)
             || (is_struct
                 && unsafe { clang_getCXXAccessSpecifier(child) } == CX_CXXInvalidAccessSpecifier);
@@ -258,6 +350,7 @@ fn parse_class(
     }
 
     Ok(CppClass {
+        source_header,
         namespace,
         name,
         methods,
@@ -268,10 +361,14 @@ fn parse_class(
 }
 
 fn parse_function(cursor: CXCursor, namespace: Vec<String>) -> Result<CppFunction> {
+    let name = cursor_spelling(cursor)
+        .ok_or_else(|| anyhow!("encountered unnamed function declaration"))?;
+    let source_header = normalized_cursor_file_path(cursor)
+        .ok_or_else(|| anyhow!("failed to determine source header for function `{name}`"))?;
     Ok(CppFunction {
+        source_header,
         namespace,
-        name: cursor_spelling(cursor)
-            .ok_or_else(|| anyhow!("encountered unnamed function declaration"))?,
+        name,
         return_type: result_type_name(cursor),
         return_canonical_type: result_canonical_type_name(cursor),
         return_is_function_pointer: result_is_function_pointer(cursor),
@@ -279,7 +376,8 @@ fn parse_function(cursor: CXCursor, namespace: Vec<String>) -> Result<CppFunctio
     })
 }
 
-fn parse_enum(cursor: CXCursor, namespace: Vec<String>) -> CppEnum {
+fn parse_enum_with_name(cursor: CXCursor, namespace: Vec<String>, name: String) -> CppEnum {
+    let source_header = normalized_cursor_file_path(cursor).unwrap_or_default();
     let variants = direct_children(cursor)
         .into_iter()
         .filter(|child| unsafe { clang_getCursorKind(*child) } == CXCursor_EnumConstantDecl)
@@ -290,10 +388,19 @@ fn parse_enum(cursor: CXCursor, namespace: Vec<String>) -> CppEnum {
         .collect();
 
     CppEnum {
+        source_header,
         namespace,
-        name: cursor_spelling(cursor).unwrap_or_default(),
+        name,
         variants,
     }
+}
+
+fn enum_decl_name(cursor: CXCursor) -> Option<String> {
+    cursor_spelling(cursor).filter(|name| !is_unnamed_enum_spelling(name))
+}
+
+fn is_unnamed_enum_spelling(name: &str) -> bool {
+    name.starts_with("(unnamed enum at ")
 }
 
 fn parse_params(cursor: CXCursor) -> Vec<CppParam> {
@@ -404,10 +511,57 @@ fn collect_diagnostics(translation_unit: CXTranslationUnit) -> Vec<String> {
     diagnostics
 }
 
-fn belongs_to_target_header(cursor: CXCursor, target_headers: &HashSet<String>) -> bool {
-    cursor_source_path(cursor)
-        .map(|path| target_headers.contains(&path))
-        .unwrap_or(false)
+fn should_collect_cursor(cursor: CXCursor, filter: &ParseFilter) -> bool {
+    if is_system_header(cursor) {
+        return false;
+    }
+    if filter.main_file_only {
+        if !is_main_file(cursor) {
+            return false;
+        }
+        return matches_target_header(cursor, filter.target_header.as_ref());
+    }
+    let Some(path) = cursor_file_path(cursor) else {
+        return false;
+    };
+    let Some(dir) = &filter.owned_dir else {
+        return false;
+    };
+    path_is_within(&path, dir)
+        && is_header_path(&path)
+        && match filter.target_header.as_ref() {
+            Some(target) => same_path(&path, target),
+            None => true,
+        }
+}
+
+fn matches_target_header(cursor: CXCursor, target_header: Option<&PathBuf>) -> bool {
+    let Some(target_header) = target_header else {
+        return true;
+    };
+    let Some(path) = cursor_file_path(cursor) else {
+        return false;
+    };
+    same_path(&path, target_header)
+}
+
+fn same_path(path: &Path, target: &Path) -> bool {
+    if path == target {
+        return true;
+    }
+    match (path.canonicalize(), target.canonicalize()) {
+        (Ok(path), Ok(target)) => path == target,
+        _ => false,
+    }
+}
+
+fn normalized_cursor_file_path(cursor: CXCursor) -> Option<PathBuf> {
+    let path = cursor_file_path(cursor)?;
+    Some(path.canonicalize().unwrap_or(path))
+}
+
+fn is_main_file(cursor: CXCursor) -> bool {
+    unsafe { clang_Location_isFromMainFile(clang_getCursorLocation(cursor)) != 0 }
 }
 
 fn is_system_header(cursor: CXCursor) -> bool {
@@ -484,6 +638,53 @@ fn cursor_spelling(cursor: CXCursor) -> Option<String> {
     } else {
         Some(spelling)
     }
+}
+
+fn record_header_path(cursor: CXCursor, discovered_headers: &mut BTreeSet<String>) {
+    let Some(path) = cursor_file_path(cursor) else {
+        return;
+    };
+    if !is_header_path(&path) {
+        return;
+    }
+    discovered_headers.insert(path.display().to_string());
+}
+
+fn cursor_file_path(cursor: CXCursor) -> Option<PathBuf> {
+    unsafe {
+        let location = clang_getCursorLocation(cursor);
+        if clang_equalLocations(location, clang_getNullLocation()) != 0 {
+            return None;
+        }
+
+        let mut file = ptr::null_mut();
+        let mut line = 0;
+        let mut column = 0;
+        let mut offset = 0;
+        clang_getExpansionLocation(location, &mut file, &mut line, &mut column, &mut offset);
+        if file.is_null() {
+            return None;
+        }
+        let raw = cxstring_to_string(clang_getFileName(file));
+        if raw.is_empty() {
+            None
+        } else {
+            Some(PathBuf::from(raw))
+        }
+    }
+}
+
+fn path_is_within(path: &Path, dir: &Path) -> bool {
+    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let dir = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    path.starts_with(dir)
+}
+
+fn is_header_path(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|ext| ext.to_str()),
+        Some("h" | "hh" | "hpp" | "hxx")
+    )
 }
 
 unsafe fn cxstring_to_string(raw: CXString) -> String {

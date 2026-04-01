@@ -104,15 +104,9 @@ fn parses_and_generates_wrapper_for_isaamaster_fixture() {
     assert!(source.contains("return reinterpret_cast<IsAAMasterHandle*>(new IsAAMaster());"));
     assert!(source.contains("reinterpret_cast<IsAAMaster*>(self)->SetDigit1_Num(sDigitNum);"));
     assert!(go_structs.contains("type IsAAMaster struct {"));
-    assert!(go_structs.contains("ptr *C.IsAAMasterHandle"));
-    assert!(go_structs.contains("func NewIsAAMaster() (*IsAAMaster, error)"));
-    assert!(
-        go_structs
-            .contains("func requireIsAAMasterHandle(value *IsAAMaster) *C.IsAAMasterHandle {")
-    );
-    assert!(go_structs.contains("func (i *IsAAMaster) GetAAMasterID() uint32 {"));
-    assert!(go_structs.contains("func (i *IsAAMaster) GetAADn() string {"));
-    assert!(go_structs.contains("func (i *IsAAMaster) SetDigit1Num(value string) {"));
+    assert!(go_structs.contains("func NewIsAAMaster() (*IsAAMaster, error) {"));
+    assert!(go_structs.contains("func (i *IsAAMaster) GetAADn() (string, error) {"));
+    assert!(go_structs.contains("func (i *IsAAMaster) SetDigit1Num(sDigitNum string) {"));
     assert_eq!(header, expected_header);
     assert_eq!(source, expected_source);
     assert_eq!(
@@ -189,24 +183,19 @@ fn generated_wrapper_compiles_and_runs_against_isaamaster_fixture() {
 }
 
 #[test]
-fn model_classification_auto_projects_isaamaster_without_go_structs() {
+fn unified_go_wrapper_renders_isaamaster_methods() {
     let mut config = Config::load("tests/fixtures/isaamaster/config.yaml").unwrap();
-    let model_header = config.input.headers[0].clone();
     config.output.dir = temp_output_dir("model-auto");
-    config.files.model = vec![model_header];
 
     let parsed = parser::parse(&config).unwrap();
     let ir = ir::normalize(&config, &parsed).unwrap();
     generator::generate(&config, &ir, true).unwrap();
 
-    let go_struct_path = config
-        .model_output_dir()
-        .join(config.go_filename("IsAAMaster"));
-    let go_structs = fs::read_to_string(go_struct_path).unwrap();
+    let go_struct_path = config.go_output_dir().join(config.go_filename("IsAAMaster"));
+    let go_wrapper = fs::read_to_string(go_struct_path).unwrap();
 
-    assert!(go_structs.contains("type IsAAMaster struct {"));
-    assert!(go_structs.contains("ptr *C.IsAAMasterHandle"));
-    assert!(go_structs.contains("func (i *IsAAMaster) GetAAMasterID() uint32 {"));
-    assert!(go_structs.contains("func (i *IsAAMaster) GetAADn() string {"));
-    assert!(go_structs.contains("func (i *IsAAMaster) GetDigit1Act() uint16 {"));
+    assert!(go_wrapper.contains("type IsAAMaster struct {"));
+    assert!(go_wrapper.contains("func NewIsAAMaster() (*IsAAMaster, error) {"));
+    assert!(go_wrapper.contains("func (i *IsAAMaster) GetAADn() (string, error) {"));
+    assert!(go_wrapper.contains("func (i *IsAAMaster) Close() {"));
 }

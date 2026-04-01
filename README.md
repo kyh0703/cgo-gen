@@ -9,12 +9,12 @@
 3. `docs/ROADMAP.md`
 4. `docs/ARCHITECTURE.md`
 
-현재 작업 문서 구조는 `docs/v2/` 아래로 정리되어 있습니다.
+현재 작업 문서 구조는 `docs/v3/` 아래로 정리되어 있습니다.
 
-- 설계 문서: `docs/v2/designs/`
-- 리서치/상태/레퍼런스: `docs/v2/research/`
-- 완료된 작업 기록: `docs/v2/completed/`
-- 활성 plan: 없음
+- 설계 문서: `docs/v3/designs/`
+- 리서치/상태/레퍼런스: `docs/v3/research/`
+- 완료된 작업 기록: `docs/v3/completed/`
+- 활성 plan: `dir-only-tu-input-config`
 
 ## 주요 명령
 
@@ -26,12 +26,12 @@ cargo run --bin c-go -- generate --config path/to/wrapper.yaml --dump-ir
 
 ## 현재 상태
 
-- 문서 구조는 `v2` 기준으로 정리되었습니다.
+- 문서 구조는 `v3` 기준으로 정리되었습니다.
 - 기존 레거시 문서 경로는 제거되었습니다.
-- 이전 작업 기록은 모두 아카이브로 간주합니다.
-- 새 작업은 빈 상태에서 새 plan으로 다시 시작합니다.
+- 현재 활성 구현 슬라이스는 `input.dir` 기반 TU parsing입니다.
 
 ## 참고
 
 - 예시 설정: `configs/sil-wrapper.example.yaml`
+- real SIL model smoke config: `configs/sil-real-model.yaml`
 - 예시 프로젝트: `examples/simple-cpp`, `examples/simple-go`, `examples/simple-go-struct`
