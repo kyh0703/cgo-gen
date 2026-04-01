@@ -823,22 +823,30 @@ fn normalize_type_key(value: &str) -> String {
 }
 
 fn go_export_name(value: &str) -> String {
-    value
-        .split('_')
-        .flat_map(split_pascal_tokens)
-        .filter(|token| !token.is_empty())
-        .map(|token| {
+    let mut out = String::new();
+    for (index, segment) in value.split('_').filter(|segment| !segment.is_empty()).enumerate() {
+        if index > 0
+            && segment
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_digit())
+            && !out.is_empty()
+        {
+            out.push('_');
+        }
+        for token in split_pascal_tokens(segment)
+            .into_iter()
+            .filter(|token| !token.is_empty())
+        {
             let mut chars = token.chars();
             let Some(first) = chars.next() else {
-                return String::new();
+                continue;
             };
-            format!(
-                "{}{}",
-                first.to_ascii_uppercase(),
-                chars.collect::<String>()
-            )
-        })
-        .collect::<String>()
+            out.push(first.to_ascii_uppercase());
+            out.push_str(&chars.collect::<String>());
+        }
+    }
+    out
 }
 
 fn go_facade_export_name(function: &IrFunction) -> String {
