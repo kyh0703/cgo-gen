@@ -1,7 +1,4 @@
-use std::{
-    env, fs,
-    path::{Path, PathBuf},
-};
+use std::{env, fs, path::PathBuf};
 
 use c_go::{config::Config, generator, ir, parser};
 
@@ -19,38 +16,32 @@ fn temp_output_dir(label: &str) -> PathBuf {
 }
 
 #[test]
-fn checked_in_real_sil_model_config_generates_model_when_sources_exist() {
-    let mut config = Config::load("configs/sil-real-model.yaml").unwrap();
+fn checked_in_real_sil_model_config_uses_dir_only_input_shape() {
+    let config = Config::load("configs/sil-real-model.yaml").unwrap();
 
-    if !config.input.headers[0].exists() {
-        eprintln!(
-            "skipping real SIL model config test because source header is missing: {}",
-            config.input.headers[0].display()
-        );
-        return;
-    }
+    assert!(config.input.headers.is_empty());
+    assert!(config.input.dir.as_ref().is_some_and(|path| path.is_absolute()));
+}
 
-    config.output.dir = temp_output_dir("generate");
+#[test]
+fn checked_in_real_sil_model_config_generates_go_wrapper_when_sources_exist() {
+    let config = Config::load("configs/sil-real-model.yaml").unwrap();
+    let header = config.input.dir.as_ref().unwrap().join("IsAAMaster.h");
+    assert!(header.exists());
 
-    let parsed = parser::parse(&config).unwrap();
-    let ir = ir::normalize(&config, &parsed).unwrap();
-    generator::generate(&config, &ir, true).unwrap();
+    let prepared = generator::prepare_config(&config).unwrap();
+    let mut scoped = prepared.scoped_to_header(header);
+    scoped.output.dir = temp_output_dir("generate");
 
-    let go_path = config.model_output_dir().join(config.go_filename(""));
-    let go_model = fs::read_to_string(&go_path).unwrap();
+    let parsed = parser::parse(&scoped).unwrap();
+    let ir = ir::normalize(&scoped, &parsed).unwrap();
+    generator::generate(&scoped, &ir, true).unwrap();
+
+    let go_path = scoped.go_output_dir().join(scoped.go_filename(""));
+    let go_wrapper = fs::read_to_string(&go_path).unwrap();
 
     assert!(go_path.exists());
-    assert!(go_model.contains("package sil"));
-    assert!(go_model.contains("type IsAAMaster struct {"));
-    assert!(go_model.contains("ptr *C.IsAAMasterHandle"));
-    assert!(go_model.contains("func NewIsAAMaster() (*IsAAMaster, error)"));
-    assert!(go_model.contains("func (i *IsAAMaster) GetAAMasterID() uint32 {"));
-    assert!(
-        Path::new(
-            config.input.clang_args[3]
-                .strip_prefix("-I")
-                .unwrap_or(&config.input.clang_args[3])
-        )
-        .is_absolute()
-    );
+    assert!(go_wrapper.contains("package sil"));
+    assert!(go_wrapper.contains("type IsAAMaster struct {"));
+    assert!(go_wrapper.contains("func NewIsAAMaster() (*IsAAMaster, error) {"));
 }

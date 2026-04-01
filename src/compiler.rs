@@ -1,6 +1,8 @@
 use std::{
+    collections::BTreeSet,
     env, fs,
     path::{Path, PathBuf},
+    process::Command,
 };
 
 use anyhow::{Context, Result};
@@ -41,8 +43,63 @@ pub fn collect_clang_args(config: &Config, parse_entry: &Path) -> Result<Vec<Str
     Ok(args)
 }
 
-fn add_parse_entry_parent_include(args: &mut Vec<String>, parse_entry: &Path) {
-    let Some(parent) = parse_entry.parent() else {
+pub fn collect_translation_units(config: &Config) -> Result<Vec<PathBuf>> {
+    if config.input.dir.is_none() && !config.input.headers.is_empty() {
+        return Ok(config.input.headers.clone());
+    }
+
+    let Some(dir) = &config.input.dir else {
+        return Ok(Vec::new());
+    };
+
+    let mut units = if let Some(path) = config.compile_commands_path() {
+        read_compile_db_translation_units(&path, dir)?
+    } else {
+        Vec::new()
+    };
+
+    units.extend(collect_classified_translation_units(config, dir)?);
+    units = units.into_iter().collect::<BTreeSet<_>>().into_iter().collect();
+
+    if units.is_empty() {
+        units = scan_dir_translation_units(dir)?;
+    }
+
+    Ok(units)
+}
+
+fn collect_classified_translation_units(config: &Config, dir: &Path) -> Result<Vec<PathBuf>> {
+    let grouped_dirs = config
+        .files
+        .model
+        .iter()
+        .chain(config.files.facade.iter())
+        .filter(|path| path_is_within(path, dir))
+        .filter_map(|path| path.parent().map(Path::to_path_buf))
+        .collect::<BTreeSet<_>>();
+
+    let mut source_units = BTreeSet::new();
+    let mut header_units = BTreeSet::new();
+
+    for grouped_dir in grouped_dirs {
+        for unit in scan_dir_translation_units(&grouped_dir)? {
+            if is_source_translation_unit_file(&unit) {
+                source_units.insert(unit);
+            } else if is_header_file(&unit) {
+                header_units.insert(unit);
+            }
+        }
+    }
+
+    if !source_units.is_empty() {
+        Ok(source_units.into_iter().collect())
+    } else {
+        Ok(header_units.into_iter().collect())
+    }
+}
+
+fn add_header_parent_include(args: &mut Vec<String>, header: &Path) {
+    let Some(parent) = header.parent() else {
         return;
     };
     let include = normalize_clang_path(parent);
@@ -67,23 +124,26 @@ fn add_parse_entry_parent_include(args: &mut Vec<String>, parse_entry: &Path) {
 }
 
 fn add_platform_fallback_includes(args: &mut Vec<String>) {
-    if env::consts::OS != "windows" {
-        return;
-    }
-
-    let Some(include) = discover_windows_clang_builtin_include() else {
-        return;
-    };
-    let include = normalize_clang_path(&include);
-    let already_present = args
-        .iter()
-        .any(|arg| arg == &format!("-I{include}") || arg == &format!("-isystem{include}"));
-    if !already_present {
-        args.push(format!("-isystem{include}"));
+    for include in discover_platform_fallback_include_dirs() {
+        let include = normalize_clang_path(&include);
+        let already_present = args
+            .iter()
+            .any(|arg| arg == &format!("-I{include}") || arg == &format!("-isystem{include}"));
+        if !already_present {
+            args.push(format!("-isystem{include}"));
+        }
     }
 }
 
-fn discover_windows_clang_builtin_include() -> Option<PathBuf> {
+fn discover_platform_fallback_include_dirs() -> Vec<PathBuf> {
+    match env::consts::OS {
+        "windows" => discover_windows_fallback_include_dirs(),
+        "linux" => discover_linux_fallback_include_dirs(),
+        _ => Vec::new(),
+    }
+}
+
+fn discover_windows_fallback_include_dirs() -> Vec<PathBuf> {
     let roots = [
         PathBuf::from("C:/msys64/ucrt64/lib/clang"),
         PathBuf::from("C:/Program Files/LLVM/lib/clang"),
@@ -92,7 +152,86 @@ fn discover_windows_clang_builtin_include() -> Option<PathBuf> {
     roots
         .into_iter()
         .filter_map(|root| latest_versioned_include_dir(&root))
-        .find(|path| path.exists())
+        .filter(|path| path.exists())
+        .collect()
+}
+
+fn discover_linux_fallback_include_dirs() -> Vec<PathBuf> {
+    let mut includes = Vec::new();
+
+    if let Some(resource_dir) =
+        discover_command_output_dir(&["clang", "-print-resource-dir"]).map(|dir| dir.join("include"))
+    {
+        includes.push(resource_dir);
+    }
+
+    if let Some(resource_dir) =
+        discover_command_output_dir(&["clang++", "-print-resource-dir"]).map(|dir| dir.join("include"))
+    {
+        includes.push(resource_dir);
+    }
+
+    if let Some(gcc_include) = discover_command_output_dir(&["c++", "-print-file-name=include"]) {
+        includes.push(gcc_include);
+    }
+
+    if let Some(gcc_include) = discover_command_output_dir(&["g++", "-print-file-name=include"]) {
+        includes.push(gcc_include);
+    }
+
+    if let Some(sysroot) = discover_command_output_dir(&["c++", "-print-sysroot"]) {
+        includes.extend(linux_sysroot_include_candidates(&sysroot));
+    }
+
+    if let Some(sysroot) = discover_command_output_dir(&["g++", "-print-sysroot"]) {
+        includes.extend(linux_sysroot_include_candidates(&sysroot));
+    }
+
+    includes.extend([
+        PathBuf::from("/usr/include"),
+        PathBuf::from("/usr/local/include"),
+        PathBuf::from("/usr/include/x86_64-linux-gnu"),
+    ]);
+
+    includes
+        .into_iter()
+        .filter(|path| path.exists())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+fn linux_sysroot_include_candidates(sysroot: &Path) -> Vec<PathBuf> {
+    if sysroot.as_os_str().is_empty() {
+        return Vec::new();
+    }
+
+    vec![
+        sysroot.join("usr/include"),
+        sysroot.join("usr/local/include"),
+        sysroot.join("include"),
+        sysroot.join("include-fixed"),
+    ]
+}
+
+fn discover_command_output_dir(command_with_args: &[&str]) -> Option<PathBuf> {
+    let (program, args) = command_with_args.split_first()?;
+    let output = Command::new(program).args(args).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if value.is_empty() {
+        return None;
+    }
+
+    let path = PathBuf::from(value);
+    if path.exists() {
+        Some(path)
+    } else {
+        None
+    }
 }
 
 fn latest_versioned_include_dir(root: &Path) -> Option<PathBuf> {
@@ -183,6 +322,54 @@ fn read_compile_db_args(path: &Path, parse_entry: &Path) -> Result<Vec<String>> 
     Ok(resolved)
 }
 
+fn read_compile_db_translation_units(path: &Path, dir: &Path) -> Result<Vec<PathBuf>> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let content = fs::read_to_string(path)
+        .with_context(|| format!("failed to read compile_commands.json: {}", path.display()))?;
+    let commands: Vec<CompileCommand> = serde_json::from_str(&content)
+        .with_context(|| format!("failed to parse compile_commands.json: {}", path.display()))?;
+    let db_dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let mut units = BTreeSet::new();
+
+    for command in &commands {
+        let file = resolve_command_file(db_dir, command);
+        if !is_source_translation_unit_file(&file) || !path_is_within(&file, dir) {
+            continue;
+        }
+        units.insert(file);
+    }
+
+    Ok(units.into_iter().collect())
+}
+
+fn scan_dir_translation_units(dir: &Path) -> Result<Vec<PathBuf>> {
+    let entries = fs::read_dir(dir)
+        .with_context(|| format!("failed to read input directory: {}", dir.display()))?;
+    let mut source_units = BTreeSet::new();
+    let mut header_units = BTreeSet::new();
+
+    for entry in entries {
+        let path = entry?.path();
+        if !path.is_file() {
+            continue;
+        }
+        if is_source_translation_unit_file(&path) {
+            source_units.insert(path);
+        } else if is_header_file(&path) {
+            header_units.insert(path);
+        }
+    }
+
+    if !source_units.is_empty() {
+        Ok(source_units.into_iter().collect())
+    } else {
+        Ok(header_units.into_iter().collect())
+    }
+}
+
 fn resolve_command_file(db_dir: &Path, command: &CompileCommand) -> PathBuf {
     if command.file.is_absolute() {
         command.file.clone()
@@ -225,6 +412,26 @@ fn normalize_clang_path(path: &Path) -> String {
     } else {
         value
     }
+}
+
+fn path_is_within(path: &Path, dir: &Path) -> bool {
+    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let dir = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    path.starts_with(dir)
+}
+
+fn is_source_translation_unit_file(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|ext| ext.to_str()),
+        Some("c" | "cc" | "cpp" | "cxx")
+    )
+}
+
+fn is_header_file(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|ext| ext.to_str()),
+        Some("h" | "hh" | "hpp" | "hxx")
+    )
 }
 
 fn split_command_line(command: &str) -> Vec<String> {
