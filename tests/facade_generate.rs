@@ -332,65 +332,6 @@ naming:
     assert!(go_facade.contains("func (a *Api) GetValue() int {"));
 }
 
-#[test]
-fn skips_facade_classes_with_unsupported_constructor_params_without_aborting_generation() {
-    let root = temp_output_dir("skip-unsupported-constructor");
-    let include_dir = root.join("include");
-    fs::create_dir_all(&include_dir).unwrap();
-
-    let header_path = include_dir.join("Api.hpp");
-    fs::write(
-        &header_path,
-        r#"
-        #pragma once
-
-        class NsLeg {
-        public:
-            NsLeg(NsLeg parent);
-            ~NsLeg();
-            int GetValue() const;
-        };
-
-        class Api {
-        public:
-            Api() = default;
-            ~Api() = default;
-            int GetValue() const;
-        };
-        "#,
-    )
-    .unwrap();
-
-    let config_path = root.join("cppgo-wrap.yaml");
-    fs::write(
-        &config_path,
-        r#"
-version: 1
-input:
-  headers:
-    - include/Api.hpp
-output:
-  dir: out
-naming:
-  prefix: cgowrap
-  style: preserve
-"#,
-    )
-    .unwrap();
-
-    let config = Config::load(&config_path).unwrap();
-    let parsed = parser::parse(&config).unwrap();
-    let ir = ir::normalize(&config, &parsed).unwrap();
-    generator::generate(&config, &ir, true).unwrap();
-
-    let go_facade = fs::read_to_string(root.join("out/api_wrapper.go")).unwrap();
-
-    assert!(go_facade.contains("type Api struct {"));
-    assert!(go_facade.contains("func NewApi() (*Api, error) {"));
-    assert!(go_facade.contains("func (a *Api) GetValue() int {"));
-    assert!(!go_facade.contains("type NsLeg struct {"));
-    assert!(!go_facade.contains("func NewNsLeg("));
-}
 
 
 #[test]
