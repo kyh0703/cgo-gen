@@ -3,10 +3,15 @@
 use anyhow::{Result, bail};
 
 use crate::{
-    config::{Config, HeaderRole},
-    ir::{IrCallback, IrFunction, IrModule, IrType},
-    model::GeneratedGoFile,
+    config::{Config, KnownModelField, KnownModelProjection},
+    ir::{IrCallback, IrEnum, IrFunction, IrModule, IrType},
 };
+
+#[derive(Debug)]
+pub struct GeneratedGoFile {
+    pub filename: String,
+    pub contents: String,
+}
 
 #[derive(Debug)]
 struct AnalyzedFacadeClass<'a> {
@@ -33,23 +38,17 @@ struct CallbackUsage<'a> {
 }
 
 pub fn render_go_facade(config: &Config, ir: &IrModule) -> Result<Vec<GeneratedGoFile>> {
-    let role = current_header(config)
-        .map(|header| config.header_role(header))
-        .unwrap_or(HeaderRole::Unclassified);
-    if role == HeaderRole::Model {
-        return Ok(Vec::new());
-    }
-
     let functions = ir
         .functions
         .iter()
         .filter(|function| function.kind == "function")
         .filter(|function| free_function_supported(config, function))
         .collect::<Vec<_>>();
+    let enums = ir.enums.iter().collect::<Vec<_>>();
     let classes = collect_facade_classes(config, ir)?;
     let callback_usages = collect_callback_usages(&functions, &classes, ir);
 
-    if functions.is_empty() && classes.is_empty() {
+    if functions.is_empty() && classes.is_empty() && enums.is_empty() {
         return Ok(Vec::new());
     }
 
@@ -57,15 +56,8 @@ pub fn render_go_facade(config: &Config, ir: &IrModule) -> Result<Vec<GeneratedG
 
     Ok(vec![GeneratedGoFile {
         filename: config.go_filename(""),
-        contents: render_go_facade_file(config, &functions, &classes, &callback_usages),
+        contents: render_go_facade_file(config, &enums, &functions, &classes, &callback_usages),
     }])
-}
-
-fn current_header(config: &Config) -> Option<&std::path::Path> {
-    config
-        .target_header
-        .as_deref()
-        .or_else(|| config.input.headers.first().map(|path| path.as_path()))
 }
 
 fn collect_facade_classes<'a>(
@@ -141,11 +133,13 @@ fn collect_facade_classes<'a>(
 
 fn render_go_facade_file(
     config: &Config,
+    enums: &[&IrEnum],
     functions: &[&IrFunction],
     classes: &[AnalyzedFacadeClass<'_>],
     callback_usages: &[CallbackUsage<'_>],
 ) -> String {
     let package_name = go_package_name(&config.output.dir);
+    let requires_cgo = !functions.is_empty() || !classes.is_empty();
     let requires_errors = !classes.is_empty()
         || functions
             .iter()
@@ -170,14 +164,16 @@ fn render_go_facade_file(
 
     let mut out = String::new();
     out.push_str(&format!("package {}\n\n", package_name));
-    out.push_str("/*\n");
-    out.push_str("#include <stdlib.h>\n");
-    out.push_str(&format!(
-        "#include \"{}\"\n",
-        config.raw_include_for_go(&config.output.header)
-    ));
-    out.push_str("*/\n");
-    out.push_str("import \"C\"\n\n");
+    if requires_cgo {
+        out.push_str("/*\n");
+        out.push_str("#include <stdlib.h>\n");
+        out.push_str(&format!(
+            "#include \"{}\"\n",
+            config.raw_include_for_go(&config.output.header)
+        ));
+        out.push_str("*/\n");
+        out.push_str("import \"C\"\n\n");
+    }
     if requires_errors {
         out.push_str("import \"errors\"\n\n");
     }
@@ -188,6 +184,10 @@ fn render_go_facade_file(
         out.push_str("import \"sync\"\n\n");
     }
 
+    for item in enums {
+        out.push_str(&render_go_enum(item));
+        out.push('\n');
+    }
     for callback in used_callbacks(callback_usages) {
         out.push_str(&render_callback_type(callback));
         out.push('\n');
@@ -217,6 +217,19 @@ fn render_go_facade_file(
         }
     }
 
+    out
+}
+
+fn render_go_enum(item: &IrEnum) -> String {
+    let name = leaf_cpp_name(&item.cpp_name);
+    let mut out = String::new();
+    out.push_str(&format!("type {} int64\n\n", name));
+    out.push_str("const (\n");
+    for variant in &item.variants {
+        let value = variant.value.as_deref().unwrap_or("0");
+        out.push_str(&format!("    {} {} = {}\n", variant.name, name, value));
+    }
+    out.push_str(")\n");
     out
 }
 
@@ -1321,6 +1334,219 @@ fn go_package_name(path: &Path) -> String {
     } else {
         sanitized
     }
+}
+
+#[derive(Debug, Clone)]
+struct ModelProjection {
+    cpp_type: String,
+    go_name: String,
+    handle_name: String,
+    constructor_symbol: String,
+    destructor_symbol: String,
+    fields: Vec<ModelProjectionField>,
+}
+
+#[derive(Debug, Clone)]
+struct ModelProjectionField {
+    go_name: String,
+    go_type: String,
+    getter_symbol: String,
+    setter_symbol: String,
+    return_kind: String,
+}
+
+pub fn collect_known_model_projections(
+    config: &Config,
+    ir: &IrModule,
+) -> Result<Vec<KnownModelProjection>> {
+    Ok(build_all_model_projections(ir)?
+        .into_iter()
+        .map(|projection| KnownModelProjection {
+            cpp_type: projection.cpp_type,
+            handle_name: projection.handle_name,
+            go_name: projection.go_name,
+            output_header: config.raw_include_for_go(&config.output.header),
+            constructor_symbol: projection.constructor_symbol,
+            destructor_symbol: Some(projection.destructor_symbol),
+            fields: projection
+                .fields
+                .into_iter()
+                .map(|field| KnownModelField {
+                    go_name: field.go_name,
+                    go_type: field.go_type,
+                    getter_symbol: field.getter_symbol,
+                    setter_symbol: field.setter_symbol,
+                    return_kind: field.return_kind,
+                })
+                .collect(),
+        })
+        .collect())
+}
+
+fn build_all_model_projections(ir: &IrModule) -> Result<Vec<ModelProjection>> {
+    let constructors = ir
+        .functions
+        .iter()
+        .filter(|function| function.kind == "constructor")
+        .filter_map(|function| {
+            function
+                .owner_cpp_type
+                .as_deref()
+                .map(|owner| (owner.to_string(), function.name.clone()))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let destructors = ir
+        .functions
+        .iter()
+        .filter(|function| function.kind == "destructor")
+        .filter_map(|function| {
+            function
+                .owner_cpp_type
+                .as_deref()
+                .map(|owner| (owner.to_string(), function.name.clone()))
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    let mut methods_by_owner = BTreeMap::<String, Vec<&IrFunction>>::new();
+    for function in ir
+        .functions
+        .iter()
+        .filter(|function| function.kind == "method")
+    {
+        let Some(owner) = &function.owner_cpp_type else {
+            continue;
+        };
+        methods_by_owner
+            .entry(owner.clone())
+            .or_default()
+            .push(function);
+    }
+
+    let mut projections = Vec::new();
+    for (owner, class_methods) in methods_by_owner {
+        if let Some(projection) = build_model_projection(
+            &owner,
+            &class_methods,
+            constructors.get(&owner),
+            destructors.get(&owner),
+        )? {
+            projections.push(projection);
+        }
+    }
+    Ok(projections)
+}
+
+fn build_model_projection(
+    owner: &str,
+    class_methods: &[&IrFunction],
+    constructor_symbol: Option<&String>,
+    destructor_symbol: Option<&String>,
+) -> Result<Option<ModelProjection>> {
+    let setters = class_methods
+        .iter()
+        .filter_map(|function| setter_suffix(function).map(|suffix| (suffix.to_string(), *function)))
+        .collect::<BTreeMap<_, _>>();
+
+    let mut fields = Vec::new();
+    let mut seen = BTreeMap::<String, ()>::new();
+    for function in class_methods {
+        let Some(suffix) = getter_suffix(function) else {
+            continue;
+        };
+        let Some(setter) = setters.get(suffix) else {
+            continue;
+        };
+        if seen.insert(suffix.to_string(), ()).is_some() {
+            continue;
+        }
+
+        let Some(getter_ty) = go_type_for_ir(&function.returns) else {
+            continue;
+        };
+        let Some(setter_param) = setter.params.get(1) else {
+            bail!(
+                "setter `{}` on `{owner}` is missing its value parameter",
+                setter.cpp_name
+            );
+        };
+        let Some(setter_ty) = go_type_for_ir(&setter_param.ty) else {
+            continue;
+        };
+
+        if getter_ty != setter_ty {
+            continue;
+        }
+
+        fields.push(ModelProjectionField {
+            go_name: go_field_name(suffix),
+            go_type: getter_ty.to_string(),
+            getter_symbol: function.name.clone(),
+            setter_symbol: setter.name.clone(),
+            return_kind: function.returns.kind.clone(),
+        });
+    }
+
+    if fields.is_empty() {
+        return Ok(None);
+    }
+
+    let constructor_symbol = constructor_symbol
+        .ok_or_else(|| anyhow::anyhow!("model projection `{owner}` is missing a constructor wrapper"))?;
+    let destructor_symbol = destructor_symbol
+        .ok_or_else(|| anyhow::anyhow!("model projection `{owner}` is missing a destructor wrapper"))?;
+
+    Ok(Some(ModelProjection {
+        cpp_type: owner.to_string(),
+        go_name: leaf_cpp_name(owner),
+        handle_name: format!("{}Handle", flatten_qualified_cpp_name(owner)),
+        constructor_symbol: constructor_symbol.clone(),
+        destructor_symbol: destructor_symbol.clone(),
+        fields,
+    }))
+}
+
+fn getter_suffix(function: &IrFunction) -> Option<&str> {
+    if function.kind != "method" || function.params.len() != 1 || function.returns.kind == "void" {
+        return None;
+    }
+    function
+        .cpp_name
+        .rsplit("::")
+        .next()
+        .and_then(|name| name.strip_prefix("Get"))
+        .filter(|suffix| !suffix.is_empty())
+}
+
+fn setter_suffix(function: &IrFunction) -> Option<&str> {
+    if function.kind != "method" || function.params.len() != 2 || function.returns.kind != "void" {
+        return None;
+    }
+    function
+        .cpp_name
+        .rsplit("::")
+        .next()
+        .and_then(|name| name.strip_prefix("Set"))
+        .filter(|suffix| !suffix.is_empty())
+}
+
+fn go_field_name(value: &str) -> String {
+    value
+        .split('_')
+        .flat_map(split_pascal_tokens)
+        .map(|token| match token.to_ascii_lowercase().as_str() {
+            "id" => "ID".to_string(),
+            "url" => "URL".to_string(),
+            "db" => "DB".to_string(),
+            "api" => "API".to_string(),
+            "http" => "HTTP".to_string(),
+            "https" => "HTTPS".to_string(),
+            "json" => "JSON".to_string(),
+            "xml" => "XML".to_string(),
+            other if token.chars().all(|ch| ch.is_uppercase()) => other.to_ascii_uppercase(),
+            _ => token,
+        })
+        .collect::<Vec<_>>()
+        .join("")
 }
 
 #[cfg(test)]

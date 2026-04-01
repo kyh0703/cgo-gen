@@ -6,7 +6,3 @@ input:
 
 output:
   dir: pkg/demo
-
-files:
-  facade:
-    - cpp/ThingApi.hpp
