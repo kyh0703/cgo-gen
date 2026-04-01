@@ -75,3 +75,44 @@ files:
     assert!(go_dir.join("thing_model_wrapper.go").exists());
     assert!(go_dir.join("api_wrapper.go").exists());
 }
+
+#[test]
+fn nested_output_dir_places_go_files_at_output_root_and_raw_below_it() {
+    let root = temp_dir("nested_output");
+    let include_dir = root.join("include");
+    fs::create_dir_all(&include_dir).unwrap();
+
+    fs::write(
+        include_dir.join("Thing.hpp"),
+        r#"
+        class Thing {
+        public:
+            Thing() {}
+            int GetValue() const { return 7; }
+        };
+        "#,
+    )
+    .unwrap();
+
+    fs::write(
+        root.join("config.yaml"),
+        r#"
+version: 1
+input:
+  dir: include
+output:
+  dir: ./gen/test
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(root.join("config.yaml")).unwrap();
+    generator::generate_all(&config, true).unwrap();
+
+    assert!(root.join("gen/test").is_dir());
+    assert!(root.join("gen/test/raw").is_dir());
+    assert!(root.join("gen/test/thing_wrapper.go").exists());
+    assert!(root.join("gen/test/raw/thing_wrapper.h").exists());
+    assert!(root.join("gen/test/raw/thing_wrapper.cpp").exists());
+    assert!(root.join("gen/test/raw/thing_wrapper.ir.yaml").exists());
+}
