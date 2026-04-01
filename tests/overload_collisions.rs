@@ -63,3 +63,51 @@ fn disambiguates_overloaded_methods_with_signature_suffixes() {
     assert!(source.contains("cgowrap_clash_widget_set__int_mut"));
     assert!(source.contains("cgowrap_clash_widget_set__double_mut"));
 }
+
+#[test]
+fn disambiguates_overloaded_constructors_without_panicking() {
+    let root = std::env::temp_dir().join(format!(
+        "c_go_overload_ctor_{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("include")).unwrap();
+    std::fs::write(
+        root.join("include/Widget.hpp"),
+        r#"
+        class Widget {
+        public:
+            Widget() {}
+            Widget(int value) {}
+        };
+        "#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("config.yaml"),
+        r#"
+version: 1
+input:
+  headers:
+    - include/Widget.hpp
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(root.join("config.yaml")).unwrap();
+    let parsed = parser::parse(&config).unwrap();
+    let ir = ir::normalize(&config, &parsed).unwrap();
+
+    assert!(
+        ir.functions
+            .iter()
+            .any(|item| item.name == "cgowrap_Widget_new__void")
+    );
+    assert!(
+        ir.functions
+            .iter()
+            .any(|item| item.name == "cgowrap_Widget_new__int")
+    );
+}
