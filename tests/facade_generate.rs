@@ -147,6 +147,64 @@ naming:
 }
 
 #[test]
+fn preserves_numeric_suffix_underscores_in_go_method_names() {
+    let root = temp_output_dir("numeric-underscore");
+    let include_dir = root.join("include");
+    fs::create_dir_all(&include_dir).unwrap();
+
+    let header_path = include_dir.join("Media.hpp");
+    fs::write(
+        &header_path,
+        r#"
+        #pragma once
+
+        class IsMediaDelivery {
+        public:
+            IsMediaDelivery() = default;
+            ~IsMediaDelivery() = default;
+            int GetFailCnt_1() const;
+            int GetFailCnt1() const;
+            void SetFailCnt_1(int value);
+            void SetFailCnt1(int value);
+        };
+        "#,
+    )
+    .unwrap();
+
+    let config_path = root.join("cppgo-wrap.yaml");
+    fs::write(
+        &config_path,
+        r#"
+version: 1
+input:
+  headers:
+    - include/Media.hpp
+files:
+  facade:
+    - include/Media.hpp
+output:
+  dir: out
+naming:
+  prefix: cgowrap
+  style: preserve
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(&config_path).unwrap();
+    let parsed = parser::parse(&config).unwrap();
+    let ir = ir::normalize(&config, &parsed).unwrap();
+    generator::generate(&config, &ir, true).unwrap();
+
+    let go_facade = fs::read_to_string(root.join("out/go/media_wrapper.go")).unwrap();
+
+    assert!(go_facade.contains("func (i *IsMediaDelivery) GetFailCnt_1() int"));
+    assert!(go_facade.contains("func (i *IsMediaDelivery) GetFailCnt1() int"));
+    assert!(go_facade.contains("func (i *IsMediaDelivery) SetFailCnt_1(value int)"));
+    assert!(go_facade.contains("func (i *IsMediaDelivery) SetFailCnt1(value int)"));
+}
+
+#[test]
 fn lifts_known_model_out_param_methods_into_model_returning_facade_methods() {
     let root = temp_output_dir("model-method");
     let include_dir = root.join("include");
