@@ -331,6 +331,7 @@ naming:
     assert!(!go_facade.contains("type NsLeg struct {"));
 }
 
+
 #[test]
 fn lifts_known_model_out_param_methods_into_model_returning_facade_methods() {
     let root = temp_output_dir("model-method");

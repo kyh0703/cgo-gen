@@ -869,7 +869,11 @@ fn go_facade_export_name(function: &IrFunction) -> String {
         return base;
     }
 
-    format!("{base}{}", go_overload_suffix(function, false))
+    format!(
+        "{base}{}",
+        raw_wrapper_overload_export_suffix(function)
+            .unwrap_or_else(|| go_overload_suffix(function, false))
+    )
 }
 
 fn go_method_export_name(function: &IrFunction, drop_model_out_param: bool) -> String {
@@ -880,8 +884,14 @@ fn go_method_export_name(function: &IrFunction, drop_model_out_param: bool) -> S
 
     format!(
         "{base}{}",
-        go_overload_suffix(function, drop_model_out_param)
+        raw_wrapper_overload_export_suffix(function)
+            .unwrap_or_else(|| go_overload_suffix(function, drop_model_out_param))
     )
+}
+
+fn raw_wrapper_overload_export_suffix(function: &IrFunction) -> Option<String> {
+    let (_, suffix) = function.name.split_once("__")?;
+    Some(go_export_name(suffix))
 }
 
 fn go_overload_suffix(function: &IrFunction, drop_model_out_param: bool) -> String {
@@ -1124,5 +1134,24 @@ mod tests {
         );
 
         assert!(classify_facade_method(&config, &function).is_none());
+    }
+
+    #[test]
+    fn uses_raw_wrapper_suffix_for_overloaded_go_method_exports() {
+        let function = IrFunction {
+            name: "cgowrap_iSerialize_Add__uint32_c_str_int32_mut".to_string(),
+            kind: "method".to_string(),
+            cpp_name: "iSerialize::Add".to_string(),
+            method_of: Some("iSerializeHandle".to_string()),
+            owner_cpp_type: Some("iSerialize".to_string()),
+            is_const: Some(false),
+            returns: primitive_type("int", "int"),
+            params: vec![],
+        };
+
+        assert_eq!(
+            go_method_export_name(&function, false),
+            "AddUint32CStrInt32Mut"
+        );
     }
 }
