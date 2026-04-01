@@ -745,7 +745,9 @@ fn symbol_name(config: &Config, namespace: &[String], owner: &str, tail: &str) -
 }
 
 fn overload_suffix(function: &IrFunction) -> String {
-    let params = if function.method_of.is_some() {
+    let params = if function.method_of.is_some()
+        && matches!(function.kind.as_str(), "method" | "destructor")
+    {
         &function.params[1..]
     } else {
         &function.params[..]
