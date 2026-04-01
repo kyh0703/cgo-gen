@@ -1,12 +1,12 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     path::Path,
 };
 
 use anyhow::{Result, bail};
 
 use crate::{
-    config::{Config, KnownModelProjection},
+    config::Config,
     ir::{IrFunction, IrModule, IrType},
     model::GeneratedGoFile,
 };
@@ -18,19 +18,6 @@ struct AnalyzedFacadeClass<'a> {
     constructor: &'a IrFunction,
     destructor: &'a IrFunction,
     general_methods: Vec<&'a IrFunction>,
-    model_mapped_methods: Vec<ModelMappedMethod<'a>>,
-}
-
-#[derive(Debug)]
-struct ModelMappedMethod<'a> {
-    function: &'a IrFunction,
-    model: KnownModelProjection,
-}
-
-#[derive(Debug)]
-enum AnalyzedMethod<'a> {
-    GeneralApi(&'a IrFunction),
-    ModelMapped(ModelMappedMethod<'a>),
 }
 
 pub fn render_go_facade(config: &Config, ir: &IrModule) -> Result<Vec<GeneratedGoFile>> {
@@ -56,7 +43,7 @@ pub fn render_go_facade(config: &Config, ir: &IrModule) -> Result<Vec<GeneratedG
 }
 
 fn collect_facade_classes<'a>(
-    config: &Config,
+    _config: &Config,
     ir: &'a IrModule,
 ) -> Result<Vec<AnalyzedFacadeClass<'a>>> {
     let mut methods_by_owner = BTreeMap::<&str, Vec<&IrFunction>>::new();
@@ -96,21 +83,16 @@ fn collect_facade_classes<'a>(
 
     let mut classes = Vec::new();
     for (owner, methods) in methods_by_owner {
-        let mut general_methods = Vec::new();
-        let mut model_mapped_methods = Vec::new();
-        for function in methods {
-            match classify_facade_method(config, function) {
-                Some(AnalyzedMethod::GeneralApi(function)) => general_methods.push(function),
-                Some(AnalyzedMethod::ModelMapped(method)) => model_mapped_methods.push(method),
-                None => {}
-            }
-        }
+        let general_methods = methods
+            .into_iter()
+            .filter(|function| general_method_supported(function))
+            .collect::<Vec<_>>();
 
-        if model_mapped_methods.is_empty() && general_methods.is_empty() {
+        if general_methods.is_empty() {
             continue;
         }
 
-        ensure_unique_method_exports(owner, &general_methods, &model_mapped_methods)?;
+        ensure_unique_method_exports(owner, &general_methods)?;
 
         let Some(constructor) = constructors.get(owner).copied() else {
             continue;
@@ -132,7 +114,6 @@ fn collect_facade_classes<'a>(
             constructor,
             destructor,
             general_methods,
-            model_mapped_methods,
         });
     }
 
@@ -146,7 +127,6 @@ fn render_go_facade_file(
     classes: &[AnalyzedFacadeClass<'_>],
 ) -> String {
     let package_name = go_package_name(&config.output.dir);
-    let includes = collect_include_headers(config, classes);
     let requires_cgo = !functions.is_empty() || !classes.is_empty();
     let requires_errors = !classes.is_empty()
         || functions
@@ -161,16 +141,6 @@ fn render_go_facade_file(
                     .general_methods
                     .iter()
                     .any(|function| has_string_params(function.params.iter().skip(1)))
-                || class.model_mapped_methods.iter().any(|method| {
-                    has_string_params(
-                        method
-                            .function
-                            .params
-                            .iter()
-                            .skip(1)
-                            .take(method.function.params.len().saturating_sub(2)),
-                    )
-                })
         });
 
     let mut out = String::new();
@@ -178,9 +148,10 @@ fn render_go_facade_file(
     if requires_cgo {
         out.push_str("/*\n");
         out.push_str("#include <stdlib.h>\n");
-        for include in includes {
-            out.push_str(&format!("#include \"{}\"\n", include));
-        }
+        out.push_str(&format!(
+            "#include \"{}\"\n",
+            config.raw_include_for_go(&config.output.header)
+        ));
         out.push_str("*/\n");
         out.push_str("import \"C\"\n\n");
     }
@@ -193,12 +164,6 @@ fn render_go_facade_file(
 
     for item in enums {
         out.push_str(&render_go_enum(item));
-        out.push('\n');
-    }
-
-    let used_models = collect_used_models(classes);
-    for projection in &used_models {
-        out.push_str(&render_model_mapper(config, projection));
         out.push('\n');
     }
 
@@ -218,10 +183,6 @@ fn render_go_facade_file(
             out.push_str(&render_general_api_method(config, class, method));
             out.push('\n');
         }
-        for method in &class.model_mapped_methods {
-            out.push_str(&render_model_mapped_method(class, method));
-            out.push('\n');
-        }
     }
 
     out
@@ -237,77 +198,6 @@ fn render_go_enum(item: &crate::ir::IrEnum) -> String {
         out.push_str(&format!("    {} {} = {}\n", variant.name, name, value));
     }
     out.push_str(")\n");
-    out
-}
-
-fn collect_include_headers(config: &Config, classes: &[AnalyzedFacadeClass<'_>]) -> Vec<String> {
-    let mut includes = BTreeSet::from([config.raw_include_for_go(&config.output.header)]);
-    for projection in collect_used_models(classes) {
-        includes.insert(projection.output_header.clone());
-    }
-    includes.into_iter().collect()
-}
-
-fn collect_used_models(classes: &[AnalyzedFacadeClass<'_>]) -> Vec<KnownModelProjection> {
-    let mut models = BTreeMap::<String, KnownModelProjection>::new();
-    for class in classes {
-        for method in &class.model_mapped_methods {
-            models
-                .entry(method.model.cpp_type.clone())
-                .or_insert_with(|| method.model.clone());
-        }
-    }
-    models.into_values().collect()
-}
-
-fn render_model_mapper(config: &Config, projection: &KnownModelProjection) -> String {
-    let mut out = String::new();
-    out.push_str(&format!(
-        "func map{}FromHandle(handle *C.{}) {} {{\n",
-        projection.go_name, projection.handle_name, projection.go_name
-    ));
-    out.push_str("    if handle == nil {\n");
-    out.push_str(&format!("        return {}{{}}\n", projection.go_name));
-    out.push_str("    }\n");
-    out.push_str(&format!("    model := {}{{}}\n", projection.go_name));
-    for field in &projection.fields {
-        match field.return_kind.as_str() {
-            "string" => {
-                out.push_str(&format!(
-                    "    raw{} := C.{}(handle)\n",
-                    field.go_name, field.getter_symbol
-                ));
-                out.push_str(&format!("    if raw{} != nil {{\n", field.go_name));
-                out.push_str(&format!(
-                    "        model.{} = C.GoString(raw{})\n",
-                    field.go_name, field.go_name
-                ));
-                out.push_str(&format!(
-                    "        C.{}_string_free(raw{})\n",
-                    config.naming.prefix, field.go_name
-                ));
-                out.push_str("    }\n");
-            }
-            "c_string" => {
-                out.push_str(&format!(
-                    "    raw{} := C.{}(handle)\n",
-                    field.go_name, field.getter_symbol
-                ));
-                out.push_str(&format!("    if raw{} != nil {{\n", field.go_name));
-                out.push_str(&format!(
-                    "        model.{} = C.GoString(raw{})\n",
-                    field.go_name, field.go_name
-                ));
-                out.push_str("    }\n");
-            }
-            _ => out.push_str(&format!(
-                "    model.{} = {}(C.{}(handle))\n",
-                field.go_name, field.go_type, field.getter_symbol
-            )),
-        }
-    }
-    out.push_str("    return model\n");
-    out.push_str("}\n");
     out
 }
 
@@ -363,72 +253,6 @@ fn render_facade_close(class: &AnalyzedFacadeClass<'_>) -> String {
         receiver_name(&class.go_name),
         receiver_name(&class.go_name),
     )
-}
-
-fn render_model_mapped_method(
-    class: &AnalyzedFacadeClass<'_>,
-    method: &ModelMappedMethod<'_>,
-) -> String {
-    let receiver = receiver_name(&class.go_name);
-    let method_params = method
-        .function
-        .params
-        .iter()
-        .skip(1)
-        .take(method.function.params.len().saturating_sub(2))
-        .collect::<Vec<_>>();
-    let params = method_params
-        .iter()
-        .map(|param| format!("{} {}", param.name, go_type_for_ir(&param.ty).unwrap()))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let (setup_lines, cleanup_lines, rendered_args) = render_call_prep(&method_params);
-    let call_args = std::iter::once(format!("{receiver}.ptr"))
-        .chain(rendered_args)
-        .chain(std::iter::once("out".to_string()))
-        .collect::<Vec<_>>()
-        .join(", ");
-
-    let mut out = String::new();
-    out.push_str(&format!(
-        "func ({} *{}) {}({}) ({}, error) {{\n",
-        receiver,
-        class.go_name,
-        go_method_export_name(method.function, true),
-        params,
-        method.model.go_name
-    ));
-    out.push_str(&format!(
-        "    if {} == nil || {}.ptr == nil {{\n        return {}{{}}, errors.New(\"facade receiver is nil\")\n    }}\n",
-        receiver, receiver, method.model.go_name
-    ));
-    for line in setup_lines {
-        out.push_str("    ");
-        out.push_str(&line);
-        out.push('\n');
-    }
-    for line in cleanup_lines {
-        out.push_str("    ");
-        out.push_str(&line);
-        out.push('\n');
-    }
-    out.push_str(&format!(
-        "    out := C.{}()\n    if out == nil {{\n        return {}{{}}, errors.New(\"failed to allocate model handle\")\n    }}\n",
-        method.model.constructor_symbol, method.model.go_name
-    ));
-    if let Some(destructor) = &method.model.destructor_symbol {
-        out.push_str(&format!("    defer C.{}(out)\n", destructor));
-    }
-    out.push_str(&format!(
-        "    if !bool(C.{}({})) {{\n        return {}{{}}, errors.New(\"facade call failed\")\n    }}\n",
-        method.function.name, call_args, method.model.go_name
-    ));
-    out.push_str(&format!(
-        "    return map{}FromHandle(out), nil\n",
-        method.model.go_name
-    ));
-    out.push_str("}\n");
-    out
 }
 
 fn render_general_api_method(
@@ -605,7 +429,6 @@ fn ensure_unique_go_exports(functions: &[&IrFunction]) -> Result<()> {
 fn ensure_unique_method_exports(
     owner: &str,
     general_methods: &[&IrFunction],
-    model_mapped_methods: &[ModelMappedMethod<'_>],
 ) -> Result<()> {
     let mut by_export = BTreeMap::<String, Vec<String>>::new();
     for function in general_methods {
@@ -613,12 +436,6 @@ fn ensure_unique_method_exports(
             .entry(go_method_export_name(function, false))
             .or_default()
             .push(function.cpp_name.clone());
-    }
-    for method in model_mapped_methods {
-        by_export
-            .entry(go_method_export_name(method.function, true))
-            .or_default()
-            .push(method.function.cpp_name.clone());
     }
 
     let collisions = by_export
@@ -650,65 +467,13 @@ fn free_function_supported(function: &IrFunction) -> bool {
             .all(|param| go_param_supported(&param.ty))
 }
 
-fn classify_facade_method<'a>(
-    config: &Config,
-    function: &'a IrFunction,
-) -> Option<AnalyzedMethod<'a>> {
-    if let Some(model) = model_projection_for_out_param(config, function) {
-        return Some(AnalyzedMethod::ModelMapped(ModelMappedMethod {
-            function,
-            model,
-        }));
-    }
-
-    general_method_supported(function).then_some(AnalyzedMethod::GeneralApi(function))
-}
-
 fn general_method_supported(function: &IrFunction) -> bool {
-    model_out_param(function).is_none()
-        && go_return_supported(&function.returns)
+    go_return_supported(&function.returns)
         && function
-            .params
-            .iter()
-            .skip(1)
-            .all(|param| go_param_supported(&param.ty))
-}
-
-fn liftable_method_supported(function: &IrFunction) -> bool {
-    if function.returns.kind != "primitive"
-        || normalize_type_key(&function.returns.cpp_type) != "bool"
-    {
-        return false;
-    }
-    if function.params.len() < 3 {
-        return false;
-    }
-    function
         .params
         .iter()
         .skip(1)
-        .take(function.params.len() - 2)
         .all(|param| go_param_supported(&param.ty))
-}
-
-fn model_projection_for_out_param(
-    config: &Config,
-    function: &IrFunction,
-) -> Option<KnownModelProjection> {
-    let model_param = model_out_param(function)?;
-    let model = config.known_model_projection(&model_param.cpp_type)?;
-    if !liftable_method_supported(function)
-        || model.constructor_symbol.is_empty()
-        || model.destructor_symbol.is_none()
-    {
-        return None;
-    }
-    Some(model.clone())
-}
-
-fn model_out_param(function: &IrFunction) -> Option<&IrType> {
-    let ty = &function.params.last()?.ty;
-    matches!(ty.kind.as_str(), "model_reference" | "model_pointer").then_some(ty)
 }
 
 fn render_c_arg(ty: &IrType, name: &str) -> String {
@@ -737,6 +502,18 @@ fn render_call_prep(params: &[&crate::ir::IrParam]) -> (Vec<String>, Vec<String>
                 setup_lines.push("}".to_string());
                 args.push(c_name);
             }
+            "model_reference" => {
+                let c_name = format!("cArg{index}");
+                let handle = param.ty.handle.as_deref().unwrap_or("void");
+                setup_lines.push(format!("if {} == nil {{", param.name));
+                setup_lines.push(
+                    "    panic(\"reference facade/model argument cannot be nil\")".to_string(),
+                );
+                setup_lines.push("}".to_string());
+                setup_lines.push(format!("var {c_name} *C.{handle}"));
+                setup_lines.push(format!("{c_name} = {}.ptr", param.name));
+                args.push(c_name);
+            }
             _ => args.push(render_c_arg(&param.ty, &param.name)),
         }
     }
@@ -761,6 +538,7 @@ fn has_string_params<'a>(mut params: impl Iterator<Item = &'a crate::ir::IrParam
 fn go_param_supported(ty: &IrType) -> bool {
     matches!(ty.kind.as_str(), "string" | "c_string")
         || (ty.kind == "primitive" && go_type_for_ir(ty).is_some())
+        || (ty.kind == "model_reference" && ty.handle.is_some())
         || (ty.kind == "model_pointer" && ty.handle.is_some())
 }
 
@@ -800,6 +578,7 @@ fn go_type_for_ir(ty: &IrType) -> Option<String> {
             _ => None,
         },
         "model_pointer" => Some(format!("*{}", leaf_cpp_name(&base_model_cpp_type(&ty.cpp_type)))),
+        "model_reference" => Some(format!("*{}", leaf_cpp_name(&base_model_cpp_type(&ty.cpp_type)))),
         _ => None,
     }
 }
@@ -1023,28 +802,7 @@ fn go_package_name(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::KnownModelField;
     use crate::ir::IrParam;
-
-    fn test_config_with_known_model() -> Config {
-        Config {
-            known_model_projections: vec![KnownModelProjection {
-                cpp_type: "ThingModel".to_string(),
-                handle_name: "ThingModelHandle".to_string(),
-                go_name: "ThingModel".to_string(),
-                output_header: "thing_model_wrapper.h".to_string(),
-                constructor_symbol: "cgowrap_ThingModel_new".to_string(),
-                destructor_symbol: Some("cgowrap_ThingModel_delete".to_string()),
-                fields: vec![KnownModelField {
-                    go_name: "Value".to_string(),
-                    go_type: "int".to_string(),
-                    getter_symbol: "cgowrap_ThingModel_GetValue".to_string(),
-                    return_kind: "primitive".to_string(),
-                }],
-            }],
-            ..Config::default()
-        }
-    }
 
     fn primitive_type(cpp_type: &str, c_type: &str) -> IrType {
         IrType {
@@ -1064,6 +822,15 @@ mod tests {
         }
     }
 
+    fn model_pointer_type(cpp_type: &str) -> IrType {
+        IrType {
+            kind: "model_pointer".to_string(),
+            cpp_type: format!("{cpp_type}*"),
+            c_type: format!("{cpp_type}Handle*"),
+            handle: Some(format!("{cpp_type}Handle")),
+        }
+    }
+
     fn method(name: &str, params: Vec<IrParam>) -> IrFunction {
         IrFunction {
             name: format!("cgowrap_Api_{name}"),
@@ -1078,8 +845,7 @@ mod tests {
     }
 
     #[test]
-    fn classify_facade_method_marks_known_model_out_param_as_model_mapped() {
-        let config = test_config_with_known_model();
+    fn supports_model_reference_params_on_general_methods() {
         let function = method(
             "GetThing",
             vec![
@@ -1103,13 +869,11 @@ mod tests {
             ],
         );
 
-        let classified = classify_facade_method(&config, &function).unwrap();
-        assert!(matches!(classified, AnalyzedMethod::ModelMapped(_)));
+        assert!(general_method_supported(&function));
     }
 
     #[test]
-    fn classify_facade_method_does_not_lift_known_model_outside_last_position() {
-        let config = test_config_with_known_model();
+    fn supports_model_reference_params_outside_last_position() {
         let function = method(
             "GetThing",
             vec![
@@ -1133,7 +897,35 @@ mod tests {
             ],
         );
 
-        assert!(classify_facade_method(&config, &function).is_none());
+        assert!(general_method_supported(&function));
+    }
+
+    #[test]
+    fn supports_model_pointer_params_on_general_methods() {
+        let function = method(
+            "GetThingPtr",
+            vec![
+                IrParam {
+                    name: "self".to_string(),
+                    ty: IrType {
+                        kind: "opaque".to_string(),
+                        cpp_type: "Api".to_string(),
+                        c_type: "ApiHandle*".to_string(),
+                        handle: Some("ApiHandle".to_string()),
+                    },
+                },
+                IrParam {
+                    name: "id".to_string(),
+                    ty: primitive_type("int", "int"),
+                },
+                IrParam {
+                    name: "out".to_string(),
+                    ty: model_pointer_type("ThingModel"),
+                },
+            ],
+        );
+
+        assert!(general_method_supported(&function));
     }
 
     #[test]

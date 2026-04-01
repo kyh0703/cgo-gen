@@ -6,7 +6,7 @@ use std::{
 use anyhow::{Result, anyhow};
 
 use crate::{
-    config::{Config, HeaderRole, KnownModelField, KnownModelProjection},
+    config::{Config, HeaderRole},
     ir::{IrFunction, IrModule, IrType},
 };
 
@@ -30,9 +30,7 @@ struct GoField {
 
 #[derive(Debug)]
 struct ModelProjection {
-    cpp_type: String,
     go_name: String,
-    handle_name: String,
     fields: Vec<ModelProjectionField>,
 }
 
@@ -40,8 +38,6 @@ struct ModelProjection {
 struct ModelProjectionField {
     go_name: String,
     go_type: String,
-    getter_symbol: String,
-    return_kind: String,
 }
 
 #[derive(Debug)]
@@ -165,59 +161,6 @@ fn build_all_model_structs(ir: &IrModule) -> Result<Vec<GoStruct>> {
         .collect())
 }
 
-pub fn collect_known_model_projections(
-    config: &Config,
-    ir: &IrModule,
-) -> Result<Vec<KnownModelProjection>> {
-    let constructors = ir
-        .functions
-        .iter()
-        .filter(|function| function.kind == "constructor")
-        .filter_map(|function| {
-            function
-                .owner_cpp_type
-                .as_deref()
-                .map(|owner| (owner, function.name.clone()))
-        })
-        .collect::<BTreeMap<_, _>>();
-    let destructors = ir
-        .functions
-        .iter()
-        .filter(|function| function.kind == "destructor")
-        .filter_map(|function| {
-            function
-                .owner_cpp_type
-                .as_deref()
-                .map(|owner| (owner, function.name.clone()))
-        })
-        .collect::<BTreeMap<_, _>>();
-
-    Ok(build_all_model_projections(ir)?
-        .into_iter()
-        .map(|projection| KnownModelProjection {
-            constructor_symbol: constructors
-                .get(projection.cpp_type.as_str())
-                .cloned()
-                .unwrap_or_default(),
-            destructor_symbol: destructors.get(projection.cpp_type.as_str()).cloned(),
-            cpp_type: projection.cpp_type,
-            handle_name: projection.handle_name,
-            go_name: projection.go_name,
-            output_header: config.raw_include_for_go(&config.output.header),
-            fields: projection
-                .fields
-                .into_iter()
-                .map(|field| KnownModelField {
-                    go_name: field.go_name,
-                    go_type: field.go_type,
-                    getter_symbol: field.getter_symbol,
-                    return_kind: field.return_kind,
-                })
-                .collect(),
-        })
-        .collect())
-}
-
 fn build_all_model_projections(ir: &IrModule) -> Result<Vec<ModelProjection>> {
     let mut methods_by_owner = BTreeMap::<String, Vec<&IrFunction>>::new();
     for function in ir
@@ -287,8 +230,6 @@ fn build_model_projection(
         fields.push(ModelProjectionField {
             go_name: go_field_name(suffix),
             go_type: getter_ty,
-            getter_symbol: function.name.clone(),
-            return_kind: function.returns.kind.clone(),
         });
     }
 
@@ -297,9 +238,7 @@ fn build_model_projection(
     }
 
     Ok(Some(ModelProjection {
-        cpp_type: owner.to_string(),
         go_name: leaf_cpp_name(owner).to_string(),
-        handle_name: format!("{}Handle", flatten_qualified_cpp_name(owner)),
         fields,
     }))
 }
@@ -413,10 +352,6 @@ fn split_pascal_tokens(value: &str) -> Vec<String> {
 
 fn leaf_cpp_name(value: &str) -> &str {
     value.rsplit("::").next().unwrap_or(value)
-}
-
-fn flatten_qualified_cpp_name(value: &str) -> String {
-    value.split("::").collect::<Vec<_>>().join("")
 }
 
 fn go_package_name(path: &Path) -> String {

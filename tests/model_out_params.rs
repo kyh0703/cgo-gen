@@ -71,6 +71,7 @@ naming:
     let raw_output_dir = root.join("gen/raw");
     let api_header = fs::read_to_string(raw_output_dir.join("api_wrapper.h")).unwrap();
     let api_source = fs::read_to_string(raw_output_dir.join("api_wrapper.cpp")).unwrap();
+    let api_go = fs::read_to_string(root.join("gen/go/api_wrapper.go")).unwrap();
 
     assert!(api_header.contains("typedef struct ThingModelHandle ThingModelHandle;"));
     assert!(
@@ -84,6 +85,9 @@ naming:
     );
     assert!(api_source.contains("*reinterpret_cast<ThingModel*>(out)"));
     assert!(api_source.contains("reinterpret_cast<ThingModel*>(out)"));
+    assert!(api_go.contains("func (a *Api) GetThing(id int, out *ThingModel) bool {"));
+    assert!(api_go.contains("func (a *Api) GetThingPtr(id int, out *ThingModel) bool {"));
+    assert!(!api_go.contains("mapThingModelFromHandle"));
 }
 
 #[test]
