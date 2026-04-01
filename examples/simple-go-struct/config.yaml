@@ -1,24 +1,12 @@
 version: 1
 
 input:
-  headers:
-    - cpp/ThingModel.hpp
+  header_dirs:
+    - cpp
 
 output:
-  dir: pkg/model
+  dir: pkg/demo
 
 files:
-  model:
-    - cpp/ThingModel.hpp
-
-naming:
-  prefix: cgowrap
-  style: preserve
-
-policies:
-  string_mode: c_str
-  enum_mode: c_enum
-  unsupported:
-    templates: error
-    stl_containers: skip
-    exceptions: error
+  facade:
+    - cpp/ThingApi.hpp

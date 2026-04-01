@@ -18,11 +18,11 @@ struct CompileCommand {
     arguments: Option<Vec<String>>,
 }
 
-pub fn collect_clang_args(config: &Config, header: &Path) -> Result<Vec<String>> {
+pub fn collect_clang_args(config: &Config, parse_entry: &Path) -> Result<Vec<String>> {
     let mut args = Vec::new();
 
     if let Some(path) = config.compile_commands_path() {
-        let extra_args = read_compile_db_args(&path, header)?;
+        let extra_args = read_compile_db_args(&path, parse_entry)?;
         args.extend(extra_args);
     }
 
@@ -37,7 +37,7 @@ pub fn collect_clang_args(config: &Config, header: &Path) -> Result<Vec<String>>
         args.push("-std=c++17".to_string());
     }
 
-    add_header_parent_include(&mut args, header);
+    add_parse_entry_parent_include(&mut args, parse_entry);
     add_platform_fallback_includes(&mut args);
 
     Ok(args)
@@ -243,7 +243,7 @@ fn latest_versioned_include_dir(root: &Path) -> Option<PathBuf> {
         .max()
 }
 
-fn read_compile_db_args(path: &Path, header: &Path) -> Result<Vec<String>> {
+fn read_compile_db_args(path: &Path, parse_entry: &Path) -> Result<Vec<String>> {
     if !path.exists() {
         return Ok(Vec::new());
     }
@@ -256,7 +256,7 @@ fn read_compile_db_args(path: &Path, header: &Path) -> Result<Vec<String>> {
 
     let selected = commands
         .iter()
-        .find(|command| resolve_command_file(db_dir, command) == header)
+        .find(|command| resolve_command_file(db_dir, command) == parse_entry)
         .or_else(|| commands.first());
 
     let Some(command) = selected else {
@@ -442,9 +442,9 @@ fn split_command_line(command: &str) -> Vec<String> {
         .collect()
 }
 
-pub fn ensure_header_exists(header: &Path) -> Result<()> {
-    if !header.exists() {
-        anyhow::bail!("header not found: {}", header.display());
+pub fn ensure_parse_entry_exists(parse_entry: &Path) -> Result<()> {
+    if !parse_entry.exists() {
+        anyhow::bail!("parse entry not found: {}", parse_entry.display());
     }
     Ok(())
 }

@@ -100,11 +100,13 @@ naming:
     assert!(alpha_header_text.contains("AlphaThingHandle"));
     assert!(!alpha_header_text.contains("BetaThingHandle"));
     assert!(alpha_go_text.contains("type AlphaThing struct {"));
+    assert!(alpha_go_text.contains("ptr *C.AlphaThingHandle"));
     assert!(!alpha_go_text.contains("type BetaThing struct {"));
 
     assert!(beta_header_text.contains("BetaThingHandle"));
     assert!(!beta_header_text.contains("AlphaThingHandle"));
     assert!(beta_go_text.contains("type BetaThing struct {"));
+    assert!(beta_go_text.contains("ptr *C.BetaThingHandle"));
     assert!(!beta_go_text.contains("type AlphaThing struct {"));
 }
 

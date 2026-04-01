@@ -16,25 +16,13 @@ pub struct GeneratedGoFile {
     pub contents: String,
 }
 
-#[derive(Debug)]
-struct GoStruct {
-    name: String,
-    fields: Vec<GoField>,
-}
-
-#[derive(Debug)]
-struct GoField {
-    name: String,
-    ty: String,
-}
-
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct ModelProjection {
     go_name: String,
     fields: Vec<ModelProjectionField>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct ModelProjectionField {
     go_name: String,
     go_type: String,
@@ -62,7 +50,7 @@ pub fn render_go_models(config: &Config, ir: &IrModule) -> Result<Vec<GeneratedG
 
     let projections = match role {
         HeaderRole::Facade | HeaderRole::Unclassified => Vec::new(),
-        HeaderRole::Model => build_all_model_structs(ir)?,
+        HeaderRole::Model => build_all_model_projections(ir)?,
     };
     let enums = if role == HeaderRole::Model {
         build_go_enums(ir)
@@ -81,27 +69,34 @@ pub fn render_go_models(config: &Config, ir: &IrModule) -> Result<Vec<GeneratedG
 }
 
 pub fn render_go_structs(config: &Config, ir: &IrModule) -> Result<Vec<GeneratedGoFile>> {
-    if config
-        .input
-        .headers
-        .first()
-        .map(|header| config.header_role(header) != HeaderRole::Model)
-        .unwrap_or(true)
-    {
-        return Ok(Vec::new());
-    }
-
-    let projections = build_all_model_structs(ir)?;
-    Ok(vec![GeneratedGoFile {
-        filename: config.go_filename(""),
-        contents: render_go_file(config, &[], &projections),
-    }])
+    render_go_models(config, ir)
 }
 
-fn render_go_file(config: &Config, enums: &[GoEnum], projections: &[GoStruct]) -> String {
+fn render_go_file(config: &Config, enums: &[GoEnum], projections: &[ModelProjection]) -> String {
     let package_name = go_package_name(&config.output.dir);
+    let requires_unsafe = projections.iter().any(|projection| {
+        projection
+            .fields
+            .iter()
+            .any(|field| field.go_type == "string")
+    });
     let mut out = String::new();
     out.push_str(&format!("package {}\n\n", package_name));
+
+    if !projections.is_empty() {
+        out.push_str("/*\n");
+        out.push_str("#include <stdlib.h>\n");
+        out.push_str(&format!(
+            "#include \"{}\"\n",
+            config.raw_include_for_go(&config.output.header)
+        ));
+        out.push_str("*/\n");
+        out.push_str("import \"C\"\n\n");
+        out.push_str("import \"errors\"\n\n");
+        if requires_unsafe {
+            out.push_str("import \"unsafe\"\n\n");
+        }
+    }
 
     for item in enums {
         out.push_str(&format!("type {} int64\n\n", item.name));
@@ -116,13 +111,122 @@ fn render_go_file(config: &Config, enums: &[GoEnum], projections: &[GoStruct]) -
     }
 
     for projection in projections {
-        out.push_str(&format!("type {} struct {{\n", projection.name));
-        for field in &projection.fields {
-            out.push_str(&format!("    {} {}\n", field.name, field.ty));
-        }
-        out.push_str("}\n\n");
+        out.push_str(&render_model_wrapper(config, projection));
+        out.push('\n');
     }
 
+    out
+}
+
+fn render_model_wrapper(config: &Config, projection: &ModelProjection) -> String {
+    let mut out = String::new();
+    let receiver = receiver_name(&projection.go_name);
+    out.push_str(&format!(
+        "type {} struct {{\n    ptr *C.{}\n}}\n\n",
+        projection.go_name, projection.handle_name
+    ));
+    out.push_str(&format!(
+        "func New{}() (*{}, error) {{\n    ptr := C.{}()\n    if ptr == nil {{\n        return nil, errors.New(\"wrapper returned nil model handle\")\n    }}\n    return &{}{{ptr: ptr}}, nil\n}}\n\n",
+        projection.go_name,
+        projection.go_name,
+        projection.constructor_symbol,
+        projection.go_name
+    ));
+    out.push_str(&format!(
+        "func ({} *{}) Close() {{\n    if {} == nil || {}.ptr == nil {{\n        return\n    }}\n    C.{}({}.ptr)\n    {}.ptr = nil\n}}\n\n",
+        receiver,
+        projection.go_name,
+        receiver,
+        receiver,
+        projection.destructor_symbol,
+        receiver,
+        receiver
+    ));
+    out.push_str(&format!(
+        "func require{}Handle(value *{}) *C.{} {{\n    if value == nil || value.ptr == nil {{\n        panic(\"{} handle is nil\")\n    }}\n    return value.ptr\n}}\n\n",
+        projection.go_name,
+        projection.go_name,
+        projection.handle_name,
+        projection.go_name
+    ));
+    out.push_str(&format!(
+        "func optional{}Handle(value *{}) *C.{} {{\n    if value == nil {{\n        return nil\n    }}\n    return require{}Handle(value)\n}}\n\n",
+        projection.go_name,
+        projection.go_name,
+        projection.handle_name,
+        projection.go_name
+    ));
+    for field in &projection.fields {
+        out.push_str(&render_model_getter(config, projection, field));
+        out.push('\n');
+        out.push_str(&render_model_setter(projection, field));
+        out.push('\n');
+    }
+    out
+}
+
+fn render_model_getter(
+    config: &Config,
+    projection: &ModelProjection,
+    field: &ModelProjectionField,
+) -> String {
+    let receiver = receiver_name(&projection.go_name);
+    let mut out = String::new();
+    out.push_str(&format!(
+        "func ({} *{}) Get{}() {} {{\n",
+        receiver, projection.go_name, field.go_name, field.go_type
+    ));
+    out.push_str(&format!(
+        "    handle := require{}Handle({})\n",
+        projection.go_name, receiver
+    ));
+    match field.return_kind.as_str() {
+        "string" => {
+            out.push_str(&format!("    raw := C.{}(handle)\n", field.getter_symbol));
+            out.push_str("    if raw == nil {\n        return \"\"\n    }\n");
+            out.push_str(&format!(
+                "    defer C.{}_string_free(raw)\n",
+                config.naming.prefix
+            ));
+            out.push_str("    return C.GoString(raw)\n");
+        }
+        "c_string" => {
+            out.push_str(&format!("    raw := C.{}(handle)\n", field.getter_symbol));
+            out.push_str("    if raw == nil {\n        return \"\"\n    }\n");
+            out.push_str("    return C.GoString(raw)\n");
+        }
+        _ => out.push_str(&format!(
+            "    return {}(C.{}(handle))\n",
+            field.go_type, field.getter_symbol
+        )),
+    }
+    out.push_str("}\n");
+    out
+}
+
+fn render_model_setter(projection: &ModelProjection, field: &ModelProjectionField) -> String {
+    let receiver = receiver_name(&projection.go_name);
+    let mut out = String::new();
+    out.push_str(&format!(
+        "func ({} *{}) Set{}(value {}) {{\n",
+        receiver, projection.go_name, field.go_name, field.go_type
+    ));
+    out.push_str(&format!(
+        "    handle := require{}Handle({})\n",
+        projection.go_name, receiver
+    ));
+    if field.go_type == "string" {
+        out.push_str("    cValue := C.CString(value)\n");
+        out.push_str("    defer C.free(unsafe.Pointer(cValue))\n");
+        out.push_str(&format!("    C.{}(handle, cValue)\n", field.setter_symbol));
+    } else {
+        out.push_str(&format!(
+            "    C.{}(handle, {})\n",
+            field.setter_symbol,
+            render_c_arg(field, "value")
+        ));
+    }
+    out.push_str("}\n");
     out
 }
 
@@ -144,17 +248,28 @@ fn build_go_enums(ir: &IrModule) -> Vec<GoEnum> {
         .collect()
 }
 
-fn build_all_model_structs(ir: &IrModule) -> Result<Vec<GoStruct>> {
+pub fn collect_known_model_projections(
+    config: &Config,
+    ir: &IrModule,
+) -> Result<Vec<KnownModelProjection>> {
     Ok(build_all_model_projections(ir)?
         .into_iter()
-        .map(|projection| GoStruct {
-            name: projection.go_name,
+        .map(|projection| KnownModelProjection {
+            cpp_type: projection.cpp_type,
+            handle_name: projection.handle_name,
+            go_name: projection.go_name,
+            output_header: config.raw_include_for_go(&config.output.header),
+            constructor_symbol: projection.constructor_symbol,
+            destructor_symbol: Some(projection.destructor_symbol),
             fields: projection
                 .fields
                 .into_iter()
-                .map(|field| GoField {
-                    name: field.go_name,
-                    ty: field.go_type,
+                .map(|field| KnownModelField {
+                    go_name: field.go_name,
+                    go_type: field.go_type,
+                    getter_symbol: field.getter_symbol,
+                    setter_symbol: field.setter_symbol,
+                    return_kind: field.return_kind,
                 })
                 .collect(),
         })
@@ -179,7 +294,12 @@ fn build_all_model_projections(ir: &IrModule) -> Result<Vec<ModelProjection>> {
 
     let mut projections = Vec::new();
     for (owner, class_methods) in methods_by_owner {
-        if let Some(projection) = build_model_projection(&owner, &class_methods)? {
+        if let Some(projection) = build_model_projection(
+            &owner,
+            &class_methods,
+            constructors.get(&owner),
+            destructors.get(&owner),
+        )? {
             projections.push(projection);
         }
     }
@@ -189,6 +309,8 @@ fn build_all_model_projections(ir: &IrModule) -> Result<Vec<ModelProjection>> {
 fn build_model_projection(
     owner: &str,
     class_methods: &[&IrFunction],
+    constructor_symbol: Option<&String>,
+    destructor_symbol: Option<&String>,
 ) -> Result<Option<ModelProjection>> {
     let setters = class_methods
         .iter()
@@ -236,6 +358,11 @@ fn build_model_projection(
     if fields.is_empty() {
         return Ok(None);
     }
+
+    let constructor_symbol = constructor_symbol
+        .ok_or_else(|| anyhow!("model projection `{owner}` is missing a constructor wrapper"))?;
+    let destructor_symbol = destructor_symbol
+        .ok_or_else(|| anyhow!("model projection `{owner}` is missing a destructor wrapper"))?;
 
     Ok(Some(ModelProjection {
         go_name: leaf_cpp_name(owner).to_string(),
@@ -292,6 +419,24 @@ fn go_type_for_ir(ty: &IrType) -> Option<String> {
     }
 }
 
+fn render_c_arg(field: &ModelProjectionField, name: &str) -> String {
+    match field.go_type.as_str() {
+        "bool" => format!("C.bool({name})"),
+        "float32" => format!("C.float({name})"),
+        "float64" => format!("C.double({name})"),
+        "int8" => format!("C.int8_t({name})"),
+        "int16" => format!("C.int16_t({name})"),
+        "int32" => format!("C.int32_t({name})"),
+        "int64" => format!("C.int64_t({name})"),
+        "uint8" => format!("C.uint8_t({name})"),
+        "uint16" => format!("C.uint16_t({name})"),
+        "uint32" => format!("C.uint32_t({name})"),
+        "uint64" => format!("C.uint64_t({name})"),
+        "uintptr" => format!("C.size_t({name})"),
+        _ => format!("C.int({name})"),
+    }
+}
+
 fn normalize_type_key(value: &str) -> String {
     value
         .replace(' ', "")
@@ -319,6 +464,14 @@ fn go_field_name(value: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("")
+}
+
+fn receiver_name(value: &str) -> String {
+    value
+        .chars()
+        .next()
+        .map(|ch| ch.to_ascii_lowercase().to_string())
+        .unwrap_or_else(|| "v".to_string())
 }
 
 fn split_pascal_tokens(value: &str) -> Vec<String> {
