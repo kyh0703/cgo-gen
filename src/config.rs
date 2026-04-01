@@ -22,28 +22,7 @@ pub struct Config {
     #[serde(skip)]
     pub known_model_types: Vec<String>,
     #[serde(skip)]
-    pub known_model_projections: Vec<KnownModelProjection>,
-    #[serde(skip)]
     pub target_header: Option<PathBuf>,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct KnownModelProjection {
-    pub cpp_type: String,
-    pub handle_name: String,
-    pub go_name: String,
-    pub output_header: String,
-    pub constructor_symbol: String,
-    pub destructor_symbol: Option<String>,
-    pub fields: Vec<KnownModelField>,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct KnownModelField {
-    pub go_name: String,
-    pub go_type: String,
-    pub getter_symbol: String,
-    pub return_kind: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -391,28 +370,10 @@ impl Config {
         self
     }
 
-    pub fn with_known_model_projections(
-        mut self,
-        known_model_projections: Vec<KnownModelProjection>,
-    ) -> Self {
-        self.known_model_projections = known_model_projections;
-        self
-    }
-
     pub fn is_known_model_type(&self, cpp_type: &str) -> bool {
         let base = base_cpp_type_name(cpp_type);
         self.known_model_types.iter().any(|candidate| {
             let normalized = base_cpp_type_name(candidate);
-            normalized == base
-                || normalized.rsplit("::").next().unwrap_or(&normalized) == base
-                || base.rsplit("::").next().unwrap_or(&base) == normalized
-        })
-    }
-
-    pub fn known_model_projection(&self, cpp_type: &str) -> Option<&KnownModelProjection> {
-        let base = base_cpp_type_name(cpp_type);
-        self.known_model_projections.iter().find(|projection| {
-            let normalized = base_cpp_type_name(&projection.cpp_type);
             normalized == base
                 || normalized.rsplit("::").next().unwrap_or(&normalized) == base
                 || base.rsplit("::").next().unwrap_or(&base) == normalized
