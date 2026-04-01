@@ -205,6 +205,133 @@ naming:
 }
 
 #[test]
+fn supports_facade_classes_with_object_pointer_constructor_params() {
+    let root = temp_output_dir("unsupported-constructor");
+    let include_dir = root.join("include");
+    fs::create_dir_all(&include_dir).unwrap();
+
+    let header_path = include_dir.join("Api.hpp");
+    fs::write(
+        &header_path,
+        r#"
+        #pragma once
+
+        class NsLeg;
+
+        class NsLeg {
+        public:
+            NsLeg(NsLeg* parent);
+            ~NsLeg();
+            int GetValue() const;
+        };
+
+        class Api {
+        public:
+            Api() = default;
+            ~Api() = default;
+            int GetValue() const;
+        };
+        "#,
+    )
+    .unwrap();
+
+    let config_path = root.join("cppgo-wrap.yaml");
+    fs::write(
+        &config_path,
+        r#"
+version: 1
+input:
+  headers:
+    - include/Api.hpp
+files:
+  facade:
+    - include/Api.hpp
+output:
+  dir: out
+naming:
+  prefix: cgowrap
+  style: preserve
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(&config_path).unwrap();
+    generator::generate_all(&config, true).unwrap();
+
+    let go_facade = fs::read_to_string(root.join("out/go/api_wrapper.go")).unwrap();
+
+    assert!(go_facade.contains("type NsLeg struct {"));
+    assert!(go_facade.contains("func NewNsLeg(parent *NsLeg) (*NsLeg, error) {"));
+    assert!(go_facade.contains("var cArg0 *C.NsLegHandle"));
+    assert!(go_facade.contains("if parent != nil {"));
+    assert!(go_facade.contains("cArg0 = parent.ptr"));
+    assert!(go_facade.contains("func (n *NsLeg) GetValue() int {"));
+    assert!(go_facade.contains("type Api struct {"));
+    assert!(go_facade.contains("func (a *Api) GetValue() int {"));
+}
+
+#[test]
+fn skips_facade_classes_with_unsupported_constructor_reference_params() {
+    let root = temp_output_dir("unsupported-constructor-ref");
+    let include_dir = root.join("include");
+    fs::create_dir_all(&include_dir).unwrap();
+
+    let header_path = include_dir.join("Api.hpp");
+    fs::write(
+        &header_path,
+        r#"
+        #pragma once
+
+        class NsLeg;
+
+        class NsLeg {
+        public:
+            NsLeg(NsLeg& parent);
+            ~NsLeg();
+            int GetValue() const;
+        };
+
+        class Api {
+        public:
+            Api() = default;
+            ~Api() = default;
+            int GetValue() const;
+        };
+        "#,
+    )
+    .unwrap();
+
+    let config_path = root.join("cppgo-wrap.yaml");
+    fs::write(
+        &config_path,
+        r#"
+version: 1
+input:
+  headers:
+    - include/Api.hpp
+files:
+  facade:
+    - include/Api.hpp
+output:
+  dir: out
+naming:
+  prefix: cgowrap
+  style: preserve
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(&config_path).unwrap();
+    generator::generate_all(&config, true).unwrap();
+
+    let go_facade = fs::read_to_string(root.join("out/go/api_wrapper.go")).unwrap();
+
+    assert!(go_facade.contains("type Api struct {"));
+    assert!(go_facade.contains("func (a *Api) GetValue() int {"));
+    assert!(!go_facade.contains("type NsLeg struct {"));
+}
+
+#[test]
 fn lifts_known_model_out_param_methods_into_model_returning_facade_methods() {
     let root = temp_output_dir("model-method");
     let include_dir = root.join("include");
