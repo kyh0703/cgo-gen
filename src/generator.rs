@@ -9,7 +9,7 @@ use anyhow::{Context, Result, bail};
 use crate::{
     config::Config,
     facade,
-    ir::{IrEnum, IrFunction, IrModule, IrType},
+    ir::{IrCallback, IrEnum, IrFunction, IrModule, IrParam, IrType},
     parser,
 };
 
@@ -86,7 +86,10 @@ pub fn prepare_with_parsed(config: &Config) -> Result<(Config, parser::ParsedApi
 
 fn prepare_config_from_parsed(config: &Config, parsed: &parser::ParsedApi) -> Result<Config> {
     let known_model_types = collect_known_model_types(parsed);
-    Ok(config.clone().with_known_model_types(known_model_types))
+    let scoped = config.clone().with_known_model_types(known_model_types);
+    let ir = crate::ir::normalize(&scoped, parsed)?;
+    let known_model_projections = facade::collect_known_model_projections(&scoped, &ir)?;
+    Ok(scoped.with_known_model_projections(known_model_projections))
 }
 
 fn collect_known_model_types(parsed: &parser::ParsedApi) -> Vec<String> {
@@ -170,9 +173,16 @@ pub fn render_header(config: &Config, ir: &IrModule) -> String {
     for item in &ir.enums {
         render_enum_decl(&mut out, item);
     }
+    for callback in &ir.callbacks {
+        render_callback_decl(&mut out, callback);
+    }
 
     for function in &ir.functions {
         out.push_str(&render_function_decl(function));
+        out.push('\n');
+    }
+    for function in callback_bridge_functions(ir) {
+        out.push_str(&render_function_decl(&function));
         out.push('\n');
     }
 
@@ -209,6 +219,15 @@ pub fn render_source(config: &Config, ir: &IrModule) -> String {
         out.push_str(&render_function_def(function));
         out.push('\n');
     }
+    let callback_map = callback_map(ir);
+    for function in ir
+        .functions
+        .iter()
+        .filter(|function| function.params.iter().any(|param| param.ty.kind == "callback"))
+    {
+        out.push_str(&render_callback_bridge_def(function, &callback_map));
+        out.push('\n');
+    }
 
     if ir
         .functions
@@ -236,7 +255,24 @@ fn render_enum_decl(out: &mut String, item: &IrEnum) {
     out.push_str(&format!("}} {};\n\n", item.name));
 }
 
-pub use crate::model::GeneratedGoFile;
+fn render_callback_decl(out: &mut String, callback: &IrCallback) {
+    let params = if callback.params.is_empty() {
+        "void".to_string()
+    } else {
+        callback
+            .params
+            .iter()
+            .map(|param| format!("{} {}", param.ty.c_type, param.name))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    out.push_str(&format!(
+        "typedef {} (*{})({});\n\n",
+        callback.returns.c_type, callback.name, params
+    ));
+}
+
+pub use crate::facade::GeneratedGoFile;
 
 fn render_function_decl(function: &IrFunction) -> String {
     let params = render_param_list(function);
@@ -268,6 +304,21 @@ fn render_function_def(function: &IrFunction) -> String {
         "method" => render_method_body(function),
         _ => render_free_function_body(function),
     };
+    format!("{signature} {{\n{body}}}\n")
+}
+
+fn render_callback_bridge_def(
+    function: &IrFunction,
+    callbacks: &std::collections::BTreeMap<String, IrCallback>,
+) -> String {
+    let bridge = make_callback_bridge_function(function);
+    let signature = format!(
+        "{} {}({})",
+        bridge.returns.c_type,
+        bridge.name,
+        render_param_list(&bridge)
+    );
+    let body = render_callback_bridge_body(function, callbacks);
     format!("{signature} {{\n{body}}}\n")
 }
 
@@ -344,6 +395,144 @@ fn render_cpp_arg(ty: IrType, name: &str) -> String {
         ),
         _ => name.to_string(),
     }
+}
+
+fn callback_bridge_functions(ir: &IrModule) -> Vec<IrFunction> {
+    ir.functions
+        .iter()
+        .filter(|function| function.params.iter().any(|param| param.ty.kind == "callback"))
+        .map(make_callback_bridge_function)
+        .collect()
+}
+
+fn make_callback_bridge_function(function: &IrFunction) -> IrFunction {
+    let params = function
+        .params
+        .iter()
+        .enumerate()
+        .filter_map(|(index, param)| {
+            if param.ty.kind == "callback" {
+                Some(IrParam {
+                    name: format!("use_cb{index}"),
+                    ty: IrType {
+                        kind: "primitive".to_string(),
+                        cpp_type: "bool".to_string(),
+                        c_type: "bool".to_string(),
+                        handle: None,
+                    },
+                })
+            } else {
+                Some(param.clone())
+            }
+        })
+        .collect::<Vec<_>>();
+
+    IrFunction {
+        name: format!("{}_bridge", function.name),
+        kind: "function".to_string(),
+        cpp_name: function.cpp_name.clone(),
+        method_of: function.method_of.clone(),
+        owner_cpp_type: function.owner_cpp_type.clone(),
+        is_const: function.is_const,
+        returns: function.returns.clone(),
+        params,
+    }
+}
+
+fn callback_map(ir: &IrModule) -> std::collections::BTreeMap<String, IrCallback> {
+    ir.callbacks
+        .iter()
+        .map(|callback| (callback.name.clone(), callback.clone()))
+        .collect()
+}
+
+fn render_callback_bridge_body(
+    function: &IrFunction,
+    callbacks: &std::collections::BTreeMap<String, IrCallback>,
+) -> String {
+    let mut out = String::new();
+
+    for (index, param) in function.params.iter().enumerate() {
+        if param.ty.kind != "callback" {
+            continue;
+        }
+        let callback = callbacks
+            .get(&param.ty.cpp_type)
+            .expect("callback bridge requires callback typedef metadata");
+        out.push_str(&render_callback_trampoline_decl(function, index, callback));
+    }
+
+    let target = function.name.clone();
+    let call_args = function
+        .params
+        .iter()
+        .enumerate()
+        .map(|(index, param)| {
+            if param.ty.kind == "callback" {
+                format!(
+                    "use_cb{index} ? {} : nullptr",
+                    callback_trampoline_name(function, index)
+                )
+            } else {
+                param.name.clone()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    match function.returns.kind.as_str() {
+        "void" => out.push_str(&format!("    {}({});\n", target, call_args)),
+        _ => out.push_str(&format!("    return {}({});\n", target, call_args)),
+    }
+
+    out
+}
+
+fn render_callback_trampoline_decl(
+    function: &IrFunction,
+    index: usize,
+    callback: &IrCallback,
+) -> String {
+    let params = if callback.params.is_empty() {
+        "void".to_string()
+    } else {
+        callback
+            .params
+            .iter()
+            .map(|param| format!("{} {}", param.ty.c_type, param.name))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let call_args = callback
+        .params
+        .iter()
+        .map(|param| param.name.clone())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let go_symbol = callback_go_export_name(function, index);
+    let invoke = if callback.returns.kind == "void" {
+        format!("{}({});", go_symbol, call_args)
+    } else {
+        format!("return {}({});", go_symbol, call_args)
+    };
+    format!(
+        "    extern {} {}({});\n    auto {} = []({}) -> {} {{ {} }};\n",
+        callback.returns.c_type,
+        go_symbol,
+        params,
+        callback_trampoline_name(function, index),
+        params,
+        callback.returns.c_type,
+        invoke
+    )
+}
+
+fn callback_trampoline_name(function: &IrFunction, index: usize) -> String {
+    format!("{}_cb{}_trampoline", function.name, index)
+}
+
+fn callback_go_export_name(function: &IrFunction, index: usize) -> String {
+    format!("go_{}_cb{}", function.name, index)
 }
 
 fn base_model_cpp_type(value: &str) -> String {

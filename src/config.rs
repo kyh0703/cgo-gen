@@ -16,15 +16,35 @@ pub struct Config {
     #[serde(default)]
     pub output: OutputConfig,
     #[serde(default)]
-    pub files: FileRoleConfig,
-    #[serde(default)]
     pub naming: NamingConfig,
     #[serde(default)]
     pub policies: PolicyConfig,
     #[serde(skip)]
     pub known_model_types: Vec<String>,
     #[serde(skip)]
+    pub known_model_projections: Vec<KnownModelProjection>,
+    #[serde(skip)]
     pub target_header: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct KnownModelProjection {
+    pub cpp_type: String,
+    pub handle_name: String,
+    pub go_name: String,
+    pub output_header: String,
+    pub constructor_symbol: String,
+    pub destructor_symbol: Option<String>,
+    pub fields: Vec<KnownModelField>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct KnownModelField {
+    pub go_name: String,
+    pub go_type: String,
+    pub getter_symbol: String,
+    pub setter_symbol: String,
+    pub return_kind: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -47,21 +67,6 @@ pub struct InputConfig {
     pub clang_args: Vec<String>,
     #[serde(default)]
     pub allow_diagnostics: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct FileRoleConfig {
-    #[serde(default)]
-    pub model: Vec<PathBuf>,
-    #[serde(default)]
-    pub facade: Vec<PathBuf>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HeaderRole {
-    Model,
-    Facade,
-    Unclassified,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -430,29 +435,8 @@ impl Config {
             include_args.extend(self.input.clang_args.clone());
             self.input.clang_args = include_args;
         }
-        for header in &mut self.files.model {
-            resolve_path(header, base_dir);
-        }
-        for header in &mut self.files.facade {
-            resolve_path(header, base_dir);
-        }
         if self.output.dir.is_relative() {
             self.output.dir = base_dir.join(&self.output.dir);
-        }
-        if self.files.model.is_empty() && !self.files.facade.is_empty() {
-            self.files.model = self
-                .input
-                .headers
-                .iter()
-                .filter(|header| {
-                    !self
-                        .files
-                        .facade
-                        .iter()
-                        .any(|candidate| candidate == *header)
-                })
-                .cloned()
-                .collect();
         }
         self.apply_output_defaults();
         Ok(())
@@ -465,41 +449,6 @@ impl Config {
         if let Some(dir) = &self.input.dir {
             if dir.exists() && !dir.is_dir() {
                 bail!("config.input.dir must point to a directory: {}", dir.display());
-            }
-        }
-        let enforces_header_membership = !self.input.headers.is_empty();
-        for header in &self.files.model {
-            if enforces_header_membership
-                && !self
-                .input
-                .headers
-                .iter()
-                .any(|candidate| candidate == header)
-            {
-                bail!(
-                    "files.model entry must also appear in input.headers: {}",
-                    header.display()
-                );
-            }
-        }
-        for header in &self.files.facade {
-            if enforces_header_membership
-                && !self
-                .input
-                .headers
-                .iter()
-                .any(|candidate| candidate == header)
-            {
-                bail!(
-                    "files.facade entry must also appear in input.headers: {}",
-                    header.display()
-                );
-            }
-            if self.files.model.iter().any(|candidate| candidate == header) {
-                bail!(
-                    "header cannot be classified as both model and facade: {}",
-                    header.display()
-                );
             }
         }
         Ok(())
@@ -516,14 +465,6 @@ impl Config {
 
     pub fn raw_output_dir(&self) -> PathBuf {
         self.output.dir.join("raw")
-    }
-
-    pub fn model_output_dir(&self) -> PathBuf {
-        self.go_output_dir()
-    }
-
-    pub fn facade_output_dir(&self) -> PathBuf {
-        self.go_output_dir()
     }
 
     pub fn go_output_dir(&self) -> PathBuf {
@@ -560,24 +501,27 @@ impl Config {
         Some(format!("{}_wrapper", to_snake_case(stem)))
     }
 
-    pub fn header_role(&self, header: &Path) -> HeaderRole {
-        if self.files.model.iter().any(|candidate| candidate == header) {
-            HeaderRole::Model
-        } else if self
-            .files
-            .facade
-            .iter()
-            .any(|candidate| candidate == header)
-        {
-            HeaderRole::Facade
-        } else {
-            HeaderRole::Unclassified
-        }
-    }
-
     pub fn with_known_model_types(mut self, known_model_types: Vec<String>) -> Self {
         self.known_model_types = known_model_types;
         self
+    }
+
+    pub fn with_known_model_projections(
+        mut self,
+        known_model_projections: Vec<KnownModelProjection>,
+    ) -> Self {
+        self.known_model_projections = known_model_projections;
+        self
+    }
+
+    pub fn known_model_projection(&self, cpp_type: &str) -> Option<&KnownModelProjection> {
+        let base = base_cpp_type_name(cpp_type);
+        self.known_model_projections.iter().find(|projection| {
+            let normalized = base_cpp_type_name(&projection.cpp_type);
+            normalized == base
+                || normalized.rsplit("::").next().unwrap_or(&normalized) == base
+                || base.rsplit("::").next().unwrap_or(&base) == normalized
+        })
     }
 
     pub fn is_known_model_type(&self, cpp_type: &str) -> bool {

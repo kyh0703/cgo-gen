@@ -5,7 +5,10 @@ use serde::Serialize;
 
 use crate::{
     config::Config,
-    parser::{CppClass, CppConstructor, CppEnum, CppFunction, CppMethod, CppParam, ParsedApi},
+    parser::{
+        CppCallbackTypedef, CppClass, CppConstructor, CppEnum, CppFunction, CppMethod, CppParam,
+        ParsedApi,
+    },
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -16,6 +19,7 @@ pub struct IrModule {
     pub opaque_types: Vec<OpaqueType>,
     pub functions: Vec<IrFunction>,
     pub enums: Vec<IrEnum>,
+    pub callbacks: Vec<IrCallback>,
     pub support: SupportMetadata,
 }
 
@@ -56,6 +60,14 @@ pub struct IrType {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct IrCallback {
+    pub name: String,
+    pub cpp_name: String,
+    pub returns: IrType,
+    pub params: Vec<IrParam>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct IrEnum {
     pub name: String,
     pub cpp_name: String,
@@ -88,7 +100,9 @@ pub fn normalize(config: &Config, api: &ParsedApi) -> Result<IrModule> {
     let mut opaque_types = Vec::new();
     let mut functions = Vec::new();
     let mut enums = Vec::new();
+    let mut callbacks = Vec::new();
     let mut skipped_declarations = Vec::new();
+    let callback_names = callback_name_set(api);
 
     for class in &api.classes {
         let handle_name = format!("{}Handle", flatten_cpp_name(&class.namespace, &class.name));
@@ -100,18 +114,27 @@ pub fn normalize(config: &Config, api: &ParsedApi) -> Result<IrModule> {
             config,
             class,
             &handle_name,
+            &callback_names,
             &mut skipped_declarations,
         )?);
     }
 
     for function in &api.functions {
-        if let Some(function) = normalize_function(config, function, &mut skipped_declarations)? {
+        if let Some(function) = normalize_function(
+            config,
+            function,
+            &callback_names,
+            &mut skipped_declarations,
+        )? {
             functions.push(function);
         }
     }
 
     for item in &api.enums {
         enums.push(normalize_enum(item));
+    }
+    for callback in &api.callbacks {
+        callbacks.push(normalize_callback(config, callback, &callback_names)?);
     }
 
     collect_referenced_opaque_types(&mut opaque_types, &functions);
@@ -126,6 +149,7 @@ pub fn normalize(config: &Config, api: &ParsedApi) -> Result<IrModule> {
         opaque_types,
         functions,
         enums,
+        callbacks,
         support: SupportMetadata {
             parser_backend: "libclang".to_string(),
             notes: {
@@ -243,6 +267,7 @@ fn normalize_class(
     config: &Config,
     class: &CppClass,
     handle_name: &str,
+    callback_names: &BTreeSet<String>,
     skipped_declarations: &mut Vec<SkippedDeclaration>,
 ) -> Result<Vec<IrFunction>> {
     let mut functions = Vec::new();
@@ -272,6 +297,7 @@ fn normalize_class(
                 class,
                 handle_name,
                 constructor,
+                callback_names,
                 skipped_declarations,
             )? {
                 functions.push(function);
@@ -308,8 +334,14 @@ fn normalize_class(
     });
 
     for method in &class.methods {
-        if let Some(function) =
-            normalize_method(config, class, handle_name, method, skipped_declarations)?
+        if let Some(function) = normalize_method(
+            config,
+            class,
+            handle_name,
+            method,
+            callback_names,
+            skipped_declarations,
+        )?
         {
             functions.push(function);
         }
@@ -323,10 +355,11 @@ fn normalize_constructor(
     class: &CppClass,
     handle_name: &str,
     constructor: &CppConstructor,
+    callback_names: &BTreeSet<String>,
     skipped_declarations: &mut Vec<SkippedDeclaration>,
 ) -> Result<Option<IrFunction>> {
     let qualified = cpp_qualified(&class.namespace, &class.name);
-    if let Some(reason) = function_pointer_reason(None, &constructor.params) {
+    if let Some(reason) = function_pointer_reason(None, &constructor.params, callback_names) {
         skipped_declarations.push(SkippedDeclaration {
             cpp_name: qualified.clone(),
             reason,
@@ -349,7 +382,7 @@ fn normalize_constructor(
         params: constructor
             .params
             .iter()
-            .map(|param| normalize_param(config, param))
+            .map(|param| normalize_param(config, param, callback_names))
             .collect::<Result<Vec<_>>>()?,
     }))
 }
@@ -359,6 +392,7 @@ fn normalize_method(
     class: &CppClass,
     handle_name: &str,
     method: &CppMethod,
+    callback_names: &BTreeSet<String>,
     skipped_declarations: &mut Vec<SkippedDeclaration>,
 ) -> Result<Option<IrFunction>> {
     let qualified = cpp_qualified(&class.namespace, &class.name);
@@ -370,6 +404,7 @@ fn normalize_method(
             method.return_is_function_pointer,
         )),
         &method.params,
+        callback_names,
     ) {
         skipped_declarations.push(SkippedDeclaration { cpp_name, reason });
         return Ok(None);
@@ -377,6 +412,7 @@ fn normalize_method(
     if let Some(reason) = raw_unsafe_by_value_reason(
         Some((&method.return_type, &method.return_canonical_type)),
         &method.params,
+        callback_names,
     ) {
         skipped_declarations.push(SkippedDeclaration { cpp_name, reason });
         return Ok(None);
@@ -403,7 +439,7 @@ fn normalize_method(
         method
             .params
             .iter()
-            .map(|param| normalize_param(config, param))
+            .map(|param| normalize_param(config, param, callback_names))
             .collect::<Result<Vec<_>>>()?,
     );
     Ok(Some(IrFunction {
@@ -417,6 +453,7 @@ fn normalize_method(
             config,
             &method.return_type,
             &method.return_canonical_type,
+            callback_names,
         )?,
         params,
     }))
@@ -425,6 +462,7 @@ fn normalize_method(
 fn normalize_function(
     config: &Config,
     function: &CppFunction,
+    callback_names: &BTreeSet<String>,
     skipped_declarations: &mut Vec<SkippedDeclaration>,
 ) -> Result<Option<IrFunction>> {
     let cpp_name = cpp_qualified(&function.namespace, &function.name);
@@ -435,6 +473,7 @@ fn normalize_function(
             function.return_is_function_pointer,
         )),
         &function.params,
+        callback_names,
     ) {
         skipped_declarations.push(SkippedDeclaration { cpp_name, reason });
         return Ok(None);
@@ -442,6 +481,7 @@ fn normalize_function(
     if let Some(reason) = raw_unsafe_by_value_reason(
         Some((&function.return_type, &function.return_canonical_type)),
         &function.params,
+        callback_names,
     ) {
         skipped_declarations.push(SkippedDeclaration { cpp_name, reason });
         return Ok(None);
@@ -457,11 +497,12 @@ fn normalize_function(
             config,
             &function.return_type,
             &function.return_canonical_type,
+            callback_names,
         )?,
         params: function
             .params
             .iter()
-            .map(|param| normalize_param(config, param))
+            .map(|param| normalize_param(config, param, callback_names))
             .collect::<Result<Vec<_>>>()?,
     }))
 }
@@ -481,16 +522,43 @@ fn normalize_enum(item: &CppEnum) -> IrEnum {
     }
 }
 
-fn normalize_param(config: &Config, param: &CppParam) -> Result<IrParam> {
+fn normalize_callback(
+    config: &Config,
+    callback: &CppCallbackTypedef,
+    callback_names: &BTreeSet<String>,
+) -> Result<IrCallback> {
+    Ok(IrCallback {
+        name: callback.name.clone(),
+        cpp_name: cpp_qualified(&callback.namespace, &callback.name),
+        returns: normalize_type_with_canonical(
+            config,
+            &callback.return_type,
+            &callback.return_canonical_type,
+            callback_names,
+        )?,
+        params: callback
+            .params
+            .iter()
+            .map(|param| normalize_param(config, param, callback_names))
+            .collect::<Result<Vec<_>>>()?,
+    })
+}
+
+fn normalize_param(
+    config: &Config,
+    param: &CppParam,
+    callback_names: &BTreeSet<String>,
+) -> Result<IrParam> {
     Ok(IrParam {
         name: param.name.clone(),
-        ty: normalize_type_with_canonical(config, &param.ty, &param.canonical_ty)?,
+        ty: normalize_type_with_canonical(config, &param.ty, &param.canonical_ty, callback_names)?,
     })
 }
 
 fn function_pointer_reason(
     return_type: Option<(&str, &str, bool)>,
     params: &[CppParam],
+    callback_names: &BTreeSet<String>,
 ) -> Option<String> {
     let mut issues = Vec::new();
 
@@ -504,7 +572,9 @@ fn function_pointer_reason(
     }
 
     for param in params {
-        if param.is_function_pointer {
+        if param.is_function_pointer
+            && !is_named_callback_param(param, callback_names)
+        {
             issues.push(format!(
                 "parameter `{}` type `{}` uses a function pointer",
                 param.name,
@@ -519,11 +589,12 @@ fn function_pointer_reason(
 fn raw_unsafe_by_value_reason(
     return_type: Option<(&str, &str)>,
     params: &[CppParam],
+    callback_names: &BTreeSet<String>,
 ) -> Option<String> {
     let mut issues = Vec::new();
 
     if let Some((display, canonical)) = return_type
-        && is_raw_unsafe_by_value_type(display, canonical)
+        && is_raw_unsafe_by_value_type(display, canonical, callback_names)
     {
         issues.push(format!(
             "return type `{}` uses a raw-unsafe by-value object type",
@@ -532,7 +603,7 @@ fn raw_unsafe_by_value_reason(
     }
 
     for param in params {
-        if is_raw_unsafe_by_value_type(&param.ty, &param.canonical_ty) {
+        if is_raw_unsafe_by_value_type(&param.ty, &param.canonical_ty, callback_names) {
             issues.push(format!(
                 "parameter `{}` type `{}` uses a raw-unsafe by-value object type",
                 param.name,
@@ -544,14 +615,21 @@ fn raw_unsafe_by_value_reason(
     (!issues.is_empty()).then(|| issues.join("; "))
 }
 
-fn is_raw_unsafe_by_value_type(display: &str, canonical: &str) -> bool {
+fn is_raw_unsafe_by_value_type(
+    display: &str,
+    canonical: &str,
+    callback_names: &BTreeSet<String>,
+) -> bool {
     let display = display.trim();
     let canonical = canonical.trim();
 
-    if normalize_type(display).is_ok() {
+    if normalize_type(display, callback_names).is_ok() {
         return false;
     }
-    if !canonical.is_empty() && canonical != display && normalize_type(canonical).is_ok() {
+    if !canonical.is_empty()
+        && canonical != display
+        && normalize_type(canonical, callback_names).is_ok()
+    {
         return false;
     }
 
@@ -586,15 +664,16 @@ fn normalize_type_with_canonical(
     _config: &Config,
     cpp_type: &str,
     canonical_type: &str,
+    callback_names: &BTreeSet<String>,
 ) -> Result<IrType> {
     let trimmed = cpp_type.trim();
-    if let Ok(ty) = normalize_type(trimmed) {
+    if let Ok(ty) = normalize_type(trimmed, callback_names) {
         return Ok(ty);
     }
 
     let canonical_trimmed = canonical_type.trim();
     if canonical_trimmed != trimmed {
-        if let Ok(mut ty) = normalize_type(canonical_trimmed) {
+        if let Ok(mut ty) = normalize_type(canonical_trimmed, callback_names) {
             ty.cpp_type = trimmed.to_string();
             return Ok(ty);
         }
@@ -604,8 +683,16 @@ fn normalize_type_with_canonical(
     bail!("unsupported C++ type in v1: {trimmed}");
 }
 
-fn normalize_type(cpp_type: &str) -> Result<IrType> {
+fn normalize_type(cpp_type: &str, callback_names: &BTreeSet<String>) -> Result<IrType> {
     let trimmed = cpp_type.trim();
+    if callback_names.contains(trimmed) {
+        return Ok(IrType {
+            kind: "callback".to_string(),
+            cpp_type: trimmed.to_string(),
+            c_type: trimmed.to_string(),
+            handle: None,
+        });
+    }
     match trimmed {
         "void" => Ok(primitive_type(trimmed)),
         "bool" | "int" | "short" | "long" | "long long" | "float" | "double" | "size_t"
@@ -711,6 +798,22 @@ fn alias_primitive_type(cpp_name: &str, c_name: &str) -> IrType {
         c_type: c_name.to_string(),
         handle: None,
     }
+}
+
+fn callback_name_set(api: &ParsedApi) -> BTreeSet<String> {
+    api.callbacks
+        .iter()
+        .flat_map(|callback| {
+            let qualified = cpp_qualified(&callback.namespace, &callback.name);
+            [callback.name.clone(), qualified]
+        })
+        .collect()
+}
+
+fn is_named_callback_param(param: &CppParam, callback_names: &BTreeSet<String>) -> bool {
+    param.callback_typedef
+        .as_deref()
+        .is_some_and(|name| callback_names.contains(name))
 }
 
 fn is_supported_primitive(name: &str) -> bool {
@@ -823,6 +926,7 @@ fn type_signature_token(ty: &IrType) -> String {
             "model_ptr_{}",
             sanitize_symbol_token(&base_model_cpp_type(&ty.cpp_type))
         ),
+        "callback" => format!("callback_{}", sanitize_symbol_token(&ty.cpp_type)),
         _ => sanitize_symbol_token(&ty.cpp_type),
     }
 }

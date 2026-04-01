@@ -43,6 +43,10 @@ pub fn collect_clang_args(config: &Config, parse_entry: &Path) -> Result<Vec<Str
     Ok(args)
 }
 
+fn add_parse_entry_parent_include(args: &mut Vec<String>, parse_entry: &Path) {
+    add_header_parent_include(args, parse_entry);
+}
+
 pub fn collect_translation_units(config: &Config) -> Result<Vec<PathBuf>> {
     if config.input.dir.is_none() && !config.input.headers.is_empty() {
         return Ok(config.input.headers.clone());
@@ -70,10 +74,9 @@ pub fn collect_translation_units(config: &Config) -> Result<Vec<PathBuf>> {
 
 fn collect_classified_translation_units(config: &Config, dir: &Path) -> Result<Vec<PathBuf>> {
     let grouped_dirs = config
-        .files
-        .model
+        .input
+        .headers
         .iter()
-        .chain(config.files.facade.iter())
         .filter(|path| path_is_within(path, dir))
         .filter_map(|path| path.parent().map(Path::to_path_buf))
         .collect::<BTreeSet<_>>();
@@ -447,4 +450,8 @@ pub fn ensure_parse_entry_exists(parse_entry: &Path) -> Result<()> {
         anyhow::bail!("parse entry not found: {}", parse_entry.display());
     }
     Ok(())
+}
+
+pub fn ensure_header_exists(path: &Path) -> Result<()> {
+    ensure_parse_entry_exists(path)
 }
