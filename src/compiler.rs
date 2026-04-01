@@ -44,7 +44,7 @@ pub fn collect_clang_args(config: &Config, header: &Path) -> Result<Vec<String>>
 }
 
 pub fn collect_translation_units(config: &Config) -> Result<Vec<PathBuf>> {
-    if !config.input.headers.is_empty() {
+    if config.input.dir.is_none() && !config.input.headers.is_empty() {
         return Ok(config.input.headers.clone());
     }
 

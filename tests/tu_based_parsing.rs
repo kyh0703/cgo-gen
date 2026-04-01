@@ -232,3 +232,77 @@ output:
     assert!(units.iter().any(|path| path.ends_with("entry.hpp")));
     assert!(units.iter().any(|path| path.ends_with("shared.hpp")));
 }
+
+#[test]
+fn scoped_header_keeps_dir_translation_unit_context() {
+    let fixture = temp_fixture_dir("scoped_dir_context");
+    fs::create_dir_all(fixture.join("include")).unwrap();
+    fs::create_dir_all(fixture.join("build")).unwrap();
+
+    fs::write(
+        fixture.join("include/types.hpp"),
+        r#"
+        typedef unsigned long long SharedId;
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        fixture.join("include/entry.hpp"),
+        r#"
+        class Entry {
+        public:
+            SharedId GetId() const { return 7; }
+        };
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        fixture.join("include/tu.cpp"),
+        r#"
+        #include "types.hpp"
+        #include "entry.hpp"
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        fixture.join("build/compile_commands.json"),
+        r#"
+[
+  {
+    "directory": ".",
+    "file": "../include/tu.cpp",
+    "arguments": [
+      "clang++",
+      "-std=c++17",
+      "-x",
+      "c++",
+      "-I../include"
+    ]
+  }
+]
+"#,
+    )
+    .unwrap();
+    fs::write(
+        fixture.join("config.yaml"),
+        r#"
+version: 1
+input:
+  dir: include
+  compile_commands: build/compile_commands.json
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(fixture.join("config.yaml")).unwrap();
+    let scoped = config.scoped_to_header(fixture.join("include/entry.hpp"));
+    let units = compiler::collect_translation_units(&scoped).unwrap();
+    let parsed = parser::parse(&scoped).unwrap();
+
+    assert_eq!(units.len(), 1);
+    assert!(units[0].ends_with("tu.cpp"));
+    assert!(parsed.classes.iter().any(|class| class.name == "Entry"));
+    assert!(!parsed.headers.iter().any(|header| header.ends_with("types.hpp")));
+}
