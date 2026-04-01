@@ -84,9 +84,7 @@ fn parses_and_generates_wrapper_for_isaamaster_fixture() {
     let header = fs::read_to_string(config.raw_output_dir().join(&config.output.header)).unwrap();
     let source = fs::read_to_string(config.raw_output_dir().join(&config.output.source)).unwrap();
     let ir_yaml = fs::read_to_string(config.raw_output_dir().join(&config.output.ir)).unwrap();
-    let go_struct_path = config
-        .model_output_dir()
-        .join(config.go_filename("IsAAMaster"));
+    let go_struct_path = config.go_output_dir().join(config.go_filename("IsAAMaster"));
     let go_structs = fs::read_to_string(go_struct_path).unwrap();
     let expected_dir = fixture_dir().join("expected");
     let expected_header = fs::read_to_string(expected_dir.join("is_aa_master_wrapper.h")).unwrap();
@@ -106,7 +104,7 @@ fn parses_and_generates_wrapper_for_isaamaster_fixture() {
     assert!(go_structs.contains("type IsAAMaster struct {"));
     assert!(go_structs.contains("func NewIsAAMaster() (*IsAAMaster, error) {"));
     assert!(go_structs.contains("func (i *IsAAMaster) GetAADn() (string, error) {"));
-    assert!(go_structs.contains("func (i *IsAAMaster) SetDigit1Num(value string) {"));
+    assert!(go_structs.contains("func (i *IsAAMaster) SetDigit1Num(sDigitNum string) {"));
     assert_eq!(header, expected_header);
     assert_eq!(source, expected_source);
     assert_eq!(
