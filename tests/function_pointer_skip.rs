@@ -20,15 +20,13 @@ fn skips_declarations_using_function_pointer_types() {
     fs::write(
         root.join("include/Api.hpp"),
         r#"
-        typedef void (*Callback)(int code);
-
         int add(int lhs, int rhs);
-        void set_callback(Callback cb);
+        void set_callback(void (*cb)(int code));
 
         class Api {
         public:
             int GetValue() const;
-            void SetCallback(Callback cb);
+            void SetCallback(void (*cb)(int code));
         };
         "#,
     )
@@ -77,12 +75,12 @@ naming:
         ir.support
             .skipped_declarations
             .iter()
-            .any(|item| item.cpp_name == "set_callback" && item.reason.contains("Callback"))
+            .any(|item| item.cpp_name == "set_callback" && item.reason.contains("function pointer"))
     );
     assert!(
         ir.support
             .skipped_declarations
             .iter()
-            .any(|item| item.cpp_name == "Api::SetCallback" && item.reason.contains("Callback"))
+            .any(|item| item.cpp_name == "Api::SetCallback" && item.reason.contains("function pointer"))
     );
 }

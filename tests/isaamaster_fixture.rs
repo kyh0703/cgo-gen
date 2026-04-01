@@ -106,7 +106,7 @@ fn parses_and_generates_wrapper_for_isaamaster_fixture() {
     assert!(go_structs.contains("type IsAAMaster struct {"));
     assert!(go_structs.contains("func NewIsAAMaster() (*IsAAMaster, error) {"));
     assert!(go_structs.contains("func (i *IsAAMaster) GetAADn() (string, error) {"));
-    assert!(go_structs.contains("func (i *IsAAMaster) SetDigit1Num(sDigitNum string) {"));
+    assert!(go_structs.contains("func (i *IsAAMaster) SetDigit1Num(value string) {"));
     assert_eq!(header, expected_header);
     assert_eq!(source, expected_source);
     assert_eq!(
