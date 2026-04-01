@@ -216,9 +216,25 @@ fn collect_entity(
                     .push(parse_function(cursor, namespace.to_vec())?);
             }
         }
+        CXCursor_TypedefDecl => {
+            let Some(name) = cursor_spelling(cursor) else {
+                return Ok(());
+            };
+            let Some(enum_cursor) = direct_children(cursor)
+                .into_iter()
+                .find(|child| unsafe { clang_getCursorKind(*child) } == CXCursor_EnumDecl)
+            else {
+                return Ok(());
+            };
+            if enum_decl_name(enum_cursor).is_none() {
+                api.enums
+                    .push(parse_enum_with_name(enum_cursor, namespace.to_vec(), name));
+            }
+        }
         CXCursor_EnumDecl => {
-            if cursor_spelling(cursor).is_some() {
-                api.enums.push(parse_enum(cursor, namespace.to_vec()));
+            if let Some(name) = enum_decl_name(cursor) {
+                api.enums
+                    .push(parse_enum_with_name(cursor, namespace.to_vec(), name));
             }
         }
         _ => {}
@@ -297,7 +313,7 @@ fn parse_function(cursor: CXCursor, namespace: Vec<String>) -> Result<CppFunctio
     })
 }
 
-fn parse_enum(cursor: CXCursor, namespace: Vec<String>) -> CppEnum {
+fn parse_enum_with_name(cursor: CXCursor, namespace: Vec<String>, name: String) -> CppEnum {
     let variants = direct_children(cursor)
         .into_iter()
         .filter(|child| unsafe { clang_getCursorKind(*child) } == CXCursor_EnumConstantDecl)
@@ -309,9 +325,17 @@ fn parse_enum(cursor: CXCursor, namespace: Vec<String>) -> CppEnum {
 
     CppEnum {
         namespace,
-        name: cursor_spelling(cursor).unwrap_or_default(),
+        name,
         variants,
     }
+}
+
+fn enum_decl_name(cursor: CXCursor) -> Option<String> {
+    cursor_spelling(cursor).filter(|name| !is_unnamed_enum_spelling(name))
+}
+
+fn is_unnamed_enum_spelling(name: &str) -> bool {
+    name.starts_with("(unnamed enum at ")
 }
 
 fn parse_params(cursor: CXCursor) -> Vec<CppParam> {
