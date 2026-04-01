@@ -1150,14 +1150,25 @@ fn go_overload_token(ty: &IrType) -> String {
                 &ty.cpp_type
             )))
         ),
-        "model_pointer" => format!(
-            "{}Ptr",
-            go_export_name(&flatten_qualified_cpp_name(&base_model_cpp_type(
-                &ty.cpp_type
-            )))
-        ),
+        "model_pointer" => model_pointer_overload_token(ty),
         _ => go_export_name(&sanitize_go_token(&ty.cpp_type)),
     }
+}
+
+fn model_pointer_overload_token(ty: &IrType) -> String {
+    let base = go_export_name(&flatten_qualified_cpp_name(&base_model_cpp_type(
+        &ty.cpp_type,
+    )));
+    let depth = model_pointer_depth(ty);
+    format!("{base}{}", "Ptr".repeat(depth.max(1)))
+}
+
+fn model_pointer_depth(ty: &IrType) -> usize {
+    let cpp_depth = ty.cpp_type.chars().filter(|ch| *ch == '*').count();
+    if cpp_depth > 0 {
+        return cpp_depth;
+    }
+    ty.c_type.chars().filter(|ch| *ch == '*').count().max(1)
 }
 
 fn primitive_overload_token(ty: &IrType) -> String {
@@ -1765,6 +1776,15 @@ mod tests {
         assert_eq!(
             go_overload_token(&model_type("model_pointer", "ThingModel")),
             "ThingModelPtr"
+        );
+        assert_eq!(
+            go_overload_token(&IrType {
+                kind: "model_pointer".to_string(),
+                cpp_type: "ThingModel**".to_string(),
+                c_type: "ThingModelHandle**".to_string(),
+                handle: Some("ThingModelHandle".to_string()),
+            }),
+            "ThingModelPtrPtr"
         );
     }
 
