@@ -1142,10 +1142,8 @@ fn go_overload_suffix(function: &IrFunction) -> String {
 fn go_overload_token(ty: &IrType) -> String {
     match ty.kind.as_str() {
         "callback" => format!("{}Callback", go_export_name(&leaf_cpp_name(&ty.cpp_type))),
-        "string" | "c_string" => "String".to_string(),
-        "primitive" => go_type_for_ir(ty)
-            .map(go_export_name)
-            .unwrap_or_else(|| go_export_name(&sanitize_go_token(&ty.cpp_type))),
+        "string" | "c_string" => string_overload_token(ty),
+        "primitive" => primitive_overload_token(ty),
         "model_reference" => format!(
             "{}Ref",
             go_export_name(&flatten_qualified_cpp_name(&base_model_cpp_type(
@@ -1160,6 +1158,63 @@ fn go_overload_token(ty: &IrType) -> String {
         ),
         _ => go_export_name(&sanitize_go_token(&ty.cpp_type)),
     }
+}
+
+fn primitive_overload_token(ty: &IrType) -> String {
+    let cpp_key = normalize_type_key(&ty.cpp_type);
+    let c_key = normalize_type_key(&ty.c_type);
+    if cpp_key != c_key && !is_builtin_primitive_key(&cpp_key) {
+        return go_export_name(&sanitize_go_token(&ty.cpp_type));
+    }
+    go_type_for_ir(ty)
+        .map(go_export_name)
+        .unwrap_or_else(|| go_export_name(&sanitize_go_token(&ty.cpp_type)))
+}
+
+fn string_overload_token(ty: &IrType) -> String {
+    let cpp_key = normalize_type_key(&ty.cpp_type);
+    let c_key = normalize_type_key(&ty.c_type);
+    if cpp_key != c_key && !cpp_key.is_empty() {
+        return go_export_name(&sanitize_go_token(&ty.cpp_type));
+    }
+    "String".to_string()
+}
+
+fn is_builtin_primitive_key(value: &str) -> bool {
+    matches!(
+        value,
+        "bool"
+            | "float"
+            | "double"
+            | "int8"
+            | "int8_t"
+            | "signedchar"
+            | "int16"
+            | "int16_t"
+            | "short"
+            | "int32"
+            | "int32_t"
+            | "int"
+            | "int64"
+            | "int64_t"
+            | "long"
+            | "longlong"
+            | "uint8"
+            | "uint8_t"
+            | "unsignedchar"
+            | "uint16"
+            | "uint16_t"
+            | "unsignedshort"
+            | "uint32"
+            | "uint32_t"
+            | "unsignedint"
+            | "unsigned"
+            | "uint64"
+            | "uint64_t"
+            | "unsignedlong"
+            | "unsignedlonglong"
+            | "size_t"
+    )
 }
 
 fn callback_state_name(usage: &CallbackUsage<'_>) -> String {
@@ -1710,6 +1765,36 @@ mod tests {
         assert_eq!(
             go_overload_token(&model_type("model_pointer", "ThingModel")),
             "ThingModelPtr"
+        );
+    }
+
+    #[test]
+    fn overload_tokens_preserve_typedef_identity_for_alias_backed_scalars() {
+        assert_eq!(
+            go_overload_token(&primitive_type("time_t", "int64_t")),
+            "TimeT"
+        );
+        assert_eq!(
+            go_overload_token(&primitive_type("uint32", "uint32_t")),
+            "Uint32"
+        );
+        assert_eq!(
+            go_overload_token(&IrType {
+                kind: "c_string".to_string(),
+                cpp_type: "NPCSTR".to_string(),
+                c_type: "const char*".to_string(),
+                handle: None,
+            }),
+            "NPCSTR"
+        );
+        assert_eq!(
+            go_overload_token(&IrType {
+                kind: "string".to_string(),
+                cpp_type: "NPSTR".to_string(),
+                c_type: "char*".to_string(),
+                handle: None,
+            }),
+            "NPSTR"
         );
     }
 }
