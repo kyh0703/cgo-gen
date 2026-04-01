@@ -47,7 +47,14 @@ pub struct KnownModelField {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct InputConfig {
+    #[serde(default)]
     pub headers: Vec<PathBuf>,
+    #[serde(default)]
+    pub dirs: Vec<PathBuf>,
+    #[serde(default)]
+    pub header_dirs: Vec<PathBuf>,
+    #[serde(default)]
+    pub translation_units: Vec<PathBuf>,
     #[serde(default)]
     pub compile_commands: Option<PathBuf>,
     #[serde(default)]
@@ -248,6 +255,94 @@ fn normalize_clang_config_path(path: &Path) -> String {
     }
 }
 
+fn resolve_path(path: &mut PathBuf, base_dir: &Path) {
+    if path.is_relative() {
+        *path = base_dir.join(&*path);
+    }
+    if let Ok(canonical) = path.canonicalize() {
+        *path = canonical;
+    }
+}
+
+fn push_unique_path(paths: &mut Vec<PathBuf>, value: PathBuf) {
+    if !paths.iter().any(|candidate| candidate == &value) {
+        paths.push(value);
+    }
+}
+
+fn is_supported_header_path(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|value| value.to_str()),
+        Some("h" | "hh" | "hpp" | "hxx")
+    )
+}
+
+fn is_supported_translation_unit_path(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|value| value.to_str()),
+        Some("cc" | "cpp" | "cxx")
+    )
+}
+
+fn collect_headers_from_dir(dir: &Path, output: &mut Vec<PathBuf>) -> Result<()> {
+    if !dir.exists() {
+        bail!("header directory not found: {}", dir.display());
+    }
+    if !dir.is_dir() {
+        bail!("header_dirs entry must be a directory: {}", dir.display());
+    }
+
+    let mut entries = fs::read_dir(dir)
+        .with_context(|| format!("failed to read header directory: {}", dir.display()))?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .with_context(|| format!("failed to list header directory: {}", dir.display()))?;
+    entries.sort_by_key(|entry| entry.path());
+
+    for entry in entries {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_headers_from_dir(&path, output)?;
+            continue;
+        }
+        if !is_supported_header_path(&path) {
+            continue;
+        }
+        let canonical = path.canonicalize().unwrap_or(path);
+        push_unique_path(output, canonical);
+    }
+
+    Ok(())
+}
+
+fn collect_translation_units_from_dir(dir: &Path, output: &mut Vec<PathBuf>) -> Result<()> {
+    if !dir.exists() {
+        bail!("input.dirs entry not found: {}", dir.display());
+    }
+    if !dir.is_dir() {
+        bail!("input.dirs entry must be a directory: {}", dir.display());
+    }
+
+    let mut entries = fs::read_dir(dir)
+        .with_context(|| format!("failed to read input directory: {}", dir.display()))?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .with_context(|| format!("failed to list input directory: {}", dir.display()))?;
+    entries.sort_by_key(|entry| entry.path());
+
+    for entry in entries {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_translation_units_from_dir(&path, output)?;
+            continue;
+        }
+        if !is_supported_translation_unit_path(&path) {
+            continue;
+        }
+        let canonical = path.canonicalize().unwrap_or(path);
+        push_unique_path(output, canonical);
+    }
+
+    Ok(())
+}
 impl Config {
     pub fn load(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
@@ -262,6 +357,14 @@ impl Config {
 
     pub fn compile_commands_path(&self) -> Option<PathBuf> {
         self.input.compile_commands.clone()
+    }
+
+    pub fn parse_entries(&self) -> Vec<PathBuf> {
+        if self.input.translation_units.is_empty() {
+            self.input.headers.clone()
+        } else {
+            self.input.translation_units.clone()
+        }
     }
 
     pub fn uses_default_output_names(&self) -> bool {
@@ -287,6 +390,32 @@ impl Config {
                 *header = canonical;
             }
         }
+        for dir in &mut self.input.dirs {
+            resolve_path(dir, base_dir);
+        }
+        for header_dir in &mut self.input.header_dirs {
+            resolve_path(header_dir, base_dir);
+        }
+        for entry in &mut self.input.translation_units {
+            resolve_path(entry, base_dir);
+        }
+        let mut expanded_headers = Vec::new();
+        for header in &self.input.headers {
+            push_unique_path(&mut expanded_headers, header.clone());
+        }
+        let mut expanded_translation_units = Vec::new();
+        for entry in &self.input.translation_units {
+            push_unique_path(&mut expanded_translation_units, entry.clone());
+        }
+        for dir in &self.input.dirs {
+            collect_headers_from_dir(dir, &mut expanded_headers)?;
+            collect_translation_units_from_dir(dir, &mut expanded_translation_units)?;
+        }
+        for header_dir in &self.input.header_dirs {
+            collect_headers_from_dir(header_dir, &mut expanded_headers)?;
+        }
+        self.input.headers = expanded_headers;
+        self.input.translation_units = expanded_translation_units;
         if let Some(compdb) = &mut self.input.compile_commands {
             if compdb.is_relative() {
                 *compdb = base_dir.join(&*compdb);
@@ -322,6 +451,14 @@ impl Config {
     fn validate(&self) -> Result<()> {
         if self.input.headers.is_empty() {
             bail!("config.input.headers must not be empty");
+        }
+        for entry in &self.input.translation_units {
+            if !entry.exists() {
+                bail!(
+                    "config.input.translation_units entry not found: {}",
+                    entry.display()
+                );
+            }
         }
         for header in &self.files.model {
             if !self
