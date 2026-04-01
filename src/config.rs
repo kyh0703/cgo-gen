@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 pub struct Config {
     #[serde(default)]
     pub version: Option<u32>,
+    #[serde(default)]
+    pub project_root: Option<PathBuf>,
     pub input: InputConfig,
     #[serde(default)]
     pub output: OutputConfig,
@@ -57,6 +59,8 @@ pub struct InputConfig {
     pub translation_units: Vec<PathBuf>,
     #[serde(default)]
     pub compile_commands: Option<PathBuf>,
+    #[serde(default)]
+    pub include_dirs: Vec<PathBuf>,
     #[serde(default)]
     pub clang_args: Vec<String>,
     #[serde(default)]
@@ -381,14 +385,17 @@ impl Config {
     }
 
     fn resolve_relative_paths(&mut self, config_path: &Path) -> Result<()> {
-        let base_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
+        let config_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
+        if let Some(project_root) = &mut self.project_root {
+            resolve_path(project_root, config_dir);
+        }
+        let base_dir = self.project_root.as_deref().unwrap_or(config_dir);
+
         for header in &mut self.input.headers {
-            if header.is_relative() {
-                *header = base_dir.join(&*header);
-            }
-            if let Ok(canonical) = header.canonicalize() {
-                *header = canonical;
-            }
+            resolve_path(header, base_dir);
+        }
+        for header_dir in &mut self.input.header_dirs {
+            resolve_path(header_dir, base_dir);
         }
         for dir in &mut self.input.dirs {
             resolve_path(dir, base_dir);
@@ -417,32 +424,45 @@ impl Config {
         self.input.headers = expanded_headers;
         self.input.translation_units = expanded_translation_units;
         if let Some(compdb) = &mut self.input.compile_commands {
-            if compdb.is_relative() {
-                *compdb = base_dir.join(&*compdb);
-            }
-            if let Ok(canonical) = compdb.canonicalize() {
-                *compdb = canonical;
-            }
+            resolve_path(compdb, base_dir);
+        }
+        for include_dir in &mut self.input.include_dirs {
+            resolve_path(include_dir, base_dir);
         }
         resolve_relative_clang_args(&mut self.input.clang_args, base_dir);
+        if !self.input.include_dirs.is_empty() {
+            let mut include_args = self
+                .input
+                .include_dirs
+                .iter()
+                .map(|path| format!("-I{}", normalize_clang_config_path(path)))
+                .collect::<Vec<_>>();
+            include_args.extend(self.input.clang_args.clone());
+            self.input.clang_args = include_args;
+        }
         for header in &mut self.files.model {
-            if header.is_relative() {
-                *header = base_dir.join(&*header);
-            }
-            if let Ok(canonical) = header.canonicalize() {
-                *header = canonical;
-            }
+            resolve_path(header, base_dir);
         }
         for header in &mut self.files.facade {
-            if header.is_relative() {
-                *header = base_dir.join(&*header);
-            }
-            if let Ok(canonical) = header.canonicalize() {
-                *header = canonical;
-            }
+            resolve_path(header, base_dir);
         }
         if self.output.dir.is_relative() {
             self.output.dir = base_dir.join(&self.output.dir);
+        }
+        if self.files.model.is_empty() && !self.files.facade.is_empty() {
+            self.files.model = self
+                .input
+                .headers
+                .iter()
+                .filter(|header| {
+                    !self
+                        .files
+                        .facade
+                        .iter()
+                        .any(|candidate| candidate == *header)
+                })
+                .cloned()
+                .collect();
         }
         self.apply_output_defaults();
         Ok(())

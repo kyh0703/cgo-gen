@@ -3,7 +3,11 @@ use std::{env, fs, path::Path};
 use c_go::config::{Config, HeaderRole};
 
 fn normalize_expected_path(path: &Path) -> String {
-    let value = path.canonicalize().unwrap().display().to_string();
+    let value = path
+        .canonicalize()
+        .unwrap_or_else(|_| path.to_path_buf())
+        .display()
+        .to_string();
     if cfg!(windows) {
         value.strip_prefix(r"\\?\").unwrap_or(&value).to_string()
     } else {
@@ -140,6 +144,64 @@ output:
     );
     assert_eq!(
         config.header_role(&config.input.headers[1]),
+        HeaderRole::Facade
+    );
+}
+
+#[test]
+fn config_infers_model_headers_from_facade_only_classification() {
+    let mut dir = env::temp_dir();
+    dir.push(format!(
+        "c_go_config_facade_only_inference_test_{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("include")).unwrap();
+    fs::write(dir.join("include/model.hpp"), "class ModelThing {};").unwrap();
+    fs::write(dir.join("include/facade.hpp"), "int init();").unwrap();
+
+    let config_path = dir.join("cppgo-wrap.yaml");
+    fs::write(
+        &config_path,
+        r#"
+version: 1
+input:
+  header_dirs:
+    - include
+files:
+  facade:
+    - include/facade.hpp
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(&config_path).unwrap();
+
+    assert_eq!(config.input.headers.len(), 2);
+    assert_eq!(config.files.model.len(), 1);
+    assert_eq!(config.files.facade.len(), 1);
+    assert!(
+        config
+            .input
+            .headers
+            .iter()
+            .any(|path| path.ends_with("model.hpp"))
+    );
+    assert!(
+        config
+            .input
+            .headers
+            .iter()
+            .any(|path| path.ends_with("facade.hpp"))
+    );
+    assert_eq!(
+        config.header_role(&config.files.model[0]),
+        HeaderRole::Model
+    );
+    assert_eq!(
+        config.header_role(&config.files.facade[0]),
         HeaderRole::Facade
     );
 }
