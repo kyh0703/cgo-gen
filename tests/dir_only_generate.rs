@@ -68,7 +68,7 @@ files:
     generator::generate_all(&config, true).unwrap();
 
     let raw_dir = root.join("gen/raw");
-    let go_dir = root.join("gen/go");
+    let go_dir = root.join("gen");
 
     assert!(raw_dir.join("thing_model_wrapper.h").exists());
     assert!(raw_dir.join("api_wrapper.h").exists());

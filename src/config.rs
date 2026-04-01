@@ -317,11 +317,11 @@ impl Config {
     }
 
     pub fn go_output_dir(&self) -> PathBuf {
-        self.output.dir.join("go")
+        self.output.dir.clone()
     }
 
     pub fn raw_include_for_go(&self, header: &str) -> String {
-        format!("../raw/{header}")
+        format!("raw/{header}")
     }
 
     fn apply_output_defaults(&mut self) {

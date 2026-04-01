@@ -67,7 +67,7 @@ naming:
 
     let output_dir = root.join("gen");
     let raw_dir = output_dir.join("raw");
-    let go_dir = output_dir.join("go");
+    let go_dir = output_dir.clone();
 
     let alpha_header = raw_dir.join("alpha_thing_wrapper.h");
     let alpha_source = raw_dir.join("alpha_thing_wrapper.cpp");
@@ -156,8 +156,8 @@ naming:
     generator::generate_all(&config, true).unwrap();
 
     let output_dir = root.join("gen");
-    let model_go = fs::read_to_string(output_dir.join("go/model_thing_wrapper.go")).unwrap();
-    let facade_go = fs::read_to_string(output_dir.join("go/facade_thing_wrapper.go")).unwrap();
+    let model_go = fs::read_to_string(output_dir.join("model_thing_wrapper.go")).unwrap();
+    let facade_go = fs::read_to_string(output_dir.join("facade_thing_wrapper.go")).unwrap();
 
     assert!(model_go.contains("type ModelThing struct {"));
     assert!(model_go.contains("func (m *ModelThing) GetValue() int {"));
@@ -200,7 +200,7 @@ naming:
     generator::generate_all(&config, true).unwrap();
 
     let output_dir = root.join("gen");
-    let go_models = fs::read_to_string(output_dir.join("go/model_types_wrapper.go")).unwrap();
+    let go_models = fs::read_to_string(output_dir.join("model_types_wrapper.go")).unwrap();
 
     assert!(go_models.contains("type Mode int64"));
     assert!(go_models.contains("MODE_A Mode = 0"));
@@ -242,7 +242,7 @@ naming:
     let config = Config::load(&config_path).unwrap();
     generator::generate_all(&config, true).unwrap();
 
-    let go_path = root.join("gen/go/thing_wrapper.go");
+    let go_path = root.join("gen/thing_wrapper.go");
     assert!(go_path.exists(), "supported headers should emit unified Go files");
     let go = fs::read_to_string(go_path).unwrap();
     assert!(go.contains("type Thing struct {"));
