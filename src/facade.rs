@@ -1,13 +1,10 @@
-use std::{
-    collections::BTreeMap,
-    path::Path,
-};
+﻿use std::{collections::BTreeMap, path::Path};
 
 use anyhow::{Result, bail};
 
 use crate::{
-    config::Config,
-    ir::{IrFunction, IrModule, IrType},
+    config::{Config, HeaderRole},
+    ir::{IrCallback, IrFunction, IrModule, IrType},
     model::GeneratedGoFile,
 };
 
@@ -17,11 +14,32 @@ struct AnalyzedFacadeClass<'a> {
     handle_name: String,
     constructor: &'a IrFunction,
     destructor: &'a IrFunction,
-    general_methods: Vec<&'a IrFunction>,
+    methods: Vec<&'a IrFunction>,
+}
+
+#[derive(Debug, Default)]
+struct RenderedCallPrep {
+    setup_lines: Vec<String>,
+    defer_lines: Vec<String>,
+    post_call_lines: Vec<String>,
+    args: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct CallbackUsage<'a> {
+    callback: &'a IrCallback,
+    function: &'a IrFunction,
+    param_index: usize,
 }
 
 pub fn render_go_facade(config: &Config, ir: &IrModule) -> Result<Vec<GeneratedGoFile>> {
-    let enums = ir.enums.iter().collect::<Vec<_>>();
+    let role = current_header(config)
+        .map(|header| config.header_role(header))
+        .unwrap_or(HeaderRole::Unclassified);
+    if role == HeaderRole::Model {
+        return Ok(Vec::new());
+    }
+
     let functions = ir
         .functions
         .iter()
@@ -29,8 +47,9 @@ pub fn render_go_facade(config: &Config, ir: &IrModule) -> Result<Vec<GeneratedG
         .filter(|function| free_function_supported(config, function))
         .collect::<Vec<_>>();
     let classes = collect_facade_classes(config, ir)?;
+    let callback_usages = collect_callback_usages(&functions, &classes, ir);
 
-    if functions.is_empty() && classes.is_empty() && enums.is_empty() {
+    if functions.is_empty() && classes.is_empty() {
         return Ok(Vec::new());
     }
 
@@ -38,12 +57,19 @@ pub fn render_go_facade(config: &Config, ir: &IrModule) -> Result<Vec<GeneratedG
 
     Ok(vec![GeneratedGoFile {
         filename: config.go_filename(""),
-        contents: render_go_facade_file(config, &enums, &functions, &classes),
+        contents: render_go_facade_file(config, &functions, &classes, &callback_usages),
     }])
 }
 
+fn current_header(config: &Config) -> Option<&std::path::Path> {
+    config
+        .target_header
+        .as_deref()
+        .or_else(|| config.input.headers.first().map(|path| path.as_path()))
+}
+
 fn collect_facade_classes<'a>(
-    _config: &Config,
+    config: &Config,
     ir: &'a IrModule,
 ) -> Result<Vec<AnalyzedFacadeClass<'a>>> {
     let mut methods_by_owner = BTreeMap::<&str, Vec<&IrFunction>>::new();
@@ -85,29 +111,20 @@ fn collect_facade_classes<'a>(
 
     let mut classes = Vec::new();
     for (owner, methods) in methods_by_owner {
-        let general_methods = methods
-            .into_iter()
-            .filter(|function| general_method_supported(function))
-            .collect::<Vec<_>>();
-
-        if general_methods.is_empty() {
-            continue;
-        }
-
-        ensure_unique_method_exports(owner, &general_methods)?;
+        ensure_unique_method_exports(owner, &methods)?;
 
         let Some(constructor) = constructors.get(owner).copied() else {
-            continue;
+            bail!("facade class `{owner}` has renderable methods but no constructor wrapper");
         };
         if !constructor
             .params
             .iter()
             .all(|param| go_param_supported(config, &param.ty))
         {
-            continue;
+            bail!("facade class `{owner}` constructor params are not supported yet");
         }
         let Some(destructor) = destructors.get(owner).copied() else {
-            continue;
+            bail!("facade class `{owner}` has renderable methods but no destructor wrapper");
         };
 
         classes.push(AnalyzedFacadeClass {
@@ -115,7 +132,7 @@ fn collect_facade_classes<'a>(
             handle_name: format!("{}Handle", flatten_qualified_cpp_name(owner)),
             constructor,
             destructor,
-            general_methods,
+            methods,
         });
     }
 
@@ -124,12 +141,11 @@ fn collect_facade_classes<'a>(
 
 fn render_go_facade_file(
     config: &Config,
-    enums: &[&crate::ir::IrEnum],
     functions: &[&IrFunction],
     classes: &[AnalyzedFacadeClass<'_>],
+    callback_usages: &[CallbackUsage<'_>],
 ) -> String {
     let package_name = go_package_name(&config.output.dir);
-    let requires_cgo = !functions.is_empty() || !classes.is_empty();
     let requires_errors = !classes.is_empty()
         || functions
             .iter()
@@ -150,28 +166,36 @@ fn render_go_facade_file(
                     .iter()
                     .any(|function| has_string_params(function.params.iter().skip(1)))
         });
+    let requires_sync = !callback_usages.is_empty();
 
     let mut out = String::new();
     out.push_str(&format!("package {}\n\n", package_name));
-    if requires_cgo {
-        out.push_str("/*\n");
-        out.push_str("#include <stdlib.h>\n");
-        out.push_str(&format!(
-            "#include \"{}\"\n",
-            config.raw_include_for_go(&config.output.header)
-        ));
-        out.push_str("*/\n");
-        out.push_str("import \"C\"\n\n");
-    }
+    out.push_str("/*\n");
+    out.push_str("#include <stdlib.h>\n");
+    out.push_str(&format!(
+        "#include \"{}\"\n",
+        config.raw_include_for_go(&config.output.header)
+    ));
+    out.push_str("*/\n");
+    out.push_str("import \"C\"\n\n");
     if requires_errors {
         out.push_str("import \"errors\"\n\n");
     }
     if requires_unsafe {
         out.push_str("import \"unsafe\"\n\n");
     }
+    if requires_sync {
+        out.push_str("import \"sync\"\n\n");
+    }
 
-    for item in enums {
-        out.push_str(&render_go_enum(item));
+    for callback in used_callbacks(callback_usages) {
+        out.push_str(&render_callback_type(callback));
+        out.push('\n');
+    }
+    for usage in callback_usages {
+        out.push_str(&render_callback_registry(usage));
+        out.push('\n');
+        out.push_str(&render_callback_export(usage));
         out.push('\n');
     }
 
@@ -196,16 +220,150 @@ fn render_go_facade_file(
     out
 }
 
-fn render_go_enum(item: &crate::ir::IrEnum) -> String {
-    let mut out = String::new();
-    let name = leaf_cpp_name(&item.cpp_name);
-    out.push_str(&format!("type {} int64\n\n", name));
-    out.push_str("const (\n");
-    for variant in &item.variants {
-        let value = variant.value.as_deref().unwrap_or("0");
-        out.push_str(&format!("    {} {} = {}\n", variant.name, name, value));
+fn collect_callback_usages<'a>(
+    functions: &[&'a IrFunction],
+    classes: &[AnalyzedFacadeClass<'a>],
+    ir: &'a IrModule,
+) -> Vec<CallbackUsage<'a>> {
+    let callbacks = ir
+        .callbacks
+        .iter()
+        .map(|callback| (callback.name.as_str(), callback))
+        .collect::<BTreeMap<_, _>>();
+    let mut usages = Vec::new();
+
+    for function in functions {
+        usages.extend(callback_usages_for_function(function, &callbacks));
     }
-    out.push_str(")\n");
+    for class in classes {
+        for function in &class.methods {
+            usages.extend(callback_usages_for_function(function, &callbacks));
+        }
+    }
+
+    usages
+}
+
+fn callback_usages_for_function<'a>(
+    function: &'a IrFunction,
+    callbacks: &BTreeMap<&str, &'a IrCallback>,
+) -> Vec<CallbackUsage<'a>> {
+    function
+        .params
+        .iter()
+        .enumerate()
+        .filter_map(|(index, param)| {
+            (param.ty.kind == "callback").then(|| {
+                callbacks
+                    .get(param.ty.cpp_type.as_str())
+                    .map(|callback| CallbackUsage {
+                        callback,
+                        function,
+                        param_index: index,
+                    })
+            })?
+        })
+        .collect()
+}
+
+fn used_callbacks<'a>(usages: &'a [CallbackUsage<'a>]) -> Vec<&'a IrCallback> {
+    let mut seen = BTreeMap::<String, &'a IrCallback>::new();
+    for usage in usages {
+        seen.entry(usage.callback.name.clone())
+            .or_insert(usage.callback);
+    }
+    seen.into_values().collect()
+}
+
+fn render_callback_type(callback: &IrCallback) -> String {
+    let params = callback
+        .params
+        .iter()
+        .map(|param| {
+            format!(
+                "{} {}",
+                param.name,
+                callback_go_type(&param.ty)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let returns = if callback.returns.kind == "void" {
+        String::new()
+    } else {
+        format!(" {}", callback_go_type(&callback.returns))
+    };
+    format!("type {} func({}){}\n", callback.name, params, returns)
+}
+
+fn render_callback_registry(usage: &CallbackUsage<'_>) -> String {
+    format!(
+        "var {} struct {{\n    mu sync.RWMutex\n    fn {}\n}}\n",
+        callback_state_name(usage),
+        usage.callback.name
+    )
+}
+
+fn render_callback_export(usage: &CallbackUsage<'_>) -> String {
+    let params = usage
+        .callback
+        .params
+        .iter()
+        .map(|param| {
+            format!(
+                "{} {}",
+                param.name,
+                callback_cgo_param_type(&param.ty)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut out = String::new();
+    out.push_str(&format!("//export {}\n", callback_go_export_name(usage)));
+    out.push_str(&format!(
+        "func {}({})",
+        callback_go_export_name(usage),
+        params
+    ));
+    if usage.callback.returns.kind != "void" {
+        out.push_str(&format!(
+            " {}",
+            callback_cgo_return_type(&usage.callback.returns)
+        ));
+    }
+    out.push_str(" {\n");
+    out.push_str(&format!(
+        "    {}.mu.RLock()\n    fn := {}.fn\n    {}.mu.RUnlock()\n    if fn == nil {{\n",
+        callback_state_name(usage),
+        callback_state_name(usage),
+        callback_state_name(usage)
+    ));
+    if usage.callback.returns.kind == "void" {
+        out.push_str("        return\n");
+    } else {
+        out.push_str(&format!(
+            "        return {}\n",
+            zero_value_for_go_type(go_type_for_ir(&usage.callback.returns).unwrap_or("int"))
+        ));
+    }
+    out.push_str("    }\n");
+    let args = usage
+        .callback
+        .params
+        .iter()
+        .map(|param| render_callback_go_arg(&param.ty, &param.name))
+        .collect::<Vec<_>>()
+        .join(", ");
+    if usage.callback.returns.kind == "void" {
+        out.push_str(&format!("    fn({})\n", args));
+    } else {
+        out.push_str(&format!(
+            "    return {}(fn({}))\n",
+            callback_cgo_return_type(&usage.callback.returns),
+            args
+        ));
+    }
+    out.push_str("}\n");
     out
 }
 
@@ -265,6 +423,9 @@ fn render_general_api_method(
     class: &AnalyzedFacadeClass<'_>,
     function: &IrFunction,
 ) -> String {
+    if has_callback_param(function.params.iter().skip(1)) {
+        return render_callback_method(config, class, function);
+    }
     let receiver = receiver_name(&class.go_name);
     let method_params = function.params.iter().skip(1).collect::<Vec<_>>();
     let params = render_param_list(config, &method_params);
@@ -305,7 +466,7 @@ fn render_general_api_method(
         }
         _ => out.push_str(&format!(
             "        return {}\n",
-            zero_value_for_go_type(&go_type_for_ir(&function.returns).unwrap())
+            zero_value_for_go_type(go_type_for_ir(&function.returns).unwrap())
         )),
     }
     out.push_str("    }\n");
@@ -352,16 +513,18 @@ fn render_general_api_method(
             );
         }
         _ => {
-            out.push_str(&format!("    result := {}\n", call));
-            for line in prep.post_call_lines {
-                out.push_str("    ");
-                out.push_str(&line);
-                out.push('\n');
+            let go_type = go_type_for_ir(&function.returns).unwrap();
+            if go_type == "bool" {
+                out.push_str(&format!("    result := {}\n", call));
+                for line in prep.post_call_lines {
+                    out.push_str("    ");
+                    out.push_str(&line);
+                    out.push('\n');
+                }
+                out.push_str("    return bool(result)\n");
+            } else {
+                out.push_str(&format!("    return {}({})\n", go_type, call));
             }
-            out.push_str(&format!(
-                "    return {}(result)\n",
-                go_type_for_ir(&function.returns).unwrap(),
-            ));
         }
     }
     out.push_str("}\n");
@@ -369,6 +532,9 @@ fn render_general_api_method(
 }
 
 fn render_free_function(config: &Config, function: &IrFunction) -> String {
+    if has_callback_param(function.params.iter()) {
+        return render_callback_free_function(config, function);
+    }
     let params_list = function.params.iter().collect::<Vec<_>>();
     let params = render_param_list(config, &params_list);
     let prep = render_call_prep(config, &params_list);
@@ -421,23 +587,186 @@ fn render_free_function(config: &Config, function: &IrFunction) -> String {
             out
         }
         _ => {
+            let go_type = go_type_for_ir(&function.returns).unwrap();
             let mut out = format!(
                 "func {}({}) {} {{\n",
                 go_name,
                 params,
-                go_type_for_ir(&function.returns).unwrap()
+                go_type
             );
             out.push_str(&indented_lines(&prep.setup_lines));
             out.push_str(&indented_lines(&prep.defer_lines));
-            out.push_str(&format!("    result := {}\n", call));
-            out.push_str(&indented_lines(&prep.post_call_lines));
-            out.push_str(&format!(
-                "    return {}(result)\n}}\n",
-                go_type_for_ir(&function.returns).unwrap()
-            ));
+            if go_type == "bool" {
+                out.push_str(&format!("    result := {}\n", call));
+                out.push_str(&indented_lines(&prep.post_call_lines));
+                out.push_str("    return bool(result)\n}\n");
+            } else {
+                out.push_str(&format!("    return {}({})\n}}\n", go_type, call));
+            }
             out
         }
     }
+}
+
+fn render_callback_method(
+    config: &Config,
+    class: &AnalyzedFacadeClass<'_>,
+    function: &IrFunction,
+) -> String {
+    let receiver = receiver_name(&class.go_name);
+    let method_params = function.params.iter().skip(1).collect::<Vec<_>>();
+    let params = render_param_list(config, &method_params);
+    let prep = render_callback_call_prep(config, function, &method_params);
+    let call = format!(
+        "C.{}_bridge({})",
+        function.name,
+        std::iter::once(format!("{receiver}.ptr"))
+            .chain(prep.args)
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+
+    let mut out = String::new();
+    out.push_str(&format!(
+        "func ({} *{}) {}({})",
+        receiver,
+        class.go_name,
+        go_method_export_name(function),
+        params
+    ));
+    match function.returns.kind.as_str() {
+        "void" => out.push_str(" {\n"),
+        "string" | "c_string" => out.push_str(" (string, error) {\n"),
+        _ => out.push_str(&format!(
+            " {} {{\n",
+            go_type_for_ir(&function.returns).unwrap()
+        )),
+    }
+    out.push_str(&format!(
+        "    if {} == nil || {}.ptr == nil {{\n",
+        receiver, receiver
+    ));
+    match function.returns.kind.as_str() {
+        "void" => out.push_str("        return\n"),
+        "string" | "c_string" => {
+            out.push_str("        return \"\", errors.New(\"facade receiver is nil\")\n")
+        }
+        _ => out.push_str(&format!(
+            "        return {}\n",
+            zero_value_for_go_type(go_type_for_ir(&function.returns).unwrap())
+        )),
+    }
+    out.push_str("    }\n");
+    out.push_str(&indented_lines(&prep.setup_lines));
+    out.push_str(&indented_lines(&prep.defer_lines));
+    match function.returns.kind.as_str() {
+        "void" => out.push_str(&format!("    {}\n", call)),
+        "string" => {
+            out.push_str(&format!("    raw := {}\n", call));
+            out.push_str(&format!(
+                "    if raw == nil {{\n        return \"\", errors.New(\"wrapper returned nil string\")\n    }}\n    defer C.{}_string_free(raw)\n    return C.GoString(raw), nil\n",
+                config.naming.prefix
+            ));
+        }
+        "c_string" => {
+            out.push_str(&format!("    raw := {}\n", call));
+            out.push_str(
+                "    if raw == nil {\n        return \"\", errors.New(\"wrapper returned nil string\")\n    }\n    return C.GoString(raw), nil\n",
+            );
+        }
+        _ => {
+            out.push_str(&format!("    result := {}\n", call));
+            out.push_str(&format!(
+                "    return {}(result)\n",
+                go_type_for_ir(&function.returns).unwrap()
+            ));
+        }
+    }
+    out.push_str("}\n");
+    out
+}
+
+fn render_callback_free_function(config: &Config, function: &IrFunction) -> String {
+    let params_list = function.params.iter().collect::<Vec<_>>();
+    let params = render_param_list(config, &params_list);
+    let prep = render_callback_call_prep(config, function, &params_list);
+    let call = format!("C.{}_bridge({})", function.name, prep.args.join(", "));
+    let go_name = go_facade_export_name(function);
+
+    let mut out = format!("func {}({})", go_name, params);
+    match function.returns.kind.as_str() {
+        "void" => out.push_str(" {\n"),
+        "string" | "c_string" => out.push_str(" (string, error) {\n"),
+        _ => out.push_str(&format!(
+            " {} {{\n",
+            go_type_for_ir(&function.returns).unwrap()
+        )),
+    }
+    out.push_str(&indented_lines(&prep.setup_lines));
+    out.push_str(&indented_lines(&prep.defer_lines));
+    match function.returns.kind.as_str() {
+        "void" => out.push_str(&format!("    {}\n", call)),
+        "string" => {
+            out.push_str(&format!("    raw := {}\n", call));
+            out.push_str(&format!(
+                "    if raw == nil {{\n        return \"\", errors.New(\"wrapper returned nil string\")\n    }}\n    defer C.{}_string_free(raw)\n    return C.GoString(raw), nil\n",
+                config.naming.prefix
+            ));
+        }
+        "c_string" => {
+            out.push_str(&format!("    raw := {}\n", call));
+            out.push_str(
+                "    if raw == nil {\n        return \"\", errors.New(\"wrapper returned nil string\")\n    }\n    return C.GoString(raw), nil\n",
+            );
+        }
+        _ => {
+            out.push_str(&format!("    result := {}\n", call));
+            out.push_str(&format!(
+                "    return {}(result)\n",
+                go_type_for_ir(&function.returns).unwrap()
+            ));
+        }
+    }
+    out.push_str("}\n");
+    out
+}
+
+fn render_callback_call_prep(
+    config: &Config,
+    function: &IrFunction,
+    params: &[&crate::ir::IrParam],
+) -> RenderedCallPrep {
+    let mut prep = RenderedCallPrep::default();
+
+    for (index, param) in params.iter().enumerate() {
+        if param.ty.kind == "callback" {
+            let state = callback_state_name_from_function(function, index);
+            prep.setup_lines.push(format!("{state}.mu.Lock()"));
+            prep.setup_lines
+                .push(format!("{state}.fn = {}", param.name));
+            prep.setup_lines.push(format!("{state}.mu.Unlock()"));
+            prep.args.push(format!("C.bool({} != nil)", param.name));
+            continue;
+        }
+
+        match param.ty.kind.as_str() {
+            "string" | "c_string" => {
+                let c_name = format!("cArg{index}");
+                prep.setup_lines
+                    .push(format!("{c_name} := C.CString({})", param.name));
+                prep.defer_lines
+                    .push(format!("defer C.free(unsafe.Pointer({c_name}))"));
+                prep.args.push(c_name);
+            }
+            "reference" => render_reference_arg(&mut prep, &param.ty, &param.name, index),
+            "model_reference" | "model_pointer" => {
+                render_model_arg(config, &mut prep, &param.ty, &param.name, index)
+            }
+            _ => prep.args.push(render_c_arg(&param.ty, &param.name)),
+        }
+    }
+
+    prep
 }
 
 fn render_param_list(config: &Config, params: &[&crate::ir::IrParam]) -> String {
@@ -469,8 +798,7 @@ fn render_call_prep(config: &Config, params: &[&crate::ir::IrParam]) -> Rendered
             }
             "reference" => render_reference_arg(&mut prep, &param.ty, &param.name, index),
             "model_reference" | "model_pointer" => {
-                prep.args
-                    .push(render_model_handle_arg(config, &param.ty, &param.name))
+                render_model_arg(config, &mut prep, &param.ty, &param.name, index)
             }
             _ => prep.args.push(render_c_arg(&param.ty, &param.name)),
         }
@@ -479,14 +807,12 @@ fn render_call_prep(config: &Config, params: &[&crate::ir::IrParam]) -> Rendered
     prep
 }
 
-fn render_model_handle_arg(config: &Config, ty: &IrType, name: &str) -> String {
-    let projection = config
-        .known_model_projection(&ty.cpp_type)
-        .expect("model parameters must be filtered before rendering");
+fn render_model_handle_arg(config: &Config, ty: &IrType, name: &str) -> Option<String> {
+    let projection = config.known_model_projection(&ty.cpp_type)?;
     if ty.kind == "model_pointer" {
-        format!("optional{}Handle({})", projection.go_name, name)
+        Some(format!("optional{}Handle({})", projection.go_name, name))
     } else {
-        format!("require{}Handle({})", projection.go_name, name)
+        Some(format!("require{}Handle({})", projection.go_name, name))
     }
 }
 
@@ -523,6 +849,37 @@ fn has_string_params<'a>(mut params: impl Iterator<Item = &'a crate::ir::IrParam
     params.any(|param| matches!(param.ty.kind.as_str(), "string" | "c_string"))
 }
 
+fn render_model_arg(
+    config: &Config,
+    prep: &mut RenderedCallPrep,
+    ty: &IrType,
+    name: &str,
+    index: usize,
+) {
+    if let Some(handle_arg) = render_model_handle_arg(config, ty, name) {
+        prep.args.push(handle_arg);
+        return;
+    }
+    let handle = ty.handle.as_deref().unwrap_or("void");
+    let c_name = format!("cArg{index}");
+    prep.setup_lines.push(format!("var {c_name} *C.{handle}"));
+    if ty.kind == "model_reference" {
+        prep.setup_lines.push(format!("if {name} == nil {{"));
+        prep.setup_lines.push(
+            "    panic(\"reference facade/model argument cannot be nil\")".to_string(),
+        );
+        prep.setup_lines.push("}".to_string());
+    }
+    prep.setup_lines.push(format!("if {name} != nil {{"));
+    prep.setup_lines.push(format!("    {c_name} = {name}.ptr"));
+    prep.setup_lines.push("}".to_string());
+    prep.args.push(c_name);
+}
+
+fn has_callback_param<'a>(mut params: impl Iterator<Item = &'a crate::ir::IrParam>) -> bool {
+    params.any(|param| param.ty.kind == "callback")
+}
+
 fn ensure_unique_go_exports(functions: &[&IrFunction]) -> Result<()> {
     let mut by_export = BTreeMap::<String, Vec<String>>::new();
     for function in functions {
@@ -553,10 +910,7 @@ fn ensure_unique_go_exports(functions: &[&IrFunction]) -> Result<()> {
     bail!("facade export collision detected: {detail}");
 }
 
-fn ensure_unique_method_exports(
-    owner: &str,
-    general_methods: &[&IrFunction],
-) -> Result<()> {
+fn ensure_unique_method_exports(owner: &str, methods: &[&IrFunction]) -> Result<()> {
     let mut by_export = BTreeMap::<String, Vec<String>>::new();
     for function in methods {
         by_export
@@ -591,82 +945,34 @@ fn free_function_supported(config: &Config, function: &IrFunction) -> bool {
         && function
             .params
             .iter()
-            .all(|param| go_param_supported(&param.ty))
+            .all(|param| go_param_supported(config, &param.ty))
 }
 
-fn general_method_supported(function: &IrFunction) -> bool {
+fn method_supported(config: &Config, function: &IrFunction) -> bool {
     go_return_supported(&function.returns)
         && function
-        .params
-        .iter()
-        .skip(1)
-        .all(|param| go_param_supported(&param.ty))
+            .params
+            .iter()
+            .skip(1)
+            .all(|param| go_param_supported(config, &param.ty))
 }
 
-fn render_c_arg(ty: &IrType, name: &str) -> String {
-    format!("{}({})", cgo_cast_type(ty), name)
+fn go_param_supported(config: &Config, ty: &IrType) -> bool {
+    go_param_type(config, ty).is_some()
 }
 
-fn render_call_prep(params: &[&crate::ir::IrParam]) -> (Vec<String>, Vec<String>, Vec<String>) {
-    let mut setup_lines = Vec::new();
-    let mut cleanup_lines = Vec::new();
-    let mut args = Vec::new();
-
-    for (index, param) in params.iter().enumerate() {
-        match param.ty.kind.as_str() {
-            "string" | "c_string" => {
-                let c_name = format!("cArg{index}");
-                setup_lines.push(format!("{c_name} := C.CString({})", param.name));
-                cleanup_lines.push(format!("defer C.free(unsafe.Pointer({c_name}))"));
-                args.push(c_name);
-            }
-            "model_pointer" => {
-                let c_name = format!("cArg{index}");
-                let handle = param.ty.handle.as_deref().unwrap_or("void");
-                setup_lines.push(format!("var {c_name} *C.{handle}"));
-                setup_lines.push(format!("if {} != nil {{", param.name));
-                setup_lines.push(format!("    {c_name} = {}.ptr", param.name));
-                setup_lines.push("}".to_string());
-                args.push(c_name);
-            }
-            "model_reference" => {
-                let c_name = format!("cArg{index}");
-                let handle = param.ty.handle.as_deref().unwrap_or("void");
-                setup_lines.push(format!("if {} == nil {{", param.name));
-                setup_lines.push(
-                    "    panic(\"reference facade/model argument cannot be nil\")".to_string(),
-                );
-                setup_lines.push("}".to_string());
-                setup_lines.push(format!("var {c_name} *C.{handle}"));
-                setup_lines.push(format!("{c_name} = {}.ptr", param.name));
-                args.push(c_name);
-            }
-            _ => args.push(render_c_arg(&param.ty, &param.name)),
-        }
+fn go_param_type(config: &Config, ty: &IrType) -> Option<String> {
+    match ty.kind.as_str() {
+        "string" | "c_string" => Some("string".to_string()),
+        "primitive" => go_type_for_ir(ty).map(str::to_string),
+        "reference" => go_type_for_reference(ty).map(|go_type| format!("*{go_type}")),
+        "callback" => Some(leaf_cpp_name(&ty.cpp_type)),
+        "model_reference" | "model_pointer" => config
+            .known_model_projection(&ty.cpp_type)
+            .map(|projection| format!("*{}", projection.go_name))
+            .or_else(|| Some(format!("*{}", leaf_cpp_name(&base_model_cpp_type(&ty.cpp_type))))),
+        _ => None,
     }
-
-    (setup_lines, cleanup_lines, args)
-}
-
-fn indented_lines(lines: &[String]) -> String {
-    if lines.is_empty() {
-        return String::new();
-    }
-    lines
-        .iter()
-        .map(|line| format!("    {line}\n"))
-        .collect::<String>()
-}
-
-fn has_string_params<'a>(mut params: impl Iterator<Item = &'a crate::ir::IrParam>) -> bool {
-    params.any(|param| matches!(param.ty.kind.as_str(), "string" | "c_string"))
-}
-
-fn go_param_supported(ty: &IrType) -> bool {
-    matches!(ty.kind.as_str(), "string" | "c_string")
-        || (ty.kind == "primitive" && go_type_for_ir(ty).is_some())
-        || (ty.kind == "model_reference" && ty.handle.is_some())
-        || (ty.kind == "model_pointer" && ty.handle.is_some())
 }
 
 fn go_return_supported(ty: &IrType) -> bool {
@@ -685,53 +991,73 @@ fn zero_value_for_go_type(go_type: &str) -> &'static str {
     }
 }
 
-fn go_type_for_ir(ty: &IrType) -> Option<String> {
+fn go_type_for_ir(ty: &IrType) -> Option<&'static str> {
     match ty.kind.as_str() {
-        "string" | "c_string" => Some("string".to_string()),
+        "string" | "c_string" => Some("string"),
         "primitive" => match normalize_type_key(&ty.cpp_type).as_str() {
-            "bool" => Some("bool".to_string()),
-            "float" => Some("float32".to_string()),
-            "double" => Some("float64".to_string()),
-            "int8" | "int8_t" => Some("int8".to_string()),
-            "int16" | "int16_t" => Some("int16".to_string()),
-            "int32" | "int32_t" => Some("int32".to_string()),
-            "int64" | "int64_t" => Some("int64".to_string()),
-            "uint8" | "uint8_t" => Some("uint8".to_string()),
-            "uint16" | "uint16_t" => Some("uint16".to_string()),
-            "uint32" | "uint32_t" => Some("uint32".to_string()),
-            "uint64" | "uint64_t" => Some("uint64".to_string()),
-            "int" => Some("int".to_string()),
-            "short" => Some("int16".to_string()),
-            "long" => Some("int64".to_string()),
-            "size_t" => Some("uintptr".to_string()),
+            "bool" => Some("bool"),
+            "float" => Some("float32"),
+            "double" => Some("float64"),
+            "int8" | "int8_t" => Some("int8"),
+            "int16" | "int16_t" => Some("int16"),
+            "int32" | "int32_t" => Some("int32"),
+            "int64" | "int64_t" => Some("int64"),
+            "uint8" | "uint8_t" => Some("uint8"),
+            "uint16" | "uint16_t" => Some("uint16"),
+            "uint32" | "uint32_t" => Some("uint32"),
+            "uint64" | "uint64_t" => Some("uint64"),
+            "int" => Some("int"),
+            "short" => Some("int16"),
+            "long" => Some("int64"),
+            "size_t" => Some("uintptr"),
             _ => None,
         },
-        "model_pointer" => Some(format!("*{}", leaf_cpp_name(&base_model_cpp_type(&ty.cpp_type)))),
-        "model_reference" => Some(format!("*{}", leaf_cpp_name(&base_model_cpp_type(&ty.cpp_type)))),
         _ => None,
     }
 }
 
-fn cgo_cast_type(ty: &IrType) -> String {
-    if ty.kind == "model_pointer" {
-        return format!("*C.{}", ty.handle.as_deref().unwrap_or("void"));
+fn go_type_for_reference(ty: &IrType) -> Option<&'static str> {
+    if ty.kind != "reference" {
+        return None;
     }
+
     match normalize_type_key(&ty.cpp_type).as_str() {
-        "bool" => "C.bool".to_string(),
-        "float" => "C.float".to_string(),
-        "double" => "C.double".to_string(),
-        "int8" | "int8_t" => "C.int8_t".to_string(),
-        "int16" | "int16_t" => "C.int16_t".to_string(),
-        "int32" | "int32_t" => "C.int32_t".to_string(),
-        "int64" | "int64_t" => "C.int64_t".to_string(),
-        "uint8" | "uint8_t" => "C.uint8_t".to_string(),
-        "uint16" | "uint16_t" => "C.uint16_t".to_string(),
-        "uint32" | "uint32_t" => "C.uint32_t".to_string(),
-        "uint64" | "uint64_t" => "C.uint64_t".to_string(),
-        "short" => "C.short".to_string(),
-        "long" => "C.long".to_string(),
-        "size_t" => "C.size_t".to_string(),
-        _ => "C.int".to_string(),
+        "bool" => Some("bool"),
+        "float" => Some("float32"),
+        "double" => Some("float64"),
+        "int8" | "int8_t" => Some("int8"),
+        "int16" | "int16_t" => Some("int16"),
+        "int32" | "int32_t" => Some("int32"),
+        "int64" | "int64_t" => Some("int64"),
+        "uint8" | "uint8_t" => Some("uint8"),
+        "uint16" | "uint16_t" => Some("uint16"),
+        "uint32" | "uint32_t" => Some("uint32"),
+        "uint64" | "uint64_t" => Some("uint64"),
+        "int" => Some("int"),
+        "short" => Some("int16"),
+        "long" => Some("int64"),
+        "size_t" => Some("uintptr"),
+        _ => None,
+    }
+}
+
+fn cgo_cast_type(ty: &IrType) -> &'static str {
+    match normalize_type_key(&ty.cpp_type).as_str() {
+        "bool" => "C.bool",
+        "float" => "C.float",
+        "double" => "C.double",
+        "int8" | "int8_t" => "C.int8_t",
+        "int16" | "int16_t" => "C.int16_t",
+        "int32" | "int32_t" => "C.int32_t",
+        "int64" | "int64_t" => "C.int64_t",
+        "uint8" | "uint8_t" => "C.uint8_t",
+        "uint16" | "uint16_t" => "C.uint16_t",
+        "uint32" | "uint32_t" => "C.uint32_t",
+        "uint64" | "uint64_t" => "C.uint64_t",
+        "short" => "C.short",
+        "long" => "C.long",
+        "size_t" => "C.size_t",
+        _ => "C.int",
     }
 }
 
@@ -777,11 +1103,7 @@ fn go_facade_export_name(function: &IrFunction) -> String {
         return base;
     }
 
-    format!(
-        "{base}{}",
-        raw_wrapper_overload_export_suffix(function)
-            .unwrap_or_else(|| go_overload_suffix(function, false))
-    )
+    format!("{base}{}", go_overload_suffix(function))
 }
 
 fn go_method_export_name(function: &IrFunction) -> String {
@@ -790,26 +1112,15 @@ fn go_method_export_name(function: &IrFunction) -> String {
         return base;
     }
 
-    format!(
-        "{base}{}",
-        raw_wrapper_overload_export_suffix(function)
-            .unwrap_or_else(|| go_overload_suffix(function, drop_model_out_param))
-    )
+    format!("{base}{}", go_overload_suffix(function))
 }
 
-fn raw_wrapper_overload_export_suffix(function: &IrFunction) -> Option<String> {
-    let (_, suffix) = function.name.split_once("__")?;
-    Some(go_export_name(suffix))
-}
-
-fn go_overload_suffix(function: &IrFunction, drop_model_out_param: bool) -> String {
-    let mut params = function.params.iter().collect::<Vec<_>>();
-    if function.method_of.is_some() && !params.is_empty() {
-        params.remove(0);
-    }
-    if drop_model_out_param && !params.is_empty() {
-        params.pop();
-    }
+fn go_overload_suffix(function: &IrFunction) -> String {
+    let params = if function.method_of.is_some() {
+        function.params.iter().skip(1).collect::<Vec<_>>()
+    } else {
+        function.params.iter().collect::<Vec<_>>()
+    };
 
     let mut suffix = params
         .iter()
@@ -826,9 +1137,9 @@ fn go_overload_suffix(function: &IrFunction, drop_model_out_param: bool) -> Stri
 
 fn go_overload_token(ty: &IrType) -> String {
     match ty.kind.as_str() {
+        "callback" => format!("{}Callback", go_export_name(&leaf_cpp_name(&ty.cpp_type))),
         "string" | "c_string" => "String".to_string(),
         "primitive" => go_type_for_ir(ty)
-            .as_deref()
             .map(go_export_name)
             .unwrap_or_else(|| go_export_name(&sanitize_go_token(&ty.cpp_type))),
         "model_reference" => format!(
@@ -844,6 +1155,78 @@ fn go_overload_token(ty: &IrType) -> String {
             )))
         ),
         _ => go_export_name(&sanitize_go_token(&ty.cpp_type)),
+    }
+}
+
+fn callback_state_name(usage: &CallbackUsage<'_>) -> String {
+    callback_state_name_from_function(usage.function, usage.param_index)
+}
+
+fn callback_state_name_from_function(function: &IrFunction, index: usize) -> String {
+    format!("{}_cb{}", sanitize_go_token(&function.name), index)
+}
+
+fn callback_go_export_name(usage: &CallbackUsage<'_>) -> String {
+    format!("go_{}_cb{}", sanitize_go_token(&usage.function.name), usage.param_index)
+}
+
+fn callback_cgo_param_type(ty: &IrType) -> &'static str {
+    match ty.kind.as_str() {
+        "string" | "c_string" => "*C.char",
+        _ => cgo_cast_type_from_c_type(&ty.c_type),
+    }
+}
+
+fn callback_cgo_return_type(ty: &IrType) -> &'static str {
+    cgo_cast_type_from_c_type(&ty.c_type)
+}
+
+fn render_callback_go_arg(ty: &IrType, name: &str) -> String {
+    match ty.kind.as_str() {
+        "string" | "c_string" => format!("C.GoString({name})"),
+        _ => format!("{}({})", callback_go_type(ty), name),
+    }
+}
+
+fn callback_go_type(ty: &IrType) -> &'static str {
+    go_type_for_ir(ty).unwrap_or_else(|| go_type_from_c_type(&ty.c_type))
+}
+
+fn go_type_from_c_type(c_type: &str) -> &'static str {
+    match normalize_type_key(c_type).as_str() {
+        "bool" => "bool",
+        "float" => "float32",
+        "double" => "float64",
+        "int8" | "int8_t" => "int8",
+        "int16" | "int16_t" | "short" => "int16",
+        "int32" | "int32_t" | "int" => "int32",
+        "int64" | "int64_t" | "long" => "int64",
+        "uint8" | "uint8_t" => "uint8",
+        "uint16" | "uint16_t" => "uint16",
+        "uint32" | "uint32_t" | "unsignedint" | "unsigned" => "uint32",
+        "uint64" | "uint64_t" | "unsignedlong" | "unsignedlonglong" => "uint64",
+        "size_t" => "uintptr",
+        _ => "int",
+    }
+}
+
+fn cgo_cast_type_from_c_type(c_type: &str) -> &'static str {
+    match normalize_type_key(c_type).as_str() {
+        "bool" => "C.bool",
+        "float" => "C.float",
+        "double" => "C.double",
+        "int8" | "int8_t" => "C.int8_t",
+        "int16" | "int16_t" => "C.int16_t",
+        "int32" | "int32_t" => "C.int32_t",
+        "int64" | "int64_t" => "C.int64_t",
+        "uint8" | "uint8_t" => "C.uint8_t",
+        "uint16" | "uint16_t" => "C.uint16_t",
+        "uint32" | "uint32_t" | "unsignedint" | "unsigned" => "C.uint32_t",
+        "uint64" | "uint64_t" => "C.uint64_t",
+        "short" => "C.short",
+        "long" => "C.long",
+        "size_t" => "C.size_t",
+        _ => "C.int",
     }
 }
 
@@ -917,16 +1300,6 @@ fn flatten_qualified_cpp_name(value: &str) -> String {
     value.split("::").collect::<Vec<_>>().join("")
 }
 
-fn base_model_cpp_type(value: &str) -> String {
-    value
-        .trim()
-        .trim_start_matches("const ")
-        .trim_end_matches('&')
-        .trim_end_matches('*')
-        .trim()
-        .to_string()
-}
-
 fn go_package_name(path: &Path) -> String {
     let source = path
         .file_name()
@@ -953,7 +1326,31 @@ fn go_package_name(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir::IrParam;
+    use crate::{
+        config::{KnownModelField, KnownModelProjection},
+        ir::IrParam,
+    };
+
+    fn test_config_with_known_model() -> Config {
+        Config {
+            known_model_projections: vec![KnownModelProjection {
+                cpp_type: "ThingModel".to_string(),
+                handle_name: "ThingModelHandle".to_string(),
+                go_name: "ThingModel".to_string(),
+                output_header: "raw/thing_model_wrapper.h".to_string(),
+                constructor_symbol: "cgowrap_ThingModel_new".to_string(),
+                destructor_symbol: Some("cgowrap_ThingModel_delete".to_string()),
+                fields: vec![KnownModelField {
+                    go_name: "Value".to_string(),
+                    go_type: "int".to_string(),
+                    getter_symbol: "cgowrap_ThingModel_GetValue".to_string(),
+                    setter_symbol: "cgowrap_ThingModel_SetValue".to_string(),
+                    return_kind: "primitive".to_string(),
+                }],
+            }],
+            ..Config::default()
+        }
+    }
 
     fn primitive_type(cpp_type: &str, c_type: &str) -> IrType {
         IrType {
@@ -973,33 +1370,27 @@ mod tests {
         }
     }
 
-    fn model_pointer_type(cpp_type: &str) -> IrType {
+    fn reference_type(cpp_type: &str, c_type: &str) -> IrType {
         IrType {
-            kind: "model_pointer".to_string(),
-            cpp_type: format!("{cpp_type}*"),
-            c_type: format!("{cpp_type}Handle*"),
-            handle: Some(format!("{cpp_type}Handle")),
-        }
-    }
-
-    fn method(name: &str, params: Vec<IrParam>) -> IrFunction {
-        IrFunction {
-            name: format!("cgowrap_Api_{name}"),
-            kind: "method".to_string(),
-            cpp_name: format!("Api::{name}"),
-            method_of: Some("Api".to_string()),
-            owner_cpp_type: Some("Api".to_string()),
-            is_const: Some(false),
-            returns: primitive_type("bool", "bool"),
-            params,
+            kind: "reference".to_string(),
+            cpp_type: cpp_type.to_string(),
+            c_type: c_type.to_string(),
+            handle: None,
         }
     }
 
     #[test]
-    fn supports_model_reference_params_on_general_methods() {
-        let function = method(
-            "GetThing",
-            vec![
+    fn method_supports_known_model_reference_params() {
+        let config = test_config_with_known_model();
+        let function = IrFunction {
+            name: "cgowrap_Api_GetThing".to_string(),
+            kind: "method".to_string(),
+            cpp_name: "Api::GetThing".to_string(),
+            method_of: Some("Api".to_string()),
+            owner_cpp_type: Some("Api".to_string()),
+            is_const: Some(false),
+            returns: primitive_type("bool", "bool"),
+            params: vec![
                 IrParam {
                     name: "self".to_string(),
                     ty: IrType {
@@ -1024,7 +1415,7 @@ mod tests {
     }
 
     #[test]
-    fn method_rejects_unknown_model_params() {
+    fn method_supports_unknown_model_params_as_handles() {
         let config = test_config_with_known_model();
         let function = IrFunction {
             name: "cgowrap_Api_GetThing".to_string(),
@@ -1051,14 +1442,21 @@ mod tests {
             ],
         };
 
-        assert!(general_method_supported(&function));
+        assert!(method_supported(&config, &function));
     }
 
     #[test]
-    fn supports_model_reference_params_outside_last_position() {
-        let function = method(
-            "GetThing",
-            vec![
+    fn method_supports_primitive_reference_and_known_model_params() {
+        let config = test_config_with_known_model();
+        let function = IrFunction {
+            name: "cgowrap_Api_NextThing".to_string(),
+            kind: "method".to_string(),
+            cpp_name: "Api::NextThing".to_string(),
+            method_of: Some("Api".to_string()),
+            owner_cpp_type: Some("Api".to_string()),
+            is_const: Some(false),
+            returns: primitive_type("bool", "bool"),
+            params: vec![
                 IrParam {
                     name: "self".to_string(),
                     ty: IrType {
@@ -1086,53 +1484,15 @@ mod tests {
         );
     }
 
-        assert!(general_method_supported(&function));
-    }
-
     #[test]
-    fn supports_model_pointer_params_on_general_methods() {
-        let function = method(
-            "GetThingPtr",
-            vec![
-                IrParam {
-                    name: "self".to_string(),
-                    ty: IrType {
-                        kind: "opaque".to_string(),
-                        cpp_type: "Api".to_string(),
-                        c_type: "ApiHandle*".to_string(),
-                        handle: Some("ApiHandle".to_string()),
-                    },
-                },
-                IrParam {
-                    name: "id".to_string(),
-                    ty: primitive_type("int", "int"),
-                },
-                IrParam {
-                    name: "out".to_string(),
-                    ty: model_pointer_type("ThingModel"),
-                },
-            ],
-        );
-
-        assert!(general_method_supported(&function));
-    }
-
-    #[test]
-    fn uses_raw_wrapper_suffix_for_overloaded_go_method_exports() {
-        let function = IrFunction {
-            name: "cgowrap_iSerialize_Add__uint32_c_str_int32_mut".to_string(),
-            kind: "method".to_string(),
-            cpp_name: "iSerialize::Add".to_string(),
-            method_of: Some("iSerializeHandle".to_string()),
-            owner_cpp_type: Some("iSerialize".to_string()),
-            is_const: Some(false),
-            returns: primitive_type("int", "int"),
-            params: vec![],
-        };
-
+    fn overload_tokens_distinguish_model_ref_and_ptr() {
         assert_eq!(
-            go_method_export_name(&function, false),
-            "AddUint32CStrInt32Mut"
+            go_overload_token(&model_type("model_reference", "ThingModel")),
+            "ThingModelRef"
+        );
+        assert_eq!(
+            go_overload_token(&model_type("model_pointer", "ThingModel")),
+            "ThingModelPtr"
         );
     }
 }

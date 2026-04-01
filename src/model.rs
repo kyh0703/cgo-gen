@@ -1,4 +1,4 @@
-use std::{
+﻿use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
 };
@@ -6,7 +6,7 @@ use std::{
 use anyhow::{Result, anyhow};
 
 use crate::{
-    config::{Config, HeaderRole},
+    config::{Config, HeaderRole, KnownModelField, KnownModelProjection},
     ir::{IrFunction, IrModule, IrType},
 };
 
@@ -18,7 +18,11 @@ pub struct GeneratedGoFile {
 
 #[derive(Debug, Clone)]
 struct ModelProjection {
+    cpp_type: String,
     go_name: String,
+    handle_name: String,
+    constructor_symbol: String,
+    destructor_symbol: String,
     fields: Vec<ModelProjectionField>,
 }
 
@@ -26,6 +30,9 @@ struct ModelProjection {
 struct ModelProjectionField {
     go_name: String,
     go_type: String,
+    getter_symbol: String,
+    setter_symbol: String,
+    return_kind: String,
 }
 
 #[derive(Debug)]
@@ -41,18 +48,15 @@ struct GoEnumVariant {
 }
 
 pub fn render_go_models(config: &Config, ir: &IrModule) -> Result<Vec<GeneratedGoFile>> {
-    let role = config
-        .input
-        .headers
-        .first()
+    let role = current_header(config)
         .map(|header| config.header_role(header))
         .unwrap_or(HeaderRole::Unclassified);
 
     let projections = match role {
-        HeaderRole::Facade | HeaderRole::Unclassified => Vec::new(),
-        HeaderRole::Model => build_all_model_projections(ir)?,
+        HeaderRole::Facade => Vec::new(),
+        HeaderRole::Model | HeaderRole::Unclassified => build_all_model_projections(ir)?,
     };
-    let enums = if role == HeaderRole::Model {
+    let enums = if matches!(role, HeaderRole::Model | HeaderRole::Unclassified) {
         build_go_enums(ir)
     } else {
         Vec::new()
@@ -66,6 +70,13 @@ pub fn render_go_models(config: &Config, ir: &IrModule) -> Result<Vec<GeneratedG
         filename: config.go_filename(""),
         contents: render_go_file(config, &enums, &projections),
     }])
+}
+
+fn current_header(config: &Config) -> Option<&Path> {
+    config
+        .target_header
+        .as_deref()
+        .or_else(|| config.input.headers.first().map(|path| path.as_path()))
 }
 
 pub fn render_go_structs(config: &Config, ir: &IrModule) -> Result<Vec<GeneratedGoFile>> {
@@ -172,10 +183,17 @@ fn render_model_getter(
 ) -> String {
     let receiver = receiver_name(&projection.go_name);
     let mut out = String::new();
-    out.push_str(&format!(
-        "func ({} *{}) Get{}() {} {{\n",
-        receiver, projection.go_name, field.go_name, field.go_type
-    ));
+    if matches!(field.return_kind.as_str(), "string" | "c_string") {
+        out.push_str(&format!(
+            "func ({} *{}) Get{}() ({}, error) {{\n",
+            receiver, projection.go_name, field.go_name, field.go_type
+        ));
+    } else {
+        out.push_str(&format!(
+            "func ({} *{}) Get{}() {} {{\n",
+            receiver, projection.go_name, field.go_name, field.go_type
+        ));
+    }
     out.push_str(&format!(
         "    handle := require{}Handle({})\n",
         projection.go_name, receiver
@@ -183,17 +201,17 @@ fn render_model_getter(
     match field.return_kind.as_str() {
         "string" => {
             out.push_str(&format!("    raw := C.{}(handle)\n", field.getter_symbol));
-            out.push_str("    if raw == nil {\n        return \"\"\n    }\n");
+            out.push_str("    if raw == nil {\n        return \"\", errors.New(\"wrapper returned nil string\")\n    }\n");
             out.push_str(&format!(
                 "    defer C.{}_string_free(raw)\n",
                 config.naming.prefix
             ));
-            out.push_str("    return C.GoString(raw)\n");
+            out.push_str("    return C.GoString(raw), nil\n");
         }
         "c_string" => {
             out.push_str(&format!("    raw := C.{}(handle)\n", field.getter_symbol));
-            out.push_str("    if raw == nil {\n        return \"\"\n    }\n");
-            out.push_str("    return C.GoString(raw)\n");
+            out.push_str("    if raw == nil {\n        return \"\", errors.New(\"wrapper returned nil string\")\n    }\n");
+            out.push_str("    return C.GoString(raw), nil\n");
         }
         _ => out.push_str(&format!(
             "    return {}(C.{}(handle))\n",
@@ -277,6 +295,29 @@ pub fn collect_known_model_projections(
 }
 
 fn build_all_model_projections(ir: &IrModule) -> Result<Vec<ModelProjection>> {
+    let constructors = ir
+        .functions
+        .iter()
+        .filter(|function| function.kind == "constructor")
+        .filter_map(|function| {
+            function
+                .owner_cpp_type
+                .as_deref()
+                .map(|owner| (owner.to_string(), function.name.clone()))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let destructors = ir
+        .functions
+        .iter()
+        .filter(|function| function.kind == "destructor")
+        .filter_map(|function| {
+            function
+                .owner_cpp_type
+                .as_deref()
+                .map(|owner| (owner.to_string(), function.name.clone()))
+        })
+        .collect::<BTreeMap<_, _>>();
+
     let mut methods_by_owner = BTreeMap::<String, Vec<&IrFunction>>::new();
     for function in ir
         .functions
@@ -352,6 +393,9 @@ fn build_model_projection(
         fields.push(ModelProjectionField {
             go_name: go_field_name(suffix),
             go_type: getter_ty,
+            getter_symbol: function.name.clone(),
+            setter_symbol: setter.name.clone(),
+            return_kind: function.returns.kind.clone(),
         });
     }
 
@@ -365,7 +409,11 @@ fn build_model_projection(
         .ok_or_else(|| anyhow!("model projection `{owner}` is missing a destructor wrapper"))?;
 
     Ok(Some(ModelProjection {
+        cpp_type: owner.to_string(),
         go_name: leaf_cpp_name(owner).to_string(),
+        handle_name: format!("{}Handle", flatten_qualified_cpp_name(owner)),
+        constructor_symbol: constructor_symbol.clone(),
+        destructor_symbol: destructor_symbol.clone(),
         fields,
     }))
 }
@@ -397,24 +445,28 @@ fn setter_suffix(function: &IrFunction) -> Option<&str> {
 fn go_type_for_ir(ty: &IrType) -> Option<String> {
     match ty.kind.as_str() {
         "string" | "c_string" => Some("string".to_string()),
-        "primitive" => match normalize_type_key(&ty.cpp_type).as_str() {
-            "bool" => Some("bool".to_string()),
-            "float" => Some("float32".to_string()),
-            "double" => Some("float64".to_string()),
-            "int8" | "int8_t" => Some("int8".to_string()),
-            "int16" | "int16_t" => Some("int16".to_string()),
-            "int32" | "int32_t" => Some("int32".to_string()),
-            "int64" | "int64_t" => Some("int64".to_string()),
-            "uint8" | "uint8_t" => Some("uint8".to_string()),
-            "uint16" | "uint16_t" => Some("uint16".to_string()),
-            "uint32" | "uint32_t" => Some("uint32".to_string()),
-            "uint64" | "uint64_t" => Some("uint64".to_string()),
-            "int" => Some("int".to_string()),
-            "short" => Some("int16".to_string()),
-            "long" => Some("int64".to_string()),
-            "size_t" => Some("uintptr".to_string()),
-            _ => None,
-        },
+        "primitive" => primitive_go_type(&ty.cpp_type).or_else(|| primitive_go_type(&ty.c_type)),
+        _ => None,
+    }
+}
+
+fn primitive_go_type(value: &str) -> Option<String> {
+    match normalize_type_key(value).as_str() {
+        "bool" => Some("bool".to_string()),
+        "float" => Some("float32".to_string()),
+        "double" => Some("float64".to_string()),
+        "int8" | "int8_t" | "signedchar" => Some("int8".to_string()),
+        "int16" | "int16_t" | "short" => Some("int16".to_string()),
+        "int32" | "int32_t" => Some("int32".to_string()),
+        "int64" | "int64_t" | "long" | "longlong" => Some("int64".to_string()),
+        "uint8" | "uint8_t" | "unsignedchar" => Some("uint8".to_string()),
+        "uint16" | "uint16_t" | "unsignedshort" => Some("uint16".to_string()),
+        "uint32" | "uint32_t" | "unsignedint" => Some("uint32".to_string()),
+        "uint64" | "uint64_t" | "unsignedlong" | "unsignedlonglong" => {
+            Some("uint64".to_string())
+        }
+        "int" => Some("int".to_string()),
+        "size_t" => Some("uintptr".to_string()),
         _ => None,
     }
 }
@@ -505,6 +557,10 @@ fn split_pascal_tokens(value: &str) -> Vec<String> {
 
 fn leaf_cpp_name(value: &str) -> &str {
     value.rsplit("::").next().unwrap_or(value)
+}
+
+fn flatten_qualified_cpp_name(value: &str) -> String {
+    value.split("::").collect::<Vec<_>>().join("")
 }
 
 fn go_package_name(path: &Path) -> String {
