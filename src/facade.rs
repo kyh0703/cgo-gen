@@ -106,17 +106,17 @@ fn collect_facade_classes<'a>(
         ensure_unique_method_exports(owner, &methods)?;
 
         let Some(constructor) = constructors.get(owner).copied() else {
-            bail!("facade class `{owner}` has renderable methods but no constructor wrapper");
+            continue;
         };
         if !constructor
             .params
             .iter()
             .all(|param| go_param_supported(config, &param.ty))
         {
-            bail!("facade class `{owner}` constructor params are not supported yet");
+            continue;
         }
         let Some(destructor) = destructors.get(owner).copied() else {
-            bail!("facade class `{owner}` has renderable methods but no destructor wrapper");
+            continue;
         };
 
         classes.push(AnalyzedFacadeClass {
@@ -1007,24 +1007,7 @@ fn zero_value_for_go_type(go_type: &str) -> &'static str {
 fn go_type_for_ir(ty: &IrType) -> Option<&'static str> {
     match ty.kind.as_str() {
         "string" | "c_string" => Some("string"),
-        "primitive" => match normalize_type_key(&ty.cpp_type).as_str() {
-            "bool" => Some("bool"),
-            "float" => Some("float32"),
-            "double" => Some("float64"),
-            "int8" | "int8_t" => Some("int8"),
-            "int16" | "int16_t" => Some("int16"),
-            "int32" | "int32_t" => Some("int32"),
-            "int64" | "int64_t" => Some("int64"),
-            "uint8" | "uint8_t" => Some("uint8"),
-            "uint16" | "uint16_t" => Some("uint16"),
-            "uint32" | "uint32_t" => Some("uint32"),
-            "uint64" | "uint64_t" => Some("uint64"),
-            "int" => Some("int"),
-            "short" => Some("int16"),
-            "long" => Some("int64"),
-            "size_t" => Some("uintptr"),
-            _ => None,
-        },
+        "primitive" => primitive_go_type(&ty.cpp_type).or_else(|| primitive_go_type(&ty.c_type)),
         _ => None,
     }
 }
@@ -1034,43 +1017,52 @@ fn go_type_for_reference(ty: &IrType) -> Option<&'static str> {
         return None;
     }
 
-    match normalize_type_key(&ty.cpp_type).as_str() {
+    primitive_go_type(&ty.cpp_type).or_else(|| primitive_go_type(&ty.c_type))
+}
+
+fn cgo_cast_type(ty: &IrType) -> &'static str {
+    primitive_cgo_cast_type(&ty.cpp_type).unwrap_or_else(|| {
+        primitive_cgo_cast_type(&ty.c_type).unwrap_or("C.int")
+    })
+}
+
+fn primitive_go_type(value: &str) -> Option<&'static str> {
+    match normalize_type_key(value).as_str() {
         "bool" => Some("bool"),
         "float" => Some("float32"),
         "double" => Some("float64"),
-        "int8" | "int8_t" => Some("int8"),
-        "int16" | "int16_t" => Some("int16"),
+        "int8" | "int8_t" | "signedchar" => Some("int8"),
+        "int16" | "int16_t" | "short" => Some("int16"),
         "int32" | "int32_t" => Some("int32"),
-        "int64" | "int64_t" => Some("int64"),
-        "uint8" | "uint8_t" => Some("uint8"),
-        "uint16" | "uint16_t" => Some("uint16"),
-        "uint32" | "uint32_t" => Some("uint32"),
-        "uint64" | "uint64_t" => Some("uint64"),
+        "int64" | "int64_t" | "long" | "longlong" => Some("int64"),
+        "uint8" | "uint8_t" | "unsignedchar" => Some("uint8"),
+        "uint16" | "uint16_t" | "unsignedshort" => Some("uint16"),
+        "uint32" | "uint32_t" | "unsignedint" | "unsigned" => Some("uint32"),
         "int" => Some("int"),
-        "short" => Some("int16"),
-        "long" => Some("int64"),
+        "uint64" | "uint64_t" | "unsignedlong" | "unsignedlonglong" => Some("uint64"),
         "size_t" => Some("uintptr"),
         _ => None,
     }
 }
 
-fn cgo_cast_type(ty: &IrType) -> &'static str {
-    match normalize_type_key(&ty.cpp_type).as_str() {
-        "bool" => "C.bool",
-        "float" => "C.float",
-        "double" => "C.double",
-        "int8" | "int8_t" => "C.int8_t",
-        "int16" | "int16_t" => "C.int16_t",
-        "int32" | "int32_t" => "C.int32_t",
-        "int64" | "int64_t" => "C.int64_t",
-        "uint8" | "uint8_t" => "C.uint8_t",
-        "uint16" | "uint16_t" => "C.uint16_t",
-        "uint32" | "uint32_t" => "C.uint32_t",
-        "uint64" | "uint64_t" => "C.uint64_t",
-        "short" => "C.short",
-        "long" => "C.long",
-        "size_t" => "C.size_t",
-        _ => "C.int",
+fn primitive_cgo_cast_type(value: &str) -> Option<&'static str> {
+    match normalize_type_key(value).as_str() {
+        "bool" => Some("C.bool"),
+        "float" => Some("C.float"),
+        "double" => Some("C.double"),
+        "int8" | "int8_t" | "signedchar" => Some("C.int8_t"),
+        "int16" | "int16_t" | "short" => Some("C.int16_t"),
+        "int32" | "int32_t" => Some("C.int32_t"),
+        "int64" | "int64_t" => Some("C.int64_t"),
+        "uint8" | "uint8_t" | "unsignedchar" => Some("C.uint8_t"),
+        "uint16" | "uint16_t" | "unsignedshort" => Some("C.uint16_t"),
+        "uint32" | "uint32_t" | "unsignedint" | "unsigned" => Some("C.uint32_t"),
+        "uint64" | "uint64_t" => Some("C.uint64_t"),
+        "int" => Some("C.int"),
+        "short" => Some("C.short"),
+        "long" => Some("C.long"),
+        "size_t" => Some("C.size_t"),
+        _ => None,
     }
 }
 
