@@ -241,33 +241,32 @@ output:
 }
 
 #[test]
-fn config_resolves_project_root_header_dirs_and_include_dirs() {
+fn config_resolves_translation_units_from_config_dir() {
     let mut dir = env::temp_dir();
     dir.push(format!(
-        "c_go_config_project_root_test_{}",
+        "c_go_config_translation_units_test_{}",
         std::process::id()
     ));
     let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(dir.join("project/include/models")).unwrap();
-    fs::create_dir_all(dir.join("project/deps/inc")).unwrap();
-    fs::create_dir_all(dir.join("project/config")).unwrap();
+    fs::create_dir_all(dir.join("include")).unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(dir.join("include/model.hpp"), "class ModelThing {};").unwrap();
     fs::write(
-        dir.join("project/include/models/model.hpp"),
-        "class ModelThing {};",
+        dir.join("src/entry.cpp"),
+        "#include \"../include/model.hpp\"\n",
     )
     .unwrap();
 
-    let config_path = dir.join("project/config/cppgo-wrap.yaml");
+    let config_path = dir.join("cppgo-wrap.yaml");
     fs::write(
         &config_path,
         r#"
 version: 1
-project_root: ..
 input:
-  header_dirs:
-    - include
-  include_dirs:
-    - deps/inc
+  headers:
+    - include/model.hpp
+  translation_units:
+    - src/entry.cpp
 output:
   dir: gen
 "#,
@@ -276,33 +275,51 @@ output:
 
     let config = Config::load(&config_path).unwrap();
 
-    let expected_project_root = normalize_expected_path(&dir.join("project"));
+    assert_eq!(config.input.translation_units.len(), 1);
     assert_eq!(
-        config
-            .project_root
-            .as_deref()
-            .map(normalize_expected_path)
-            .as_deref(),
-        Some(expected_project_root.as_str())
+        config.input.translation_units[0],
+        dir.join("src/entry.cpp").canonicalize().unwrap()
     );
+    assert_eq!(
+        config.parse_entries(),
+        vec![dir.join("src/entry.cpp").canonicalize().unwrap()]
+    );
+}
+
+#[test]
+fn config_expands_dirs_into_headers_and_translation_units() {
+    let mut dir = env::temp_dir();
+    dir.push(format!("c_go_config_dirs_test_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("module")).unwrap();
+    fs::write(dir.join("module/model.hpp"), "class ModelThing {};").unwrap();
+    fs::write(
+        dir.join("module/entry.cpp"),
+        "#include \"model.hpp\"\n",
+    )
+    .unwrap();
+
+    let config_path = dir.join("cppgo-wrap.yaml");
+    fs::write(
+        &config_path,
+        r#"
+version: 1
+input:
+  dirs:
+    - module
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(&config_path).unwrap();
+
     assert_eq!(config.input.headers.len(), 1);
-    assert_eq!(
-        config.input.headers[0],
-        dir.join("project/include/models/model.hpp")
-            .canonicalize()
-            .unwrap()
-    );
-    assert_eq!(
-        config.input.clang_args,
-        vec![format!(
-            "-I{}",
-            normalize_expected_path(&dir.join("project/deps/inc"))
-        )]
-    );
-    assert_eq!(
-        normalize_expected_path(&config.output.dir),
-        normalize_expected_path(&dir.join("project").join("gen"))
-    );
+    assert_eq!(config.input.translation_units.len(), 1);
+    assert!(config.input.headers[0].ends_with("model.hpp"));
+    assert!(config.input.translation_units[0].ends_with("entry.cpp"));
+    assert_eq!(config.parse_entries(), config.input.translation_units);
 }
 
 #[test]
