@@ -1399,6 +1399,7 @@ functions:
       cpp_type: NPCSTR
       c_type: const char*
 enums: []
+callbacks: []
 support:
   parser_backend: libclang
   notes:

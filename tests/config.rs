@@ -273,19 +273,12 @@ fn loads_real_sil_model_config() {
     let config = Config::load("configs/sil-real-model.yaml").unwrap();
 
     assert_eq!(config.naming.prefix, "sil");
-    assert_eq!(config.input.headers.len(), 1);
-    assert_eq!(config.files.model.len(), 1);
-    assert_eq!(
-        config.header_role(&config.files.model[0]),
-        HeaderRole::Model
-    );
+    assert!(config.input.headers.is_empty());
+    assert!(config.input.dir.as_ref().is_some_and(|path| path.is_absolute()));
     assert!(
         config.output.dir.ends_with(
-            Path::new("IPRON")
-                .join("IE")
-                .join("PSC")
-                .join("pkg")
-                .join("sil")
+            Path::new("pkg")
+                .join("sil-real-model")
         )
     );
 }

@@ -13,16 +13,13 @@ fn temp_output_dir(label: &str) -> std::path::PathBuf {
 #[test]
 fn generates_go_facade_for_simple_free_function_header() {
     let mut config = Config::load("tests/fixtures/simple/config.yaml").unwrap();
-    let facade_header = config.input.headers[0].clone();
     config.output.dir = temp_output_dir("generate");
-    config.files.facade = vec![facade_header];
 
     let parsed = parser::parse(&config).unwrap();
     let ir = ir::normalize(&config, &parsed).unwrap();
     generator::generate(&config, &ir, true).unwrap();
 
-    let go_facade =
-        fs::read_to_string(config.facade_output_dir().join(config.go_filename(""))).unwrap();
+    let go_facade = fs::read_to_string(config.go_output_dir().join(config.go_filename(""))).unwrap();
 
     assert!(go_facade.contains("import \"C\""));
     assert!(go_facade.contains(&format!(
@@ -78,8 +75,7 @@ naming:
     let ir = ir::normalize(&config, &parsed).unwrap();
     generator::generate(&config, &ir, true).unwrap();
 
-    let go_facade =
-        fs::read_to_string(config.facade_output_dir().join(config.go_filename(""))).unwrap();
+    let go_facade = fs::read_to_string(config.go_output_dir().join(config.go_filename(""))).unwrap();
 
     assert!(go_facade.contains("import \"errors\""));
     assert!(go_facade.contains("func IsReady() bool {"));
@@ -414,13 +410,13 @@ naming:
     assert!(go_facade.contains("func (a *Api) Clear() int {"));
     assert!(go_facade.contains("return int(C.cgowrap_Api_Clear(a.ptr))"));
     assert!(go_facade.contains("func (a *Api) GetThing(id int, out *ThingModel) bool {"));
-    assert!(go_facade.contains("if out == nil {"));
-    assert!(go_facade.contains("panic(\"reference facade/model argument cannot be nil\")"));
-    assert!(go_facade.contains("C.cgowrap_Api_GetThing(a.ptr, C.int(id), cArg1)"));
+    assert!(go_facade.contains("requireThingModelHandle(out)"));
+    assert!(go_facade.contains("C.cgowrap_Api_GetThing(a.ptr, C.int(id), requireThingModelHandle(out))"));
     assert!(go_facade.contains("func (a *Api) GetThingByKey(key string, out *ThingModel) bool {"));
     assert!(go_facade.contains("cArg0 := C.CString(key)"));
     assert!(go_facade.contains("defer C.free(unsafe.Pointer(cArg0))"));
-    assert!(go_facade.contains("C.cgowrap_Api_GetThingByKey(a.ptr, cArg0, cArg1)"));
+    assert!(go_facade.contains("optionalThingModelHandle(out)"));
+    assert!(go_facade.contains("C.cgowrap_Api_GetThingByKey(a.ptr, cArg0, optionalThingModelHandle(out))"));
     assert!(!go_facade.contains("mapThingModelFromHandle"));
 }
 
@@ -589,7 +585,14 @@ naming:
     .unwrap();
 
     let prepared = generator::prepare_config(&Config::load(&config_path).unwrap()).unwrap();
-    let config = prepared.scoped_to_header(prepared.files.facade[0].clone());
+    let facade_header = prepared
+        .input
+        .headers
+        .iter()
+        .find(|path| path.file_name().and_then(|name| name.to_str()) == Some("Api.hpp"))
+        .cloned()
+        .unwrap();
+    let config = prepared.scoped_to_header(facade_header);
     let parsed = parser::parse(&config).unwrap();
     let ir = ir::normalize(&config, &parsed).unwrap();
     generator::generate(&config, &ir, true).unwrap();
@@ -815,7 +818,7 @@ naming:
 
     assert!(go_model.contains("type IsWebHook struct {"));
     assert!(go_model.contains("ptr *C.IsWebHookHandle"));
-    assert!(go_model.contains("func (i *IsWebHook) SetURL(value string) {"));
+    assert!(go_model.contains("func (i *IsWebHook) SetUrl(value string) {"));
 
     assert!(go_facade.contains("func (i *ISiLib) NextWebHook(pos *int32, out *IsWebHook) bool {"));
     assert!(go_facade.contains("if pos == nil {"));
@@ -830,4 +833,79 @@ naming:
     assert!(raw_source.contains(
         "return reinterpret_cast<ISiLib*>(self)->NextWebHook(*pos, *reinterpret_cast<IsWebHook*>(out));"
     ));
+}
+
+#[test]
+fn generates_callback_typedefs_and_facade_bridge_helpers() {
+    let root = temp_output_dir("callback-facade");
+    let include_dir = root.join("include");
+    fs::create_dir_all(&include_dir).unwrap();
+
+    let header_path = include_dir.join("Api.hpp");
+    fs::write(
+        &header_path,
+        r#"
+        #pragma once
+        #include <stdint.h>
+
+        typedef uint32_t iMoId_t;
+        typedef const char* NPCSTR;
+        typedef int32_t int32;
+        typedef void (*SICHACALLBACK)(iMoId_t nMoId, uint32_t nMsgId, NPCSTR sData, int32 nData);
+
+        void SetHACallback(SICHACALLBACK cb);
+        "#,
+    )
+    .unwrap();
+
+    let config_path = root.join("cppgo-wrap.yaml");
+    fs::write(
+        &config_path,
+        r#"
+version: 1
+input:
+  headers:
+    - include/Api.hpp
+files:
+  facade:
+    - include/Api.hpp
+output:
+  dir: out
+naming:
+  prefix: sil
+  style: preserve
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(&config_path).unwrap();
+    generator::generate_all(&config, true).unwrap();
+
+    let ir_dump = fs::read_to_string(root.join("out/raw/api_wrapper.ir.yaml")).unwrap();
+    let raw_header = fs::read_to_string(root.join("out/raw/api_wrapper.h")).unwrap();
+    let raw_source = fs::read_to_string(root.join("out/raw/api_wrapper.cpp")).unwrap();
+    let go_facade = fs::read_to_string(root.join("out/api_wrapper.go")).unwrap();
+
+    assert!(ir_dump.contains("callbacks:"));
+    assert!(ir_dump.contains("name: SICHACALLBACK"));
+    assert!(raw_header.contains(
+        "typedef void (*SICHACALLBACK)(unsigned int nMoId, unsigned int nMsgId, const char* sData, int32_t nData);"
+    ));
+    assert!(raw_header.contains("void sil_SetHACallback_bridge(bool use_cb0);"));
+
+    assert!(raw_source.contains("extern void go_sil_SetHACallback_cb0"));
+    assert!(raw_source.contains("auto sil_SetHACallback_cb0_trampoline"));
+    assert!(raw_source.contains(
+        "sil_SetHACallback(use_cb0 ? sil_SetHACallback_cb0_trampoline : nullptr);"
+    ));
+
+    assert!(go_facade.contains("import \"sync\""));
+    assert!(go_facade.contains(
+        "type SICHACALLBACK func(nMoId uint32, nMsgId uint32, sData string, nData int32)"
+    ));
+    assert!(go_facade.contains("var sil_SetHACallback_cb0 struct {"));
+    assert!(go_facade.contains("//export go_sil_SetHACallback_cb0"));
+    assert!(go_facade.contains("func SetHACallback(cb SICHACALLBACK) {"));
+    assert!(go_facade.contains("sil_SetHACallback_cb0.fn = cb"));
+    assert!(go_facade.contains("C.sil_SetHACallback_bridge(C.bool(cb != nil))"));
 }
