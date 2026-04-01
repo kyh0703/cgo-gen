@@ -324,11 +324,15 @@ impl Config {
     }
 
     pub fn model_output_dir(&self) -> PathBuf {
-        self.output.dir.join("model")
+        self.go_output_dir()
     }
 
     pub fn facade_output_dir(&self) -> PathBuf {
-        self.output.dir.join("facade")
+        self.go_output_dir()
+    }
+
+    pub fn go_output_dir(&self) -> PathBuf {
+        self.output.dir.join("go")
     }
 
     pub fn raw_include_for_go(&self, header: &str) -> String {

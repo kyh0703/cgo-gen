@@ -68,11 +68,10 @@ files:
     generator::generate_all(&config, true).unwrap();
 
     let raw_dir = root.join("gen/raw");
-    let model_dir = root.join("gen/model");
-    let facade_dir = root.join("gen/facade");
+    let go_dir = root.join("gen/go");
 
     assert!(raw_dir.join("thing_model_wrapper.h").exists());
     assert!(raw_dir.join("api_wrapper.h").exists());
-    assert!(model_dir.join("thing_model_wrapper.go").exists());
-    assert!(facade_dir.join("api_wrapper.go").exists());
+    assert!(go_dir.join("thing_model_wrapper.go").exists());
+    assert!(go_dir.join("api_wrapper.go").exists());
 }

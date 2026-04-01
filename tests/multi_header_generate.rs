@@ -67,17 +67,17 @@ naming:
 
     let output_dir = root.join("gen");
     let raw_dir = output_dir.join("raw");
-    let model_dir = output_dir.join("model");
+    let go_dir = output_dir.join("go");
 
     let alpha_header = raw_dir.join("alpha_thing_wrapper.h");
     let alpha_source = raw_dir.join("alpha_thing_wrapper.cpp");
     let alpha_ir = raw_dir.join("alpha_thing_wrapper.ir.yaml");
-    let alpha_go = model_dir.join("alpha_thing_wrapper.go");
+    let alpha_go = go_dir.join("alpha_thing_wrapper.go");
 
     let beta_header = raw_dir.join("beta_thing_wrapper.h");
     let beta_source = raw_dir.join("beta_thing_wrapper.cpp");
     let beta_ir = raw_dir.join("beta_thing_wrapper.ir.yaml");
-    let beta_go = model_dir.join("beta_thing_wrapper.go");
+    let beta_go = go_dir.join("beta_thing_wrapper.go");
 
     for path in [
         &alpha_header,
@@ -109,7 +109,7 @@ naming:
 }
 
 #[test]
-fn file_classification_limits_go_projection_to_model_headers() {
+fn emits_unified_go_wrappers_for_each_supported_header() {
     let root = temp_dir("classification");
     fs::write(
         root.join("include/ModelThing.hpp"),
@@ -143,11 +143,6 @@ input:
   headers:
     - include/ModelThing.hpp
     - include/FacadeThing.hpp
-files:
-  model:
-    - include/ModelThing.hpp
-  facade:
-    - include/FacadeThing.hpp
 output:
   dir: gen
 naming:
@@ -161,22 +156,17 @@ naming:
     generator::generate_all(&config, true).unwrap();
 
     let output_dir = root.join("gen");
-    let model_go = fs::read_to_string(output_dir.join("model/model_thing_wrapper.go")).unwrap();
-    let facade_go_path = output_dir.join("facade/facade_thing_wrapper.go");
-    let facade_go = fs::read_to_string(&facade_go_path).unwrap();
+    let model_go = fs::read_to_string(output_dir.join("go/model_thing_wrapper.go")).unwrap();
+    let facade_go = fs::read_to_string(output_dir.join("go/facade_thing_wrapper.go")).unwrap();
 
     assert!(model_go.contains("type ModelThing struct {"));
-    assert!(!model_go.contains("type FacadeThing struct {"));
-    assert!(
-        facade_go.contains("type FacadeThing struct {")
-            && facade_go.contains("ptr *C.FacadeThingHandle")
-            && !facade_go.contains("    Count int"),
-        "facade-classified headers should not emit Go model projections"
-    );
+    assert!(model_go.contains("func (m *ModelThing) GetValue() int {"));
+    assert!(facade_go.contains("type FacadeThing struct {"));
+    assert!(facade_go.contains("func (f *FacadeThing) GetCount() int {"));
 }
 
 #[test]
-fn model_classification_emits_go_enum_models_without_go_struct_targets() {
+fn emits_unified_go_enums_without_classification() {
     let root = temp_dir("model-enum");
     fs::write(
         root.join("include/ModelTypes.hpp"),
@@ -197,9 +187,6 @@ version: 1
 input:
   headers:
     - include/ModelTypes.hpp
-files:
-  model:
-    - include/ModelTypes.hpp
 output:
   dir: gen
 naming:
@@ -213,7 +200,7 @@ naming:
     generator::generate_all(&config, true).unwrap();
 
     let output_dir = root.join("gen");
-    let go_models = fs::read_to_string(output_dir.join("model/model_types_wrapper.go")).unwrap();
+    let go_models = fs::read_to_string(output_dir.join("go/model_types_wrapper.go")).unwrap();
 
     assert!(go_models.contains("type Mode int64"));
     assert!(go_models.contains("MODE_A Mode = 0"));
@@ -221,7 +208,7 @@ naming:
 }
 
 #[test]
-fn rejects_go_struct_targets_from_unclassified_headers() {
+fn unclassified_headers_still_emit_unified_go_wrappers() {
     let root = temp_dir("unclassified-go-structs");
     fs::write(
         root.join("include/Thing.hpp"),
@@ -255,14 +242,8 @@ naming:
     let config = Config::load(&config_path).unwrap();
     generator::generate_all(&config, true).unwrap();
 
-    let facade_go_path = root.join("gen/model/thing_wrapper.go");
-    let facade_layer_go_path = root.join("gen/facade/thing_wrapper.go");
-    assert!(
-        !facade_go_path.exists(),
-        "unclassified headers should not emit Go model files"
-    );
-    assert!(
-        !facade_layer_go_path.exists(),
-        "unclassified headers should not emit Go facade files"
-    );
+    let go_path = root.join("gen/go/thing_wrapper.go");
+    assert!(go_path.exists(), "supported headers should emit unified Go files");
+    let go = fs::read_to_string(go_path).unwrap();
+    assert!(go.contains("type Thing struct {"));
 }
