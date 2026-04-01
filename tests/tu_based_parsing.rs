@@ -1,6 +1,6 @@
 use std::{env, fs, path::PathBuf};
 
-use c_go::{config::Config, parser};
+use c_go::{compiler, config::Config, parser};
 
 fn temp_fixture_dir(label: &str) -> PathBuf {
     let mut path = env::temp_dir();
@@ -102,4 +102,78 @@ output:
     assert!(parsed.classes.iter().any(|class| class.name == "Owned"));
     assert!(!parsed.classes.iter().any(|class| class.name == "LocalOnly"));
     assert!(!parsed.classes.iter().any(|class| class.name == "Foreign"));
+}
+
+#[test]
+fn dir_only_config_ignores_header_entries_from_compile_commands_when_sources_exist() {
+    let fixture = temp_fixture_dir("header_entries_ignored");
+    fs::create_dir_all(fixture.join("include")).unwrap();
+    fs::create_dir_all(fixture.join("build")).unwrap();
+
+    fs::write(
+        fixture.join("include/IEMemory.h"),
+        r#"
+        class IEMemory {
+        public:
+            int GetValue() const { return 7; }
+        };
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        fixture.join("include/DBHandler.cpp"),
+        r#"
+        #include "IEMemory.h"
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        fixture.join("build/compile_commands.json"),
+        r#"
+[
+  {
+    "directory": ".",
+    "file": "../include/IEMemory.h",
+    "arguments": [
+      "clang++",
+      "-std=c++17",
+      "-x",
+      "c++",
+      "-I../include"
+    ]
+  },
+  {
+    "directory": ".",
+    "file": "../include/DBHandler.cpp",
+    "arguments": [
+      "clang++",
+      "-std=c++17",
+      "-x",
+      "c++",
+      "-I../include"
+    ]
+  }
+]
+"#,
+    )
+    .unwrap();
+
+    fs::write(
+        fixture.join("config.yaml"),
+        r#"
+version: 1
+input:
+  dir: include
+  compile_commands: build/compile_commands.json
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(fixture.join("config.yaml")).unwrap();
+    let units = compiler::collect_translation_units(&config).unwrap();
+
+    assert_eq!(units.len(), 1);
+    assert!(units[0].ends_with("DBHandler.cpp"));
 }

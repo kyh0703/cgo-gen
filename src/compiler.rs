@@ -70,7 +70,7 @@ pub fn collect_translation_units(config: &Config) -> Result<Vec<PathBuf>> {
 }
 
 fn collect_classified_translation_units(config: &Config, dir: &Path) -> Vec<PathBuf> {
-    config
+    let units = config
         .files
         .model
         .iter()
@@ -79,7 +79,19 @@ fn collect_classified_translation_units(config: &Config, dir: &Path) -> Vec<Path
         .cloned()
         .collect::<BTreeSet<_>>()
         .into_iter()
-        .collect()
+        .collect::<Vec<_>>();
+
+    let source_units = units
+        .iter()
+        .filter(|path| is_source_translation_unit_file(path))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    if source_units.is_empty() {
+        units
+    } else {
+        source_units
+    }
 }
 
 fn add_header_parent_include(args: &mut Vec<String>, header: &Path) {
@@ -163,12 +175,39 @@ fn discover_linux_fallback_include_dirs() -> Vec<PathBuf> {
         includes.push(gcc_include);
     }
 
+    if let Some(sysroot) = discover_command_output_dir(&["c++", "-print-sysroot"]) {
+        includes.extend(linux_sysroot_include_candidates(&sysroot));
+    }
+
+    if let Some(sysroot) = discover_command_output_dir(&["g++", "-print-sysroot"]) {
+        includes.extend(linux_sysroot_include_candidates(&sysroot));
+    }
+
+    includes.extend([
+        PathBuf::from("/usr/include"),
+        PathBuf::from("/usr/local/include"),
+        PathBuf::from("/usr/include/x86_64-linux-gnu"),
+    ]);
+
     includes
         .into_iter()
         .filter(|path| path.exists())
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect()
+}
+
+fn linux_sysroot_include_candidates(sysroot: &Path) -> Vec<PathBuf> {
+    if sysroot.as_os_str().is_empty() {
+        return Vec::new();
+    }
+
+    vec![
+        sysroot.join("usr/include"),
+        sysroot.join("usr/local/include"),
+        sysroot.join("include"),
+        sysroot.join("include-fixed"),
+    ]
 }
 
 fn discover_command_output_dir(command_with_args: &[&str]) -> Option<PathBuf> {
@@ -293,7 +332,7 @@ fn read_compile_db_translation_units(path: &Path, dir: &Path) -> Result<Vec<Path
 
     for command in &commands {
         let file = resolve_command_file(db_dir, command);
-        if !is_translation_unit_file(&file) || !path_is_within(&file, dir) {
+        if !is_source_translation_unit_file(&file) || !path_is_within(&file, dir) {
             continue;
         }
         units.insert(file);
@@ -313,7 +352,7 @@ fn scan_dir_translation_units(dir: &Path) -> Result<Vec<PathBuf>> {
         if !path.is_file() {
             continue;
         }
-        if is_translation_unit_file(&path) {
+        if is_source_translation_unit_file(&path) {
             source_units.insert(path);
         } else if is_header_file(&path) {
             header_units.insert(path);
@@ -377,10 +416,10 @@ fn path_is_within(path: &Path, dir: &Path) -> bool {
     path.starts_with(dir)
 }
 
-fn is_translation_unit_file(path: &Path) -> bool {
+fn is_source_translation_unit_file(path: &Path) -> bool {
     matches!(
         path.extension().and_then(|ext| ext.to_str()),
-        Some("c" | "cc" | "cpp" | "cxx" | "h" | "hh" | "hpp" | "hxx")
+        Some("c" | "cc" | "cpp" | "cxx")
     )
 }
 
