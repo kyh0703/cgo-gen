@@ -170,10 +170,11 @@ output:
     let config = Config::load(&config_path).unwrap();
     let scoped = config.scoped_to_header(config.input.dir.as_ref().unwrap().join("model.hpp"));
 
-    assert_eq!(scoped.input.dir, None);
+    assert_eq!(scoped.input.dir, config.input.dir);
+    assert!(scoped.input.headers.is_empty());
     assert_eq!(
-        scoped.input.headers,
-        vec![config.input.dir.as_ref().unwrap().join("model.hpp")]
+        scoped.target_header,
+        Some(config.input.dir.as_ref().unwrap().join("model.hpp"))
     );
     assert_eq!(scoped.output.header, "model_wrapper.h");
     assert_eq!(scoped.output.source, "model_wrapper.cpp");

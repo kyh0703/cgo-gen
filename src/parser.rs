@@ -21,7 +21,7 @@ pub struct ParsedApi {
     pub enums: Vec<CppEnum>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CppClass {
     pub namespace: Vec<String>,
     pub name: String,
@@ -31,7 +31,7 @@ pub struct CppClass {
     pub has_declared_constructor: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CppFunction {
     pub namespace: Vec<String>,
     pub name: String,
@@ -41,7 +41,7 @@ pub struct CppFunction {
     pub params: Vec<CppParam>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CppMethod {
     pub name: String,
     pub return_type: String,
@@ -51,12 +51,12 @@ pub struct CppMethod {
     pub is_const: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CppConstructor {
     pub params: Vec<CppParam>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CppParam {
     pub name: String,
     pub ty: String,
@@ -64,14 +64,14 @@ pub struct CppParam {
     pub is_function_pointer: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CppEnum {
     pub namespace: Vec<String>,
     pub name: String,
     pub variants: Vec<CppEnumVariant>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CppEnumVariant {
     pub name: String,
     pub value: Option<String>,
@@ -155,13 +155,39 @@ pub fn parse(config: &Config) -> Result<ParsedApi> {
     } else {
         discovered_headers.into_iter().collect()
     };
+    dedupe_api(&mut api);
     Ok(api)
+}
+
+fn dedupe_api(api: &mut ParsedApi) {
+    api.functions = api
+        .functions
+        .clone()
+        .into_iter()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    api.classes = api
+        .classes
+        .clone()
+        .into_iter()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    api.enums = api
+        .enums
+        .clone()
+        .into_iter()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
 }
 
 #[derive(Debug, Clone)]
 struct ParseFilter {
     main_file_only: bool,
     owned_dir: Option<PathBuf>,
+    target_header: Option<PathBuf>,
 }
 
 impl ParseFilter {
@@ -169,6 +195,7 @@ impl ParseFilter {
         Self {
             main_file_only: config.input.dir.is_none(),
             owned_dir: config.input.dir.clone(),
+            target_header: config.target_header.clone(),
         }
     }
 }
@@ -451,7 +478,10 @@ fn should_collect_cursor(cursor: CXCursor, filter: &ParseFilter) -> bool {
         return false;
     }
     if filter.main_file_only {
-        return is_main_file(cursor);
+        if !is_main_file(cursor) {
+            return false;
+        }
+        return matches_target_header(cursor, filter.target_header.as_ref());
     }
     let Some(path) = cursor_file_path(cursor) else {
         return false;
@@ -459,7 +489,32 @@ fn should_collect_cursor(cursor: CXCursor, filter: &ParseFilter) -> bool {
     let Some(dir) = &filter.owned_dir else {
         return false;
     };
-    path_is_within(&path, dir) && is_header_path(&path)
+    path_is_within(&path, dir)
+        && is_header_path(&path)
+        && match filter.target_header.as_ref() {
+            Some(target) => same_path(&path, target),
+            None => true,
+        }
+}
+
+fn matches_target_header(cursor: CXCursor, target_header: Option<&PathBuf>) -> bool {
+    let Some(target_header) = target_header else {
+        return true;
+    };
+    let Some(path) = cursor_file_path(cursor) else {
+        return false;
+    };
+    same_path(&path, target_header)
+}
+
+fn same_path(path: &Path, target: &Path) -> bool {
+    if path == target {
+        return true;
+    }
+    match (path.canonicalize(), target.canonicalize()) {
+        (Ok(path), Ok(target)) => path == target,
+        _ => false,
+    }
 }
 
 fn is_main_file(cursor: CXCursor) -> bool {

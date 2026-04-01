@@ -23,6 +23,8 @@ pub struct Config {
     pub known_model_types: Vec<String>,
     #[serde(skip)]
     pub known_model_projections: Vec<KnownModelProjection>,
+    #[serde(skip)]
+    pub target_header: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -208,8 +210,12 @@ impl Config {
 
     pub fn scoped_to_header(&self, header: PathBuf) -> Self {
         let mut scoped = self.clone();
-        scoped.input.dir = None;
-        scoped.input.headers = vec![header];
+        scoped.target_header = Some(header.clone());
+        if scoped.input.dir.is_none() {
+            scoped.input.headers = vec![header];
+        } else {
+            scoped.input.headers.clear();
+        }
         scoped.apply_output_defaults();
         scoped
     }
@@ -353,10 +359,14 @@ impl Config {
     }
 
     fn infer_output_basename(&self) -> Option<String> {
-        if self.input.headers.len() != 1 {
-            return None;
-        }
-        let header = self.input.headers.first()?;
+        let header = if let Some(header) = self.target_header.as_ref() {
+            header
+        } else {
+            if self.input.headers.len() != 1 {
+                return None;
+            }
+            self.input.headers.first()?
+        };
         let stem = header.file_stem()?.to_str()?;
         Some(format!("{}_wrapper", to_snake_case(stem)))
     }
