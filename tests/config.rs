@@ -25,10 +25,45 @@ output:
 
     let config = Config::load(&config_path).unwrap();
     assert_eq!(config.version, Some(1));
+    assert_eq!(config.input.dir, None);
     assert_eq!(config.input.headers.len(), 1);
     assert!(!config.input.allow_diagnostics);
     assert_eq!(config.output.header, "foo_wrapper.h");
     assert!(config.input.headers[0].is_absolute());
+}
+
+#[test]
+fn loads_dir_only_input_config() {
+    let mut dir = env::temp_dir();
+    dir.push(format!("c_go_config_dir_only_test_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("include")).unwrap();
+    fs::write(dir.join("include/model.hpp"), "class ModelThing {};").unwrap();
+
+    let config_path = dir.join("cppgo-wrap.yaml");
+    fs::write(
+        &config_path,
+        r#"
+version: 1
+input:
+  dir: include
+files:
+  model:
+    - include/model.hpp
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(&config_path).unwrap();
+    let expected_dir = dir.join("include").canonicalize().unwrap();
+    assert!(config.input.headers.is_empty());
+    assert_eq!(config.input.dir.as_ref(), Some(&expected_dir));
+    assert_eq!(config.header_role(&config.files.model[0]), HeaderRole::Model);
+    assert_eq!(config.output.header, "wrapper.h");
+    assert_eq!(config.output.source, "wrapper.cpp");
+    assert_eq!(config.output.ir, "wrapper.ir.yaml");
 }
 
 #[test]
@@ -62,6 +97,30 @@ output:
 }
 
 #[test]
+fn rejects_config_without_dir_or_headers() {
+    let mut dir = env::temp_dir();
+    dir.push(format!("c_go_config_missing_input_test_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+
+    let config_path = dir.join("cppgo-wrap.yaml");
+    fs::write(
+        &config_path,
+        r#"
+version: 1
+input:
+  allow_diagnostics: true
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+
+    let error = Config::load(&config_path).unwrap_err().to_string();
+    assert!(error.contains("config.input.dir or config.input.headers must be set"));
+}
+
+#[test]
 fn derives_output_filenames_from_header_stem() {
     let mut dir = env::temp_dir();
     dir.push(format!("c_go_config_basename_test_{}", std::process::id()));
@@ -90,6 +149,40 @@ output:
     assert!(config.raw_output_dir().ends_with("gen/raw"));
     assert!(config.model_output_dir().ends_with("gen/model"));
     assert!(config.facade_output_dir().ends_with("gen/facade"));
+}
+
+#[test]
+fn scoped_header_from_dir_only_config_switches_back_to_header_mode() {
+    let mut dir = env::temp_dir();
+    dir.push(format!("c_go_config_scoped_dir_only_test_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("include")).unwrap();
+    fs::write(dir.join("include/model.hpp"), "class ModelThing {};").unwrap();
+
+    let config_path = dir.join("cppgo-wrap.yaml");
+    fs::write(
+        &config_path,
+        r#"
+version: 1
+input:
+  dir: include
+files:
+  model:
+    - include/model.hpp
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(&config_path).unwrap();
+    let scoped = config.scoped_to_header(config.files.model[0].clone());
+
+    assert_eq!(scoped.input.dir, None);
+    assert_eq!(scoped.input.headers, vec![config.files.model[0].clone()]);
+    assert_eq!(scoped.output.header, "model_wrapper.h");
+    assert_eq!(scoped.output.source, "model_wrapper.cpp");
+    assert_eq!(scoped.output.ir, "model_wrapper.ir.yaml");
 }
 
 #[test]
