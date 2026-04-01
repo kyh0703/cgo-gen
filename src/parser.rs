@@ -1,6 +1,6 @@
 #![allow(non_upper_case_globals)]
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashSet},
     ffi::{CStr, CString},
     os::raw::{c_int, c_uint, c_void},
     path::{Path, PathBuf},
@@ -19,6 +19,7 @@ pub struct ParsedApi {
     pub functions: Vec<CppFunction>,
     pub classes: Vec<CppClass>,
     pub enums: Vec<CppEnum>,
+    pub callbacks: Vec<CppCallbackTypedef>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -64,6 +65,17 @@ pub struct CppParam {
     pub ty: String,
     pub canonical_ty: String,
     pub is_function_pointer: bool,
+    pub callback_typedef: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct CppCallbackTypedef {
+    pub source_header: PathBuf,
+    pub namespace: Vec<String>,
+    pub name: String,
+    pub return_type: String,
+    pub return_canonical_type: String,
+    pub params: Vec<CppParam>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -98,6 +110,12 @@ impl ParsedApi {
             .collect();
         filtered.enums = self
             .enums
+            .iter()
+            .filter(|item| same_path(&item.source_header, header))
+            .cloned()
+            .collect();
+        filtered.callbacks = self
+            .callbacks
             .iter()
             .filter(|item| same_path(&item.source_header, header))
             .cloned()
@@ -210,6 +228,13 @@ fn dedupe_api(api: &mut ParsedApi) {
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
+    api.callbacks = api
+        .callbacks
+        .clone()
+        .into_iter()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
 }
 
 #[derive(Debug, Clone)]
@@ -276,6 +301,11 @@ fn collect_entity(
             let Some(name) = cursor_spelling(cursor) else {
                 return Ok(());
             };
+            if let Some(callback) = parse_callback_typedef(cursor, namespace.to_vec(), name.clone())?
+            {
+                api.callbacks.push(callback);
+                return Ok(());
+            }
             let Some(enum_cursor) = direct_children(cursor)
                 .into_iter()
                 .find(|child| unsafe { clang_getCursorKind(*child) } == CXCursor_EnumDecl)
@@ -395,6 +425,59 @@ fn parse_enum_with_name(cursor: CXCursor, namespace: Vec<String>, name: String) 
     }
 }
 
+fn parse_callback_typedef(
+    cursor: CXCursor,
+    namespace: Vec<String>,
+    name: String,
+) -> Result<Option<CppCallbackTypedef>> {
+    let underlying = unsafe { clang_getTypedefDeclUnderlyingType(cursor) };
+    let function_type = callback_function_type(underlying);
+    if function_type.kind == CXType_Invalid {
+        return Ok(None);
+    }
+
+    let source_header = normalized_cursor_file_path(cursor)
+        .ok_or_else(|| anyhow!("failed to determine source header for callback typedef `{name}`"))?;
+    let return_type = canonicalize_type_name(&unsafe { type_spelling(clang_getResultType(function_type)) });
+    let return_canonical_type = canonicalize_type_name(&unsafe {
+        type_spelling(clang_getCanonicalType(clang_getResultType(function_type)))
+    });
+
+    let child_params = direct_children(cursor)
+        .into_iter()
+        .filter(|child| unsafe { clang_getCursorKind(*child) } == CXCursor_ParmDecl)
+        .map(|arg| CppParam {
+            name: cursor_spelling(arg).unwrap_or_else(|| "arg".to_string()),
+            ty: canonicalize_type_name(&cursor_type_spelling(arg)),
+            canonical_ty: canonicalize_type_name(&cursor_canonical_type_spelling(arg)),
+            is_function_pointer: cursor_is_function_pointer(arg),
+            callback_typedef: callback_typedef_name_from_type(unsafe { clang_getCursorType(arg) }),
+        })
+        .enumerate()
+        .map(|(index, mut param)| {
+            if param.name.is_empty() || param.name == "arg" {
+                param.name = format!("arg{index}");
+            }
+            param
+        })
+        .collect::<Vec<_>>();
+
+    let params = if !child_params.is_empty() {
+        child_params
+    } else {
+        parse_callback_params_from_type(function_type)
+    };
+
+    Ok(Some(CppCallbackTypedef {
+        source_header,
+        namespace,
+        name,
+        return_type,
+        return_canonical_type,
+        params,
+    }))
+}
+
 fn enum_decl_name(cursor: CXCursor) -> Option<String> {
     cursor_spelling(cursor).filter(|name| !is_unnamed_enum_spelling(name))
 }
@@ -416,6 +499,7 @@ fn parse_params(cursor: CXCursor) -> Vec<CppParam> {
             ty: canonicalize_type_name(&cursor_type_spelling(arg)),
             canonical_ty: canonicalize_type_name(&cursor_canonical_type_spelling(arg)),
             is_function_pointer: cursor_is_function_pointer(arg),
+            callback_typedef: callback_typedef_name_from_type(unsafe { clang_getCursorType(arg) }),
         })
         .enumerate()
         .map(|(index, mut param)| {
@@ -423,6 +507,27 @@ fn parse_params(cursor: CXCursor) -> Vec<CppParam> {
                 param.name = format!("arg{index}");
             }
             param
+        })
+        .collect()
+}
+
+fn parse_callback_params_from_type(function_type: CXType) -> Vec<CppParam> {
+    let count = unsafe { clang_getNumArgTypes(function_type) };
+    if count < 0 {
+        return Vec::new();
+    }
+
+    (0..count)
+        .map(|index| unsafe { clang_getArgType(function_type, index as c_uint) })
+        .enumerate()
+        .map(|(index, ty)| CppParam {
+            name: format!("arg{index}"),
+            ty: canonicalize_type_name(&unsafe { type_spelling(ty) }),
+            canonical_ty: canonicalize_type_name(&unsafe {
+                type_spelling(clang_getCanonicalType(ty))
+            }),
+            is_function_pointer: is_function_pointer_type(ty),
+            callback_typedef: callback_typedef_name_from_type(ty),
         })
         .collect()
 }
@@ -467,6 +572,45 @@ fn is_function_pointer_type(ty: CXType) -> bool {
         }
         _ => false,
     }
+}
+
+fn callback_function_type(ty: CXType) -> CXType {
+    let canonical = unsafe { clang_getCanonicalType(ty) };
+    match canonical.kind {
+        CXType_FunctionProto | CXType_FunctionNoProto => canonical,
+        CXType_Pointer => {
+            let pointee = unsafe { clang_getPointeeType(canonical) };
+            if matches!(pointee.kind, CXType_FunctionProto | CXType_FunctionNoProto) {
+                pointee
+            } else {
+                invalid_type()
+            }
+        }
+        _ => invalid_type(),
+    }
+}
+
+fn invalid_type() -> CXType {
+    CXType {
+        kind: CXType_Invalid,
+        data: [ptr::null_mut(); 2],
+    }
+}
+
+fn callback_typedef_name_from_type(ty: CXType) -> Option<String> {
+    if !is_function_pointer_type(ty) {
+        return None;
+    }
+
+    let declaration = unsafe { clang_getTypeDeclaration(ty) };
+    if unsafe { clang_equalCursors(declaration, clang_getNullCursor()) } != 0 {
+        return None;
+    }
+    if unsafe { clang_getCursorKind(declaration) } != CXCursor_TypedefDecl {
+        return None;
+    }
+
+    cursor_spelling(declaration)
 }
 
 fn direct_children(cursor: CXCursor) -> Vec<CXCursor> {
