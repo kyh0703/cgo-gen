@@ -1,4 +1,8 @@
-use std::{collections::BTreeSet, fs, path::Path};
+use std::{
+    collections::BTreeSet,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result, bail};
 
@@ -6,7 +10,7 @@ use crate::{
     config::Config,
     facade,
     ir::{IrEnum, IrFunction, IrModule, IrType},
-    model, parser,
+    parser,
 };
 
 pub fn generate_all(config: &Config, write_ir: bool) -> Result<()> {
@@ -40,20 +44,30 @@ pub fn generate_all(config: &Config, write_ir: bool) -> Result<()> {
     Ok(())
 }
 
-fn generation_headers(config: &Config) -> Vec<std::path::PathBuf> {
+fn generation_headers(config: &Config) -> Vec<PathBuf> {
     if config.input.dir.is_some() {
-        return config
-            .files
-            .model
-            .iter()
-            .chain(config.files.facade.iter())
-            .cloned()
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
+        return scan_generation_headers(config.input.dir.as_ref().unwrap()).unwrap_or_default();
     }
 
     config.input.headers.clone()
+}
+
+fn scan_generation_headers(dir: &Path) -> Result<Vec<PathBuf>> {
+    let mut headers = BTreeSet::new();
+    for entry in fs::read_dir(dir)
+        .with_context(|| format!("failed to read generation directory: {}", dir.display()))?
+    {
+        let path = entry?.path();
+        if path.is_file()
+            && matches!(
+                path.extension().and_then(|ext| ext.to_str()),
+                Some("h" | "hh" | "hpp" | "hxx")
+            )
+        {
+            headers.insert(path);
+        }
+    }
+    Ok(headers.into_iter().collect())
 }
 
 pub fn prepare_config(config: &Config) -> Result<Config> {
@@ -68,9 +82,9 @@ pub fn prepare_config(config: &Config) -> Result<Config> {
 fn collect_known_model_types(config: &Config) -> Result<Vec<String>> {
     let mut known_model_types = BTreeSet::new();
 
-    for header in &config.files.model {
+    for header in generation_headers(config) {
         let scoped = config
-            .scoped_to_header(header.clone())
+            .scoped_to_header(header)
             .with_known_model_types(Vec::new());
         let parsed = parser::parse(&scoped)?;
         for class in parsed.classes {
@@ -91,9 +105,9 @@ fn collect_known_model_projections(
 ) -> Result<Vec<crate::config::KnownModelProjection>> {
     let mut projections = Vec::new();
 
-    for header in &config.files.model {
+    for header in generation_headers(config) {
         let scoped = config
-            .scoped_to_header(header.clone())
+            .scoped_to_header(header)
             .with_known_model_types(Vec::new());
         let parsed = parser::parse(&scoped)?;
         let ir = crate::ir::normalize(&scoped, &parsed)?;
@@ -118,27 +132,16 @@ pub fn generate(config: &Config, ir: &IrModule, write_ir: bool) -> Result<()> {
         .with_context(|| format!("failed to write header: {}", header_path.display()))?;
     fs::write(&source_path, render_source(config, ir))
         .with_context(|| format!("failed to write source: {}", source_path.display()))?;
-    for go_model in model::render_go_models(config, ir)? {
-        fs::create_dir_all(config.model_output_dir()).with_context(|| {
+    for go_file in facade::render_go_facade(config, ir)? {
+        fs::create_dir_all(config.go_output_dir()).with_context(|| {
             format!(
-                "failed to create model output dir: {}",
-                config.model_output_dir().display()
+                "failed to create go output dir: {}",
+                config.go_output_dir().display()
             )
         })?;
-        let go_path = config.model_output_dir().join(&go_model.filename);
-        fs::write(&go_path, go_model.contents)
-            .with_context(|| format!("failed to write Go models: {}", go_path.display()))?;
-    }
-    for go_facade in facade::render_go_facade(config, ir)? {
-        fs::create_dir_all(config.facade_output_dir()).with_context(|| {
-            format!(
-                "failed to create facade output dir: {}",
-                config.facade_output_dir().display()
-            )
-        })?;
-        let go_path = config.facade_output_dir().join(&go_facade.filename);
-        fs::write(&go_path, go_facade.contents)
-            .with_context(|| format!("failed to write Go facade: {}", go_path.display()))?;
+        let go_path = config.go_output_dir().join(&go_file.filename);
+        fs::write(&go_path, go_file.contents)
+            .with_context(|| format!("failed to write Go wrapper: {}", go_path.display()))?;
     }
     if write_ir {
         let serialized = serde_yaml::to_string(ir)?;
@@ -231,7 +234,7 @@ pub fn render_source(config: &Config, ir: &IrModule) -> String {
 }
 
 pub fn render_go_structs(config: &Config, ir: &IrModule) -> Result<Vec<GeneratedGoFile>> {
-    model::render_go_structs(config, ir)
+    facade::render_go_facade(config, ir)
 }
 
 fn render_enum_decl(out: &mut String, item: &IrEnum) {
@@ -245,7 +248,7 @@ fn render_enum_decl(out: &mut String, item: &IrEnum) {
     out.push_str(&format!("}} {};\n\n", item.name));
 }
 
-pub use model::GeneratedGoFile;
+pub use crate::model::GeneratedGoFile;
 
 fn render_function_decl(function: &IrFunction) -> String {
     let params = render_param_list(function);

@@ -12,10 +12,6 @@ input:
 output:
   dir: ./pkg/sil-real-model
 
-files:
-  model:
-    - ../tests/fixtures/isaamaster/include/IsAAMaster.h
-
 naming:
   prefix: sil
   style: preserve

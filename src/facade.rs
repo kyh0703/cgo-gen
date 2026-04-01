@@ -6,7 +6,7 @@ use std::{
 use anyhow::{Result, bail};
 
 use crate::{
-    config::{Config, HeaderRole, KnownModelProjection},
+    config::{Config, KnownModelProjection},
     ir::{IrFunction, IrModule, IrType},
     model::GeneratedGoFile,
 };
@@ -34,16 +34,7 @@ enum AnalyzedMethod<'a> {
 }
 
 pub fn render_go_facade(config: &Config, ir: &IrModule) -> Result<Vec<GeneratedGoFile>> {
-    let role = config
-        .input
-        .headers
-        .first()
-        .map(|header| config.header_role(header))
-        .unwrap_or(HeaderRole::Unclassified);
-    if role != HeaderRole::Facade {
-        return Ok(Vec::new());
-    }
-
+    let enums = ir.enums.iter().collect::<Vec<_>>();
     let functions = ir
         .functions
         .iter()
@@ -52,7 +43,7 @@ pub fn render_go_facade(config: &Config, ir: &IrModule) -> Result<Vec<GeneratedG
         .collect::<Vec<_>>();
     let classes = collect_facade_classes(config, ir)?;
 
-    if functions.is_empty() && classes.is_empty() {
+    if functions.is_empty() && classes.is_empty() && enums.is_empty() {
         return Ok(Vec::new());
     }
 
@@ -60,7 +51,7 @@ pub fn render_go_facade(config: &Config, ir: &IrModule) -> Result<Vec<GeneratedG
 
     Ok(vec![GeneratedGoFile {
         filename: config.go_filename(""),
-        contents: render_go_facade_file(config, &functions, &classes),
+        contents: render_go_facade_file(config, &enums, &functions, &classes),
     }])
 }
 
@@ -150,11 +141,13 @@ fn collect_facade_classes<'a>(
 
 fn render_go_facade_file(
     config: &Config,
+    enums: &[&crate::ir::IrEnum],
     functions: &[&IrFunction],
     classes: &[AnalyzedFacadeClass<'_>],
 ) -> String {
     let package_name = go_package_name(&config.output.dir);
     let includes = collect_include_headers(config, classes);
+    let requires_cgo = !functions.is_empty() || !classes.is_empty();
     let requires_errors = !classes.is_empty()
         || functions
             .iter()
@@ -182,18 +175,25 @@ fn render_go_facade_file(
 
     let mut out = String::new();
     out.push_str(&format!("package {}\n\n", package_name));
-    out.push_str("/*\n");
-    out.push_str("#include <stdlib.h>\n");
-    for include in includes {
-        out.push_str(&format!("#include \"{}\"\n", include));
+    if requires_cgo {
+        out.push_str("/*\n");
+        out.push_str("#include <stdlib.h>\n");
+        for include in includes {
+            out.push_str(&format!("#include \"{}\"\n", include));
+        }
+        out.push_str("*/\n");
+        out.push_str("import \"C\"\n\n");
     }
-    out.push_str("*/\n");
-    out.push_str("import \"C\"\n\n");
     if requires_errors {
         out.push_str("import \"errors\"\n\n");
     }
     if requires_unsafe {
         out.push_str("import \"unsafe\"\n\n");
+    }
+
+    for item in enums {
+        out.push_str(&render_go_enum(item));
+        out.push('\n');
     }
 
     let used_models = collect_used_models(classes);
@@ -224,6 +224,19 @@ fn render_go_facade_file(
         }
     }
 
+    out
+}
+
+fn render_go_enum(item: &crate::ir::IrEnum) -> String {
+    let mut out = String::new();
+    let name = leaf_cpp_name(&item.cpp_name);
+    out.push_str(&format!("type {} int64\n\n", name));
+    out.push_str("const (\n");
+    for variant in &item.variants {
+        let value = variant.value.as_deref().unwrap_or("0");
+        out.push_str(&format!("    {} {} = {}\n", variant.name, name, value));
+    }
+    out.push_str(")\n");
     out
 }
 

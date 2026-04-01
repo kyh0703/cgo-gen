@@ -2,9 +2,7 @@ version: 1
 
 # Edit these paths for your environment before running the command.
 input:
-  headers:
-    - /absolute/path/to/src/IE/SIL/IsAAMaster.h
-    - /absolute/path/to/src/IE/SIL/IsAAUser.h
+  dir: /absolute/path/to/src/IE/SIL
   clang_args:
     - -std=c++11
     - -x
@@ -21,12 +19,6 @@ input:
 
 output:
   dir: ./pkg/sil
-
-files:
-  model:
-    - /absolute/path/to/src/IE/SIL/IsAAMaster.h
-  facade:
-    - /absolute/path/to/src/IE/SIL/IsAAUser.h
 
 naming:
   prefix: sil

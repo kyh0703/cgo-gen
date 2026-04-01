@@ -209,7 +209,7 @@ naming:
     let config = Config::load(&config_path).unwrap();
     generator::generate_all(&config, true).unwrap();
 
-    let go_facade = fs::read_to_string(root.join("out/facade/api_wrapper.go")).unwrap();
+    let go_facade = fs::read_to_string(root.join("out/go/api_wrapper.go")).unwrap();
 
     assert!(go_facade.contains("type Api struct {"));
     assert!(go_facade.contains("ptr *C.ApiHandle"));
@@ -312,7 +312,7 @@ naming:
     let raw_header = fs::read_to_string(root.join("out/raw/api_wrapper.h")).unwrap();
     let raw_source = fs::read_to_string(root.join("out/raw/api_wrapper.cpp")).unwrap();
     let ir_yaml = fs::read_to_string(root.join("out/raw/api_wrapper.ir.yaml")).unwrap();
-    let go_facade = fs::read_to_string(root.join("out/facade/api_wrapper.go")).unwrap();
+    let go_facade = fs::read_to_string(root.join("out/go/api_wrapper.go")).unwrap();
 
     assert!(raw_header.contains("typedef struct UnknownThingHandle UnknownThingHandle;"));
     assert!(raw_header.contains(
@@ -409,7 +409,7 @@ naming:
     let raw_header = fs::read_to_string(root.join("out/raw/api_wrapper.h")).unwrap();
     let raw_source = fs::read_to_string(root.join("out/raw/api_wrapper.cpp")).unwrap();
     let ir_yaml = fs::read_to_string(root.join("out/raw/api_wrapper.ir.yaml")).unwrap();
-    let go_facade = fs::read_to_string(root.join("out/facade/api_wrapper.go")).unwrap();
+    let go_facade = fs::read_to_string(root.join("out/go/api_wrapper.go")).unwrap();
 
     assert!(
         raw_header
@@ -482,7 +482,7 @@ naming:
     let config = Config::load(&config_path).unwrap();
     generator::generate_all(&config, true).unwrap();
 
-    let go_facade = fs::read_to_string(root.join("out/facade/api_wrapper.go")).unwrap();
+    let go_facade = fs::read_to_string(root.join("out/go/api_wrapper.go")).unwrap();
 
     assert!(go_facade.contains("func (a *Api) ListThing(id int) bool {"));
     assert!(go_facade.contains("return bool(C.cgowrap_Api_ListThing(a.ptr, C.int(id)))"));
@@ -552,7 +552,7 @@ naming:
     let config = Config::load(&config_path).unwrap();
     generator::generate_all(&config, true).unwrap();
 
-    let go_facade = fs::read_to_string(root.join("out/facade/api_wrapper.go")).unwrap();
+    let go_facade = fs::read_to_string(root.join("out/go/api_wrapper.go")).unwrap();
 
     assert!(go_facade.contains("type Api struct {"));
     assert!(go_facade.contains("func (a *Api) IsReady() bool {"));
