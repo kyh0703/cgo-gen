@@ -30,3 +30,47 @@ fn skips_go_struct_generation_when_not_configured() {
     let go = render_go_structs(&config, &ir).unwrap();
     assert!(go.is_empty());
 }
+
+#[test]
+fn normalizes_const_char_value_types() {
+    let root = std::env::temp_dir().join(format!(
+        "c_go_const_char_value_{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("include")).unwrap();
+    std::fs::write(
+        root.join("include/Api.hpp"),
+        r#"
+        class Api {
+        public:
+            const char GetMarker() const { return 'A'; }
+        };
+        "#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("config.yaml"),
+        r#"
+version: 1
+input:
+  headers:
+    - include/Api.hpp
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(root.join("config.yaml")).unwrap();
+    let parsed = parser::parse(&config).unwrap();
+    let ir = ir::normalize(&config, &parsed).unwrap();
+
+    let marker = ir
+        .functions
+        .iter()
+        .find(|function| function.cpp_name == "Api::GetMarker")
+        .unwrap();
+    assert_eq!(marker.returns.cpp_type, "const char");
+    assert_eq!(marker.returns.c_type, "const char");
+}

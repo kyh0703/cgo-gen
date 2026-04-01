@@ -609,8 +609,10 @@ fn normalize_type(cpp_type: &str) -> Result<IrType> {
     match trimmed {
         "void" => Ok(primitive_type(trimmed)),
         "bool" | "int" | "short" | "long" | "long long" | "float" | "double" | "size_t"
-        | "char" | "unsigned" | "unsigned int" | "unsigned short" | "unsigned long"
-        | "unsigned long long" | "signed char" | "unsigned char" => Ok(primitive_type(trimmed)),
+        | "char" | "const char" | "unsigned" | "unsigned int" | "unsigned short"
+        | "unsigned long" | "unsigned long long" | "signed char" | "unsigned char" => {
+            Ok(primitive_type(trimmed))
+        }
         "uint8" => Ok(alias_primitive_type(trimmed, "uint8_t")),
         "uint16" => Ok(alias_primitive_type(trimmed, "uint16_t")),
         "uint32" => Ok(alias_primitive_type(trimmed, "uint32_t")),
