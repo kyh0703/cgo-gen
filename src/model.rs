@@ -3,7 +3,7 @@ use std::{
     path::Path,
 };
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, anyhow};
 
 use crate::{
     config::{Config, HeaderRole, KnownModelField, KnownModelProjection},
@@ -267,31 +267,21 @@ fn build_model_projection(
             continue;
         }
 
-        let getter_ty = go_type_for_ir(&function.returns).ok_or_else(|| {
-            anyhow!(
-                "getter `{}` on `{owner}` has unsupported Go projection type `{}`",
-                function.cpp_name,
-                function.returns.cpp_type
-            )
-        })?;
+        let Some(getter_ty) = go_type_for_ir(&function.returns) else {
+            continue;
+        };
         let setter_param = setter.params.get(1).ok_or_else(|| {
             anyhow!(
                 "setter `{}` on `{owner}` is missing its value parameter",
                 setter.cpp_name
             )
         })?;
-        let setter_ty = go_type_for_ir(&setter_param.ty).ok_or_else(|| {
-            anyhow!(
-                "setter `{}` on `{owner}` has unsupported Go projection type `{}`",
-                setter.cpp_name,
-                setter_param.ty.cpp_type
-            )
-        })?;
+        let Some(setter_ty) = go_type_for_ir(&setter_param.ty) else {
+            continue;
+        };
 
         if getter_ty != setter_ty {
-            bail!(
-                "getter/setter type mismatch for `{owner}` field `{suffix}`: getter -> {getter_ty}, setter -> {setter_ty}"
-            );
+            continue;
         }
 
         fields.push(ModelProjectionField {
