@@ -10,30 +10,29 @@ CMD             := $(CURRENT_DIR)/cmd/simple-go-struct
 
 .PHONY: gen
 gen:
-	@echo "🔄 Generating wrapper and Go struct files..."
+	@echo "Generating handle-backed model/facade wrappers..."
 	@cd ../.. && cargo run --bin c-go -- generate --config examples/simple-go-struct/config.yaml --dump-ir
-	@echo "✅ Generation complete"
+	@echo "Generation complete"
 
 .PHONY: build
 build: gen
-	@echo "🔨 Building Go application..."
+	@echo "Building Go application..."
 	@mkdir -p $(BUILD_BIN)
 	@mkdir -p $(GO_CACHE)
-	@GOCACHE=$(GO_CACHE) CGO_ENABLED=0 $(GO) build -o $(BUILD_BIN)/$(TARGET) $(CMD)
-	@echo "✅ Build complete: $(BUILD_BIN)/$(TARGET)"
+	@GOCACHE=$(GO_CACHE) CGO_ENABLED=1 $(GO) build -o $(BUILD_BIN)/$(TARGET) $(CMD)
+	@echo "Build complete: $(BUILD_BIN)/$(TARGET)"
 
 .PHONY: run
 run: build
-	@echo "🔄 Running Go application..."
+	@echo "Running Go application..."
 	@$(BUILD_BIN)/$(TARGET)
 
 .PHONY: clean
 clean:
-	@echo "🧹 Cleaning up..."
+	@echo "Cleaning up..."
 	@rm -rf $(BUILD_DIR)
 	@rm -rf $(GO_CACHE)
-	@rm -f $(CURRENT_DIR)/pkg/model/thing_model_wrapper.h
-	@rm -f $(CURRENT_DIR)/pkg/model/thing_model_wrapper.cpp
-	@rm -f $(CURRENT_DIR)/pkg/model/thing_model_wrapper.ir.yaml
-	@rm -f $(CURRENT_DIR)/pkg/model/thing_model_wrapper.go
-	@echo "✅ Clean complete"
+	@rm -f $(CURRENT_DIR)/pkg/demo/thing_model_wrapper.go
+	@rm -f $(CURRENT_DIR)/pkg/demo/thing_api_wrapper.go
+	@rm -rf $(CURRENT_DIR)/pkg/demo/raw
+	@echo "Clean complete"

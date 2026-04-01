@@ -26,7 +26,7 @@ pub fn render_go_facade(config: &Config, ir: &IrModule) -> Result<Vec<GeneratedG
         .functions
         .iter()
         .filter(|function| function.kind == "function")
-        .filter(|function| free_function_supported(function))
+        .filter(|function| free_function_supported(config, function))
         .collect::<Vec<_>>();
     let classes = collect_facade_classes(config, ir)?;
 
@@ -55,7 +55,9 @@ fn collect_facade_classes<'a>(
         let Some(owner) = function.owner_cpp_type.as_deref() else {
             continue;
         };
-        methods_by_owner.entry(owner).or_default().push(function);
+        if method_supported(config, function) {
+            methods_by_owner.entry(owner).or_default().push(function);
+        }
     }
 
     let constructors = ir
@@ -100,7 +102,7 @@ fn collect_facade_classes<'a>(
         if !constructor
             .params
             .iter()
-            .all(|param| go_param_supported(&param.ty))
+            .all(|param| go_param_supported(config, &param.ty))
         {
             continue;
         }
@@ -131,14 +133,20 @@ fn render_go_facade_file(
     let requires_errors = !classes.is_empty()
         || functions
             .iter()
-            .any(|function| matches!(function.returns.kind.as_str(), "string" | "c_string"));
+            .any(|function| matches!(function.returns.kind.as_str(), "string" | "c_string"))
+        || classes.iter().any(|class| {
+            class
+                .methods
+                .iter()
+                .any(|function| matches!(function.returns.kind.as_str(), "string" | "c_string"))
+        });
     let requires_unsafe = functions
         .iter()
         .any(|function| has_string_params(function.params.iter()))
         || classes.iter().any(|class| {
             has_string_params(class.constructor.params.iter())
                 || class
-                    .general_methods
+                    .methods
                     .iter()
                     .any(|function| has_string_params(function.params.iter().skip(1)))
         });
@@ -175,11 +183,11 @@ fn render_go_facade_file(
     for class in classes {
         out.push_str(&render_facade_class(class));
         out.push('\n');
-        out.push_str(&render_facade_constructor(class));
+        out.push_str(&render_facade_constructor(config, class));
         out.push('\n');
         out.push_str(&render_facade_close(class));
         out.push('\n');
-        for method in &class.general_methods {
+        for method in &class.methods {
             out.push_str(&render_general_api_method(config, class, method));
             out.push('\n');
         }
@@ -208,50 +216,47 @@ fn render_facade_class(class: &AnalyzedFacadeClass<'_>) -> String {
     )
 }
 
-fn render_facade_constructor(class: &AnalyzedFacadeClass<'_>) -> String {
-    let params = class
-        .constructor
-        .params
-        .iter()
-        .map(|param| format!("{} {}", param.name, go_type_for_ir(&param.ty).unwrap()))
-        .collect::<Vec<_>>()
-        .join(", ");
+fn render_facade_constructor(config: &Config, class: &AnalyzedFacadeClass<'_>) -> String {
     let constructor_params = class.constructor.params.iter().collect::<Vec<_>>();
-    let (setup_lines, cleanup_lines, rendered_args) = render_call_prep(&constructor_params);
+    let params = render_param_list(config, &constructor_params);
+    let prep = render_call_prep(config, &constructor_params);
 
     let mut out = format!(
         "func New{}({}) (*{}, error) {{\n",
         class.go_name, params, class.go_name
     );
-    for line in setup_lines {
+    for line in prep.setup_lines {
         out.push_str("    ");
         out.push_str(&line);
         out.push('\n');
     }
-    for line in cleanup_lines {
+    for line in prep.defer_lines {
         out.push_str("    ");
         out.push_str(&line);
         out.push('\n');
     }
     out.push_str(&format!(
-        "    ptr := C.{}({})\n    if ptr == nil {{\n        return nil, errors.New(\"wrapper returned nil facade handle\")\n    }}\n    return &{}{{ptr: ptr}}, nil\n}}\n",
+        "    ptr := C.{}({})\n",
         class.constructor.name,
-        rendered_args.join(", "),
+        prep.args.join(", "),
+    ));
+    for line in prep.post_call_lines {
+        out.push_str("    ");
+        out.push_str(&line);
+        out.push('\n');
+    }
+    out.push_str(&format!(
+        "    if ptr == nil {{\n        return nil, errors.New(\"wrapper returned nil facade handle\")\n    }}\n    return &{}{{ptr: ptr}}, nil\n}}\n",
         class.go_name
     ));
     out
 }
 
 fn render_facade_close(class: &AnalyzedFacadeClass<'_>) -> String {
+    let receiver = receiver_name(&class.go_name);
     format!(
         "func ({} *{}) Close() {{\n    if {} == nil || {}.ptr == nil {{\n        return\n    }}\n    C.{}({}.ptr)\n    {}.ptr = nil\n}}\n",
-        receiver_name(&class.go_name),
-        class.go_name,
-        receiver_name(&class.go_name),
-        receiver_name(&class.go_name),
-        class.destructor.name,
-        receiver_name(&class.go_name),
-        receiver_name(&class.go_name),
+        receiver, class.go_name, receiver, receiver, class.destructor.name, receiver, receiver,
     )
 }
 
@@ -262,17 +267,13 @@ fn render_general_api_method(
 ) -> String {
     let receiver = receiver_name(&class.go_name);
     let method_params = function.params.iter().skip(1).collect::<Vec<_>>();
-    let params = method_params
-        .iter()
-        .map(|param| format!("{} {}", param.name, go_type_for_ir(&param.ty).unwrap()))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let (setup_lines, cleanup_lines, rendered_args) = render_call_prep(&method_params);
+    let params = render_param_list(config, &method_params);
+    let prep = render_call_prep(config, &method_params);
     let call = format!(
         "C.{}({})",
         function.name,
         std::iter::once(format!("{receiver}.ptr"))
-            .chain(rendered_args)
+            .chain(prep.args)
             .collect::<Vec<_>>()
             .join(", ")
     );
@@ -282,7 +283,7 @@ fn render_general_api_method(
         "func ({} *{}) {}({})",
         receiver,
         class.go_name,
-        go_method_export_name(function, false),
+        go_method_export_name(function),
         params
     ));
     match function.returns.kind.as_str() {
@@ -308,92 +309,218 @@ fn render_general_api_method(
         )),
     }
     out.push_str("    }\n");
-    for line in setup_lines {
+    for line in prep.setup_lines {
         out.push_str("    ");
         out.push_str(&line);
         out.push('\n');
     }
-    for line in cleanup_lines {
+    for line in prep.defer_lines {
         out.push_str("    ");
         out.push_str(&line);
         out.push('\n');
     }
     match function.returns.kind.as_str() {
-        "void" => out.push_str(&format!("    {}\n", call)),
-        "string" => out.push_str(&format!(
-            "    raw := {}\n    if raw == nil {{\n        return \"\", errors.New(\"wrapper returned nil string\")\n    }}\n    defer C.{}_string_free(raw)\n    return C.GoString(raw), nil\n",
-            call, config.naming.prefix
-        )),
-        "c_string" => out.push_str(&format!(
-            "    raw := {}\n    if raw == nil {{\n        return \"\", errors.New(\"wrapper returned nil string\")\n    }}\n    return C.GoString(raw), nil\n",
-            call
-        )),
-        _ => out.push_str(&format!(
-            "    return {}({})\n",
-            go_type_for_ir(&function.returns).unwrap(),
-            call
-        )),
+        "void" => {
+            out.push_str(&format!("    {}\n", call));
+            for line in prep.post_call_lines {
+                out.push_str("    ");
+                out.push_str(&line);
+                out.push('\n');
+            }
+        }
+        "string" => {
+            out.push_str(&format!("    raw := {}\n", call));
+            for line in prep.post_call_lines {
+                out.push_str("    ");
+                out.push_str(&line);
+                out.push('\n');
+            }
+            out.push_str(&format!(
+                "    if raw == nil {{\n        return \"\", errors.New(\"wrapper returned nil string\")\n    }}\n    defer C.{}_string_free(raw)\n    return C.GoString(raw), nil\n",
+                config.naming.prefix
+            ));
+        }
+        "c_string" => {
+            out.push_str(&format!("    raw := {}\n", call));
+            for line in prep.post_call_lines {
+                out.push_str("    ");
+                out.push_str(&line);
+                out.push('\n');
+            }
+            out.push_str(
+                "    if raw == nil {\n        return \"\", errors.New(\"wrapper returned nil string\")\n    }\n    return C.GoString(raw), nil\n",
+            );
+        }
+        _ => {
+            out.push_str(&format!("    result := {}\n", call));
+            for line in prep.post_call_lines {
+                out.push_str("    ");
+                out.push_str(&line);
+                out.push('\n');
+            }
+            out.push_str(&format!(
+                "    return {}(result)\n",
+                go_type_for_ir(&function.returns).unwrap(),
+            ));
+        }
     }
     out.push_str("}\n");
     out
 }
 
 fn render_free_function(config: &Config, function: &IrFunction) -> String {
-    let go_name = go_facade_export_name(function);
     let params_list = function.params.iter().collect::<Vec<_>>();
-    let params = params_list
-        .iter()
-        .map(|param| format!("{} {}", param.name, go_type_for_ir(&param.ty).unwrap()))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let (setup_lines, cleanup_lines, rendered_args) = render_call_prep(&params_list);
-    let call = format!("C.{}({})", function.name, rendered_args.join(", "));
+    let params = render_param_list(config, &params_list);
+    let prep = render_call_prep(config, &params_list);
+    let call = format!("C.{}({})", function.name, prep.args.join(", "));
+    let go_name = go_facade_export_name(function);
 
     match function.returns.kind.as_str() {
         "void" => {
             let mut out = format!("func {}({}) {{\n", go_name, params);
-            for line in setup_lines {
+            for line in prep.setup_lines {
                 out.push_str("    ");
                 out.push_str(&line);
                 out.push('\n');
             }
-            for line in cleanup_lines {
+            for line in prep.defer_lines {
                 out.push_str("    ");
                 out.push_str(&line);
                 out.push('\n');
             }
             out.push_str(&format!("    {}\n", call));
-            out.push('}');
+            for line in prep.post_call_lines {
+                out.push_str("    ");
+                out.push_str(&line);
+                out.push('\n');
+            }
+            out.push_str("}\n");
             out
         }
-        "string" => format!(
-            "func {}({}) (string, error) {{\n{}{}    raw := {}\n    if raw == nil {{\n        return \"\", errors.New(\"wrapper returned nil string\")\n    }}\n    defer C.{}_string_free(raw)\n    return C.GoString(raw), nil\n}}",
-            go_name,
-            params,
-            indented_lines(&setup_lines),
-            indented_lines(&cleanup_lines),
-            call,
-            config.naming.prefix
-        ),
-        "c_string" => format!(
-            "func {}({}) (string, error) {{\n{}{}    raw := {}\n    if raw == nil {{\n        return \"\", errors.New(\"wrapper returned nil string\")\n    }}\n    return C.GoString(raw), nil\n}}",
-            go_name,
-            params,
-            indented_lines(&setup_lines),
-            indented_lines(&cleanup_lines),
-            call
-        ),
-        _ => format!(
-            "func {}({}) {} {{\n{}{}    return {}({})\n}}",
-            go_name,
-            params,
-            go_type_for_ir(&function.returns).unwrap(),
-            indented_lines(&setup_lines),
-            indented_lines(&cleanup_lines),
-            go_type_for_ir(&function.returns).unwrap(),
-            call
-        ),
+        "string" => {
+            let mut out = format!("func {}({}) (string, error) {{\n", go_name, params);
+            out.push_str(&indented_lines(&prep.setup_lines));
+            out.push_str(&indented_lines(&prep.defer_lines));
+            out.push_str(&format!("    raw := {}\n", call));
+            out.push_str(&indented_lines(&prep.post_call_lines));
+            out.push_str(&format!(
+                "    if raw == nil {{\n        return \"\", errors.New(\"wrapper returned nil string\")\n    }}\n    defer C.{}_string_free(raw)\n    return C.GoString(raw), nil\n}}\n",
+                config.naming.prefix
+            ));
+            out
+        }
+        "c_string" => {
+            let mut out = format!("func {}({}) (string, error) {{\n", go_name, params);
+            out.push_str(&indented_lines(&prep.setup_lines));
+            out.push_str(&indented_lines(&prep.defer_lines));
+            out.push_str(&format!("    raw := {}\n", call));
+            out.push_str(&indented_lines(&prep.post_call_lines));
+            out.push_str(
+                "    if raw == nil {\n        return \"\", errors.New(\"wrapper returned nil string\")\n    }\n    return C.GoString(raw), nil\n}\n",
+            );
+            out
+        }
+        _ => {
+            let mut out = format!(
+                "func {}({}) {} {{\n",
+                go_name,
+                params,
+                go_type_for_ir(&function.returns).unwrap()
+            );
+            out.push_str(&indented_lines(&prep.setup_lines));
+            out.push_str(&indented_lines(&prep.defer_lines));
+            out.push_str(&format!("    result := {}\n", call));
+            out.push_str(&indented_lines(&prep.post_call_lines));
+            out.push_str(&format!(
+                "    return {}(result)\n}}\n",
+                go_type_for_ir(&function.returns).unwrap()
+            ));
+            out
+        }
     }
+}
+
+fn render_param_list(config: &Config, params: &[&crate::ir::IrParam]) -> String {
+    params
+        .iter()
+        .map(|param| {
+            format!(
+                "{} {}",
+                param.name,
+                go_param_type(config, &param.ty).unwrap()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn render_call_prep(config: &Config, params: &[&crate::ir::IrParam]) -> RenderedCallPrep {
+    let mut prep = RenderedCallPrep::default();
+
+    for (index, param) in params.iter().enumerate() {
+        match param.ty.kind.as_str() {
+            "string" | "c_string" => {
+                let c_name = format!("cArg{index}");
+                prep.setup_lines
+                    .push(format!("{c_name} := C.CString({})", param.name));
+                prep.defer_lines
+                    .push(format!("defer C.free(unsafe.Pointer({c_name}))"));
+                prep.args.push(c_name);
+            }
+            "reference" => render_reference_arg(&mut prep, &param.ty, &param.name, index),
+            "model_reference" | "model_pointer" => {
+                prep.args
+                    .push(render_model_handle_arg(config, &param.ty, &param.name))
+            }
+            _ => prep.args.push(render_c_arg(&param.ty, &param.name)),
+        }
+    }
+
+    prep
+}
+
+fn render_model_handle_arg(config: &Config, ty: &IrType, name: &str) -> String {
+    let projection = config
+        .known_model_projection(&ty.cpp_type)
+        .expect("model parameters must be filtered before rendering");
+    if ty.kind == "model_pointer" {
+        format!("optional{}Handle({})", projection.go_name, name)
+    } else {
+        format!("require{}Handle({})", projection.go_name, name)
+    }
+}
+
+fn render_reference_arg(prep: &mut RenderedCallPrep, ty: &IrType, name: &str, index: usize) {
+    let go_type =
+        go_type_for_reference(ty).expect("primitive references must be filtered before rendering");
+    let c_name = format!("cArg{index}");
+    prep.setup_lines.push(format!("if {name} == nil {{"));
+    prep.setup_lines
+        .push(format!("    panic(\"{name} reference is nil\")"));
+    prep.setup_lines.push("}".to_string());
+    prep.setup_lines
+        .push(format!("{c_name} := {}(*{})", cgo_cast_type(ty), name));
+    prep.post_call_lines
+        .push(format!("*{} = {}({})", name, go_type, c_name));
+    prep.args.push(format!("&{c_name}"));
+}
+
+fn render_c_arg(ty: &IrType, name: &str) -> String {
+    format!("{}({})", cgo_cast_type(ty), name)
+}
+
+fn indented_lines(lines: &[String]) -> String {
+    if lines.is_empty() {
+        return String::new();
+    }
+    lines
+        .iter()
+        .map(|line| format!("    {line}\n"))
+        .collect::<String>()
+}
+
+fn has_string_params<'a>(mut params: impl Iterator<Item = &'a crate::ir::IrParam>) -> bool {
+    params.any(|param| matches!(param.ty.kind.as_str(), "string" | "c_string"))
 }
 
 fn ensure_unique_go_exports(functions: &[&IrFunction]) -> Result<()> {
@@ -431,9 +558,9 @@ fn ensure_unique_method_exports(
     general_methods: &[&IrFunction],
 ) -> Result<()> {
     let mut by_export = BTreeMap::<String, Vec<String>>::new();
-    for function in general_methods {
+    for function in methods {
         by_export
-            .entry(go_method_export_name(function, false))
+            .entry(go_method_export_name(function))
             .or_default()
             .push(function.cpp_name.clone());
     }
@@ -459,7 +586,7 @@ fn ensure_unique_method_exports(
     bail!("facade export collision detected: {detail}");
 }
 
-fn free_function_supported(function: &IrFunction) -> bool {
+fn free_function_supported(config: &Config, function: &IrFunction) -> bool {
     go_return_supported(&function.returns)
         && function
             .params
@@ -543,7 +670,9 @@ fn go_param_supported(ty: &IrType) -> bool {
 }
 
 fn go_return_supported(ty: &IrType) -> bool {
-    ty.kind == "void" || go_param_supported(ty)
+    ty.kind == "void"
+        || matches!(ty.kind.as_str(), "string" | "c_string")
+        || (ty.kind == "primitive" && go_type_for_ir(ty).is_some())
 }
 
 fn zero_value_for_go_type(go_type: &str) -> &'static str {
@@ -655,7 +784,7 @@ fn go_facade_export_name(function: &IrFunction) -> String {
     )
 }
 
-fn go_method_export_name(function: &IrFunction, drop_model_out_param: bool) -> String {
+fn go_method_export_name(function: &IrFunction) -> String {
     let base = go_export_name(method_name(function));
     if !function.name.contains("__") {
         return base;
@@ -702,8 +831,30 @@ fn go_overload_token(ty: &IrType) -> String {
             .as_deref()
             .map(go_export_name)
             .unwrap_or_else(|| go_export_name(&sanitize_go_token(&ty.cpp_type))),
+        "model_reference" => format!(
+            "{}Ref",
+            go_export_name(&flatten_qualified_cpp_name(&base_model_cpp_type(
+                &ty.cpp_type
+            )))
+        ),
+        "model_pointer" => format!(
+            "{}Ptr",
+            go_export_name(&flatten_qualified_cpp_name(&base_model_cpp_type(
+                &ty.cpp_type
+            )))
+        ),
         _ => go_export_name(&sanitize_go_token(&ty.cpp_type)),
     }
+}
+
+fn base_model_cpp_type(value: &str) -> String {
+    value
+        .trim()
+        .trim_start_matches("const ")
+        .trim_end_matches('&')
+        .trim_end_matches('*')
+        .trim()
+        .to_string()
 }
 
 fn sanitize_go_token(value: &str) -> String {
@@ -813,9 +964,9 @@ mod tests {
         }
     }
 
-    fn model_reference_type(cpp_type: &str) -> IrType {
+    fn model_type(kind: &str, cpp_type: &str) -> IrType {
         IrType {
-            kind: "model_reference".to_string(),
+            kind: kind.to_string(),
             cpp_type: cpp_type.to_string(),
             c_type: format!("{cpp_type}Handle*"),
             handle: Some(format!("{cpp_type}Handle")),
@@ -859,15 +1010,46 @@ mod tests {
                     },
                 },
                 IrParam {
+                    name: "out".to_string(),
+                    ty: model_type("model_reference", "ThingModel"),
+                },
+                IrParam {
                     name: "id".to_string(),
                     ty: primitive_type("int", "int"),
                 },
+            ],
+        };
+
+        assert!(method_supported(&config, &function));
+    }
+
+    #[test]
+    fn method_rejects_unknown_model_params() {
+        let config = test_config_with_known_model();
+        let function = IrFunction {
+            name: "cgowrap_Api_GetThing".to_string(),
+            kind: "method".to_string(),
+            cpp_name: "Api::GetThing".to_string(),
+            method_of: Some("Api".to_string()),
+            owner_cpp_type: Some("Api".to_string()),
+            is_const: Some(false),
+            returns: primitive_type("bool", "bool"),
+            params: vec![
                 IrParam {
-                    name: "out".to_string(),
-                    ty: model_reference_type("ThingModel"),
+                    name: "self".to_string(),
+                    ty: IrType {
+                        kind: "opaque".to_string(),
+                        cpp_type: "Api".to_string(),
+                        c_type: "ApiHandle*".to_string(),
+                        handle: Some("ApiHandle".to_string()),
+                    },
+                },
+                IrParam {
+                    name: "value".to_string(),
+                    ty: model_type("model_reference", "UnknownThing"),
                 },
             ],
-        );
+        };
 
         assert!(general_method_supported(&function));
     }
@@ -887,15 +1069,22 @@ mod tests {
                     },
                 },
                 IrParam {
-                    name: "out".to_string(),
-                    ty: model_reference_type("ThingModel"),
+                    name: "pos".to_string(),
+                    ty: reference_type("int32&", "int32_t*"),
                 },
                 IrParam {
-                    name: "id".to_string(),
-                    ty: primitive_type("int", "int"),
+                    name: "out".to_string(),
+                    ty: model_type("model_reference", "ThingModel"),
                 },
             ],
+        };
+
+        assert!(method_supported(&config, &function));
+        assert_eq!(
+            go_param_type(&config, &function.params[1].ty),
+            Some("*int32".to_string())
         );
+    }
 
         assert!(general_method_supported(&function));
     }
