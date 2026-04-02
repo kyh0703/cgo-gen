@@ -120,7 +120,7 @@ fn collect_facade_classes<'a>(
         };
 
         classes.push(AnalyzedFacadeClass {
-            go_name: leaf_cpp_name(owner).to_string(),
+            go_name: go_export_name(&leaf_cpp_name(owner)),
             handle_name: format!("{}Handle", flatten_qualified_cpp_name(owner)),
             constructor,
             destructor,
@@ -1721,7 +1721,7 @@ fn build_model_projection(
 
     Ok(Some(ModelProjection {
         cpp_type: owner.to_string(),
-        go_name: leaf_cpp_name(owner),
+        go_name: go_export_name(&leaf_cpp_name(owner)),
         handle_name: format!("{}Handle", flatten_qualified_cpp_name(owner)),
         constructor_symbol: constructor_symbol.clone(),
         destructor_symbol: destructor_symbol.clone(),
@@ -1982,6 +1982,101 @@ mod tests {
                 handle: None,
             }),
             "NPSTR"
+        );
+    }
+
+    #[test]
+    fn go_export_name_capitalizes_lowercase_first_letter() {
+        assert_eq!(go_export_name("myApi"), "MyApi");
+        assert_eq!(go_export_name("thingModel"), "ThingModel");
+        assert_eq!(go_export_name("iSiLib"), "ISiLib");
+        assert_eq!(go_export_name("IsAAMaster"), "IsAAMaster");
+    }
+
+    #[test]
+    fn render_go_facade_uses_capitalized_struct_name_for_lowercase_cpp_class() {
+        use crate::ir::{IrModule, OpaqueType, SupportMetadata};
+
+        let handle_name = "myApiHandle".to_string();
+        let self_param = IrParam {
+            name: "self".to_string(),
+            ty: IrType {
+                kind: "opaque".to_string(),
+                cpp_type: "myApi".to_string(),
+                c_type: "myApiHandle*".to_string(),
+                handle: Some(handle_name.clone()),
+            },
+        };
+        let ir = IrModule {
+            version: 1,
+            module: "cgowrap".to_string(),
+            source_headers: vec![],
+            opaque_types: vec![OpaqueType {
+                name: handle_name.clone(),
+                cpp_type: "myApi".to_string(),
+            }],
+            functions: vec![
+                IrFunction {
+                    name: "cgowrap_myApi_new".to_string(),
+                    kind: "constructor".to_string(),
+                    cpp_name: "myApi".to_string(),
+                    method_of: None,
+                    owner_cpp_type: Some("myApi".to_string()),
+                    is_const: None,
+                    returns: IrType {
+                        kind: "opaque".to_string(),
+                        cpp_type: "myApi".to_string(),
+                        c_type: "myApiHandle*".to_string(),
+                        handle: Some(handle_name.clone()),
+                    },
+                    params: vec![],
+                },
+                IrFunction {
+                    name: "cgowrap_myApi_delete".to_string(),
+                    kind: "destructor".to_string(),
+                    cpp_name: "myApi".to_string(),
+                    method_of: None,
+                    owner_cpp_type: Some("myApi".to_string()),
+                    is_const: None,
+                    returns: IrType {
+                        kind: "void".to_string(),
+                        cpp_type: "void".to_string(),
+                        c_type: "void".to_string(),
+                        handle: None,
+                    },
+                    params: vec![self_param.clone()],
+                },
+                IrFunction {
+                    name: "cgowrap_myApi_IsReady".to_string(),
+                    kind: "method".to_string(),
+                    cpp_name: "myApi::IsReady".to_string(),
+                    method_of: Some("myApi".to_string()),
+                    owner_cpp_type: Some("myApi".to_string()),
+                    is_const: Some(true),
+                    returns: primitive_type("bool", "bool"),
+                    params: vec![self_param],
+                },
+            ],
+            enums: vec![],
+            callbacks: vec![],
+            support: SupportMetadata {
+                parser_backend: "test".to_string(),
+                notes: vec![],
+                skipped_declarations: vec![],
+            },
+        };
+
+        let config = Config::default();
+        let files = render_go_facade(&config, &ir).unwrap();
+        assert!(!files.is_empty(), "expected at least one Go file");
+        let contents = &files[0].contents;
+        assert!(
+            contents.contains("type MyApi struct {"),
+            "expected 'type MyApi struct {{' but got:\n{contents}"
+        );
+        assert!(
+            contents.contains("func NewMyApi()"),
+            "expected 'func NewMyApi()' but got:\n{contents}"
         );
     }
 }
