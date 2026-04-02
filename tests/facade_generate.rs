@@ -495,9 +495,9 @@ naming:
     let config = Config::load(&config_path).unwrap();
     generator::generate_all(&config, true).unwrap();
 
-    let raw_header = fs::read_to_string(root.join("out/raw/api_wrapper.h")).unwrap();
-    let raw_source = fs::read_to_string(root.join("out/raw/api_wrapper.cpp")).unwrap();
-    let ir_yaml = fs::read_to_string(root.join("out/raw/api_wrapper.ir.yaml")).unwrap();
+    let raw_header = fs::read_to_string(root.join("out/api_wrapper.h")).unwrap();
+    let raw_source = fs::read_to_string(root.join("out/api_wrapper.cpp")).unwrap();
+    let ir_yaml = fs::read_to_string(root.join("out/api_wrapper.ir.yaml")).unwrap();
     let go_facade = fs::read_to_string(root.join("out/api_wrapper.go")).unwrap();
 
     assert!(raw_header.contains("typedef struct UnknownThingHandle UnknownThingHandle;"));
@@ -598,9 +598,9 @@ naming:
     let ir = ir::normalize(&config, &parsed).unwrap();
     generator::generate(&config, &ir, true).unwrap();
 
-    let raw_header = fs::read_to_string(root.join("out/raw/api_wrapper.h")).unwrap();
-    let raw_source = fs::read_to_string(root.join("out/raw/api_wrapper.cpp")).unwrap();
-    let ir_yaml = fs::read_to_string(root.join("out/raw/api_wrapper.ir.yaml")).unwrap();
+    let raw_header = fs::read_to_string(root.join("out/api_wrapper.h")).unwrap();
+    let raw_source = fs::read_to_string(root.join("out/api_wrapper.cpp")).unwrap();
+    let ir_yaml = fs::read_to_string(root.join("out/api_wrapper.ir.yaml")).unwrap();
     let go_facade = fs::read_to_string(root.join("out/api_wrapper.go")).unwrap();
 
     assert!(
@@ -815,7 +815,7 @@ naming:
 
     let go_model = fs::read_to_string(root.join("out/is_web_hook_wrapper.go")).unwrap();
     let go_facade = fs::read_to_string(root.join("out/i_si_lib_wrapper.go")).unwrap();
-    let raw_source = fs::read_to_string(root.join("out/raw/i_si_lib_wrapper.cpp")).unwrap();
+    let raw_source = fs::read_to_string(root.join("out/i_si_lib_wrapper.cpp")).unwrap();
 
     assert!(go_model.contains("type IsWebHook struct {"));
     assert!(go_model.contains("ptr *C.IsWebHookHandle"));
@@ -882,9 +882,9 @@ naming:
     let config = Config::load(&config_path).unwrap();
     generator::generate_all(&config, true).unwrap();
 
-    let ir_dump = fs::read_to_string(root.join("out/raw/api_wrapper.ir.yaml")).unwrap();
-    let raw_header = fs::read_to_string(root.join("out/raw/api_wrapper.h")).unwrap();
-    let raw_source = fs::read_to_string(root.join("out/raw/api_wrapper.cpp")).unwrap();
+    let ir_dump = fs::read_to_string(root.join("out/api_wrapper.ir.yaml")).unwrap();
+    let raw_header = fs::read_to_string(root.join("out/api_wrapper.h")).unwrap();
+    let raw_source = fs::read_to_string(root.join("out/api_wrapper.cpp")).unwrap();
     let go_facade = fs::read_to_string(root.join("out/api_wrapper.go")).unwrap();
 
     assert!(ir_dump.contains("callbacks:"));
