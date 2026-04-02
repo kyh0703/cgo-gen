@@ -1,9 +1,9 @@
 use std::{
-    fs,
+    env, fs,
     path::{Path, PathBuf},
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -180,7 +180,7 @@ fn default_skip() -> String {
     "skip".to_string()
 }
 
-fn resolve_relative_clang_args(args: &mut Vec<String>, base_dir: &Path) {
+fn resolve_relative_clang_args(args: &mut Vec<String>, base_dir: &Path) -> Result<()> {
     let mut resolved = Vec::with_capacity(args.len());
     let mut index = 0;
 
@@ -190,7 +190,7 @@ fn resolve_relative_clang_args(args: &mut Vec<String>, base_dir: &Path) {
         if arg == "-I" || arg == "-isystem" {
             resolved.push(arg.clone());
             if let Some(value) = args.get(index + 1) {
-                resolved.push(resolve_relative_clang_path_arg(value, base_dir));
+                resolved.push(resolve_relative_clang_path_arg(value, base_dir)?);
                 index += 2;
                 continue;
             }
@@ -201,7 +201,7 @@ fn resolve_relative_clang_args(args: &mut Vec<String>, base_dir: &Path) {
         if let Some(value) = arg.strip_prefix("-I") {
             resolved.push(format!(
                 "-I{}",
-                resolve_relative_clang_path_arg(value, base_dir)
+                resolve_relative_clang_path_arg(value, base_dir)?
             ));
             index += 1;
             continue;
@@ -210,31 +210,85 @@ fn resolve_relative_clang_args(args: &mut Vec<String>, base_dir: &Path) {
         if let Some(value) = arg.strip_prefix("-isystem") {
             resolved.push(format!(
                 "-isystem{}",
-                resolve_relative_clang_path_arg(value, base_dir)
+                resolve_relative_clang_path_arg(value, base_dir)?
             ));
             index += 1;
             continue;
         }
 
-        resolved.push(arg.clone());
+        resolved.push(expand_clang_arg_env_token(arg)?.unwrap_or_else(|| arg.clone()));
         index += 1;
     }
 
     *args = resolved;
+    Ok(())
 }
 
-fn resolve_relative_clang_path_arg(value: &str, base_dir: &Path) -> String {
+fn resolve_relative_clang_path_arg(value: &str, base_dir: &Path) -> Result<String> {
+    let value = expand_clang_arg_env_token(value)?.unwrap_or_else(|| value.to_string());
+
     if value.is_empty() {
-        return String::new();
+        return Ok(String::new());
     }
 
-    let path = Path::new(value);
+    let path = Path::new(&value);
     if path.is_absolute() {
-        return value.to_string();
+        return Ok(normalize_clang_config_path(path));
     }
 
     let joined = base_dir.join(path);
-    normalize_clang_config_path(&joined.canonicalize().unwrap_or(joined))
+    Ok(normalize_clang_config_path(
+        &joined.canonicalize().unwrap_or(joined),
+    ))
+}
+
+fn expand_clang_arg_env_token(value: &str) -> Result<Option<String>> {
+    let Some(name) = parse_clang_arg_env_name(value) else {
+        return Ok(None);
+    };
+
+    match env::var(name) {
+        Ok(expanded) => Ok(Some(expanded)),
+        Err(env::VarError::NotPresent) => {
+            bail!("environment variable `{name}` referenced in input.clang_args is not set")
+        }
+        Err(env::VarError::NotUnicode(_)) => bail!(
+            "environment variable `{name}` referenced in input.clang_args is not valid unicode"
+        ),
+    }
+}
+
+fn parse_clang_arg_env_name(value: &str) -> Option<&str> {
+    let remainder = value.strip_prefix('$')?;
+
+    if let Some(name) = remainder
+        .strip_prefix('{')
+        .and_then(|inner| inner.strip_suffix('}'))
+    {
+        return valid_env_name(name);
+    }
+
+    if let Some(name) = remainder
+        .strip_prefix('(')
+        .and_then(|inner| inner.strip_suffix(')'))
+    {
+        return valid_env_name(name);
+    }
+
+    valid_env_name(remainder)
+}
+
+fn valid_env_name(value: &str) -> Option<&str> {
+    let mut chars = value.chars();
+    let first = chars.next()?;
+    if !(first.is_ascii_alphabetic() || first == '_') {
+        return None;
+    }
+    if chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
+        Some(value)
+    } else {
+        None
+    }
 }
 
 fn normalize_clang_config_path(path: &Path) -> String {
@@ -424,7 +478,7 @@ impl Config {
         for include_dir in &mut self.input.include_dirs {
             resolve_path(include_dir, base_dir);
         }
-        resolve_relative_clang_args(&mut self.input.clang_args, base_dir);
+        resolve_relative_clang_args(&mut self.input.clang_args, base_dir)?;
         if !self.input.include_dirs.is_empty() {
             let mut include_args = self
                 .input
@@ -448,7 +502,10 @@ impl Config {
         }
         if let Some(dir) = &self.input.dir {
             if dir.exists() && !dir.is_dir() {
-                bail!("config.input.dir must point to a directory: {}", dir.display());
+                bail!(
+                    "config.input.dir must point to a directory: {}",
+                    dir.display()
+                );
             }
         }
         Ok(())
