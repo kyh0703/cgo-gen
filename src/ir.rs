@@ -767,20 +767,22 @@ fn normalize_type(cpp_type: &str, callback_names: &BTreeSet<String>) -> Result<I
         _ if trimmed.ends_with('*')
             && is_supported_primitive(trimmed.trim_end_matches('*').trim()) =>
         {
+            let base = trimmed.trim_end_matches('*').trim();
             Ok(IrType {
                 kind: "pointer".to_string(),
                 cpp_type: trimmed.to_string(),
-                c_type: trimmed.to_string(),
+                c_type: format!("{}*", canonical_primitive_c_type(base)),
                 handle: None,
             })
         }
         _ if trimmed.ends_with('&')
             && is_supported_primitive(trimmed.trim_end_matches('&').trim()) =>
         {
+            let base = trimmed.trim_end_matches('&').trim();
             Ok(IrType {
                 kind: "reference".to_string(),
                 cpp_type: trimmed.to_string(),
-                c_type: format!("{}*", trimmed.trim_end_matches('&').trim()),
+                c_type: format!("{}*", canonical_primitive_c_type(base)),
                 handle: None,
             })
         }
@@ -839,6 +841,20 @@ fn alias_primitive_type(cpp_name: &str, c_name: &str) -> IrType {
         cpp_type: cpp_name.to_string(),
         c_type: c_name.to_string(),
         handle: None,
+    }
+}
+
+fn canonical_primitive_c_type(name: &str) -> &str {
+    match name {
+        "uint8" => "uint8_t",
+        "uint16" => "uint16_t",
+        "uint32" => "uint32_t",
+        "uint64" => "uint64_t",
+        "int8" => "int8_t",
+        "int16" => "int16_t",
+        "int32" => "int32_t",
+        "int64" => "int64_t",
+        other => other,
     }
 }
 
