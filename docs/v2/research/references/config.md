@@ -19,6 +19,6 @@ Top-level sections:
 Relative paths are resolved from the config file location.
 
 Current output layout:
-- raw native artifacts: `output.dir/raw/`
-- Go model artifacts: `output.dir/model/`
-- Go facade artifacts: `output.dir/facade/`
+- generated native wrapper artifacts: `output.dir/`
+- generated Go artifacts: `output.dir/`
+- generated files are co-located so downstream cgo packages can consume package-local `.go`, `.h`, `.cpp`, and `.ir.yaml` outputs together
