@@ -1,6 +1,6 @@
 # Product
 
-`c-go` is a Rust CLI that turns a conservative subset of C++ APIs into a generated C ABI surface (`wrapper.h` and `wrapper.cpp`). The generated header is intended to be consumed by `c-for-go`, not by humans writing C manually.
+`cgo-gen` is a Rust CLI that turns a conservative subset of C++ APIs into a generated C ABI surface (`wrapper.h` and `wrapper.cpp`). The generated header is intended to be consumed by `c-for-go`, not by humans writing C manually.
 
 ## Goals
 - Parse selected C++ headers.
