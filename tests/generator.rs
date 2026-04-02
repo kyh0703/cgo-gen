@@ -118,3 +118,63 @@ output:
     assert!(header.contains("} FooState;"));
     assert!(!header.contains("(unnamed enum at"));
 }
+
+#[test]
+fn normalizes_primitive_alias_pointer_and_reference_c_types_in_header() {
+    let root = std::env::temp_dir().join(format!(
+        "c_go_alias_pointer_header_{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("include")).unwrap();
+    std::fs::write(
+        root.join("include/Api.hpp"),
+        r#"
+        #include <stdint.h>
+        typedef int32_t int32;
+        typedef uint32_t uint32;
+
+        bool TakeAliasPtr(int32* value);
+        bool TakeAliasRef(uint32& value);
+        "#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("config.yaml"),
+        r#"
+version: 1
+input:
+  headers:
+    - include/Api.hpp
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(root.join("config.yaml")).unwrap();
+    let parsed = parser::parse(&config).unwrap();
+    let ir = ir::normalize(&config, &parsed).unwrap();
+    let header = render_header(&config, &ir);
+
+    let ptr = ir
+        .functions
+        .iter()
+        .find(|function| function.cpp_name == "TakeAliasPtr")
+        .unwrap();
+    assert_eq!(ptr.params[0].ty.cpp_type, "int32*");
+    assert_eq!(ptr.params[0].ty.c_type, "int32_t*");
+
+    let r#ref = ir
+        .functions
+        .iter()
+        .find(|function| function.cpp_name == "TakeAliasRef")
+        .unwrap();
+    assert_eq!(r#ref.params[0].ty.cpp_type, "uint32&");
+    assert_eq!(r#ref.params[0].ty.c_type, "uint32_t*");
+
+    assert!(header.contains("bool cgowrap_TakeAliasPtr(int32_t* value);"));
+    assert!(header.contains("bool cgowrap_TakeAliasRef(uint32_t* value);"));
+    assert!(!header.contains("int32* value"));
+    assert!(!header.contains("uint32* value"));
+}
