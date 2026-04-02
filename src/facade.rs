@@ -170,6 +170,9 @@ fn render_go_facade_file(
     if requires_cgo {
         out.push_str("/*\n");
         out.push_str("#include <stdlib.h>\n");
+        if ir_uses_struct_timeval(functions, classes) {
+            out.push_str("#include <sys/time.h>\n");
+        }
         out.push_str(&format!(
             "#include \"{}\"\n",
             config.generated_header_include(&config.output.header)
@@ -1444,6 +1447,32 @@ fn extern_struct_go_type(ty: &IrType) -> Option<String> {
     Some(format!("*C.struct_{}", sanitize_go_token(tag)))
 }
 
+fn ir_uses_struct_timeval(
+    functions: &[&IrFunction],
+    classes: &[AnalyzedFacadeClass<'_>],
+) -> bool {
+    functions
+        .iter()
+        .flat_map(|function| {
+            std::iter::once(&function.returns).chain(function.params.iter().map(|param| &param.ty))
+        })
+        .chain(classes.iter().flat_map(|class| {
+            std::iter::once(&class.constructor.returns)
+                .chain(class.constructor.params.iter().map(|param| &param.ty))
+                .chain(std::iter::once(&class.destructor.returns))
+                .chain(class.destructor.params.iter().map(|param| &param.ty))
+                .chain(class.methods.iter().flat_map(|function| {
+                    std::iter::once(&function.returns)
+                        .chain(function.params.iter().map(|param| &param.ty))
+                }))
+        }))
+        .any(|ty| {
+            matches!(
+                ty.kind.as_str(),
+                "extern_struct_reference" | "extern_struct_pointer"
+            ) && base_model_cpp_type(&ty.c_type) == "struct timeval"
+        })
+}
 fn sanitize_go_token(value: &str) -> String {
     value
         .chars()
