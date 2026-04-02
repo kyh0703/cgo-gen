@@ -1,6 +1,6 @@
 use c_go::{
     config::Config,
-    generator::{render_go_structs, render_source},
+    generator::{render_go_structs, render_header, render_source},
     ir, parser,
 };
 
@@ -34,6 +34,7 @@ fn normalizes_timeval_pointer_and_reference_params() {
 
         bool TakeByPtr(struct timeval* value);
         bool TakeByRef(struct timeval& value);
+        bool TakeAlias(timeval* value);
         "#,
     );
 
@@ -58,6 +59,16 @@ fn normalizes_timeval_pointer_and_reference_params() {
     assert_eq!(by_ref.params[0].ty.kind, "extern_struct_reference");
     assert_eq!(by_ref.params[0].ty.c_type, "struct timeval*");
     assert_eq!(by_ref.params[0].ty.handle, None);
+
+    let alias = ir
+        .functions
+        .iter()
+        .find(|function| function.cpp_name == "TakeAlias")
+        .unwrap();
+    assert_eq!(alias.params[0].ty.kind, "extern_struct_pointer");
+    assert_eq!(alias.params[0].ty.cpp_type, "timeval*");
+    assert_eq!(alias.params[0].ty.c_type, "struct timeval*");
+    assert_eq!(alias.params[0].ty.handle, None);
 }
 
 #[test]
@@ -77,8 +88,14 @@ fn renders_go_facade_and_cpp_wrapper_for_timeval_params() {
     let parsed = parser::parse(&config).unwrap();
     let ir = ir::normalize(&config, &parsed).unwrap();
 
+    let header = render_header(&config, &ir);
+    assert!(header.contains("#include <sys/time.h>"));
+    assert!(header.contains("bool cgowrap_TakeByPtr(struct timeval* value);"));
+    assert!(header.contains("bool cgowrap_TakeByRef(struct timeval* value);"));
+
     let go = render_go_structs(&config, &ir).unwrap();
     assert_eq!(go.len(), 1);
+    assert!(go[0].contents.contains("#include <sys/time.h>"));
     assert!(
         go[0]
             .contents

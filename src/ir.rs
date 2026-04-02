@@ -719,12 +719,10 @@ fn normalize_type(cpp_type: &str, callback_names: &BTreeSet<String>) -> Result<I
     if let Some(stripped) = trimmed.strip_prefix("const ") {
         let stripped = stripped.trim();
         if !stripped.ends_with('*') && !stripped.ends_with('&') {
-            if let Ok(mut ty) = normalize_type(stripped, callback_names) {
-                if ty.kind == "primitive" && ty.c_type == stripped {
-                    ty.c_type = trimmed.to_string();
-                }
+            if let Ok(ty) = normalize_type(stripped, callback_names) {
                 return Ok(IrType {
                     cpp_type: trimmed.to_string(),
+                    c_type: ty.c_type.clone(),
                     ..ty
                 });
             }
@@ -797,6 +795,24 @@ fn normalize_type(cpp_type: &str, callback_names: &BTreeSet<String>) -> Result<I
                 kind: "reference".to_string(),
                 cpp_type: trimmed.to_string(),
                 c_type: format!("{}*", canonical_primitive_c_type(base)),
+                handle: None,
+            })
+        }
+        _ if trimmed.ends_with('&') && extern_c_struct_base_type(trimmed).is_some() => {
+            let base = extern_c_struct_base_type(trimmed).unwrap();
+            Ok(IrType {
+                kind: "extern_struct_reference".to_string(),
+                cpp_type: trimmed.to_string(),
+                c_type: format!("{base}*"),
+                handle: None,
+            })
+        }
+        _ if trimmed.ends_with('*') && extern_c_struct_base_type(trimmed).is_some() => {
+            let base = extern_c_struct_base_type(trimmed).unwrap();
+            Ok(IrType {
+                kind: "extern_struct_pointer".to_string(),
+                cpp_type: trimmed.to_string(),
+                c_type: format!("{base}*"),
                 handle: None,
             })
         }
@@ -1090,8 +1106,13 @@ fn base_model_cpp_type(value: &str) -> String {
 
 fn extern_c_struct_base_type(cpp_type: &str) -> Option<String> {
     let base = base_model_cpp_type(cpp_type);
-    let tag = base.strip_prefix("struct ")?;
-    (!tag.trim().is_empty()).then(|| format!("struct {}", tag.trim()))
+    if let Some(tag) = base.strip_prefix("struct ") {
+        return (!tag.trim().is_empty()).then(|| format!("struct {}", tag.trim()));
+    }
+    match base.as_str() {
+        "timeval" => Some("struct timeval".to_string()),
+        _ => None,
+    }
 }
 
 fn raw_safe_model_handle_name(cpp_type: &str) -> Option<String> {
@@ -1111,7 +1132,6 @@ fn raw_safe_model_handle_name(cpp_type: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
     fn normalizes_struct_timeval_pointer_and_reference_as_external_structs() {
         let callback_names = BTreeSet::new();
