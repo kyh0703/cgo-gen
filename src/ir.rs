@@ -705,7 +705,10 @@ fn normalize_type(cpp_type: &str, callback_names: &BTreeSet<String>) -> Result<I
     if let Some(stripped) = trimmed.strip_prefix("const ") {
         let stripped = stripped.trim();
         if !stripped.ends_with('*') && !stripped.ends_with('&') {
-            if let Ok(ty) = normalize_type(stripped, callback_names) {
+            if let Ok(mut ty) = normalize_type(stripped, callback_names) {
+                if ty.kind == "primitive" && ty.c_type == stripped {
+                    ty.c_type = trimmed.to_string();
+                }
                 return Ok(IrType {
                     cpp_type: trimmed.to_string(),
                     ..ty
