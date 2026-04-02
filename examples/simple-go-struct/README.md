@@ -23,15 +23,14 @@ make -C examples/simple-go-struct run
 pkg/demo/
   build_flags.go
   native_sources.cpp
+  thing_model_wrapper.h
+  thing_model_wrapper.cpp
+  thing_model_wrapper.ir.yaml
   thing_model_wrapper.go
+  thing_api_wrapper.h
+  thing_api_wrapper.cpp
+  thing_api_wrapper.ir.yaml
   thing_api_wrapper.go
-  raw/
-    thing_model_wrapper.h
-    thing_model_wrapper.cpp
-    thing_model_wrapper.ir.yaml
-    thing_api_wrapper.h
-    thing_api_wrapper.cpp
-    thing_api_wrapper.ir.yaml
 ```
 
 ## 예제 포인트
