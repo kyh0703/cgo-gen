@@ -1720,7 +1720,7 @@ mod tests {
                 cpp_type: "ThingModel".to_string(),
                 handle_name: "ThingModelHandle".to_string(),
                 go_name: "ThingModel".to_string(),
-                output_header: "raw/thing_model_wrapper.h".to_string(),
+                output_header: "thing_model_wrapper.h".to_string(),
                 constructor_symbol: "cgowrap_ThingModel_new".to_string(),
                 destructor_symbol: Some("cgowrap_ThingModel_delete".to_string()),
                 fields: vec![KnownModelField {

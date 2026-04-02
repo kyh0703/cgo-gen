@@ -66,18 +66,15 @@ naming:
     generator::generate_all(&config, true).unwrap();
 
     let output_dir = root.join("gen");
-    let raw_dir = output_dir.join("raw");
-    let go_dir = output_dir.clone();
+    let alpha_header = output_dir.join("alpha_thing_wrapper.h");
+    let alpha_source = output_dir.join("alpha_thing_wrapper.cpp");
+    let alpha_ir = output_dir.join("alpha_thing_wrapper.ir.yaml");
+    let alpha_go = output_dir.join("alpha_thing_wrapper.go");
 
-    let alpha_header = raw_dir.join("alpha_thing_wrapper.h");
-    let alpha_source = raw_dir.join("alpha_thing_wrapper.cpp");
-    let alpha_ir = raw_dir.join("alpha_thing_wrapper.ir.yaml");
-    let alpha_go = go_dir.join("alpha_thing_wrapper.go");
-
-    let beta_header = raw_dir.join("beta_thing_wrapper.h");
-    let beta_source = raw_dir.join("beta_thing_wrapper.cpp");
-    let beta_ir = raw_dir.join("beta_thing_wrapper.ir.yaml");
-    let beta_go = go_dir.join("beta_thing_wrapper.go");
+    let beta_header = output_dir.join("beta_thing_wrapper.h");
+    let beta_source = output_dir.join("beta_thing_wrapper.cpp");
+    let beta_ir = output_dir.join("beta_thing_wrapper.ir.yaml");
+    let beta_go = output_dir.join("beta_thing_wrapper.go");
 
     for path in [
         &alpha_header,
