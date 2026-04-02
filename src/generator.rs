@@ -158,6 +158,9 @@ pub fn render_header(config: &Config, ir: &IrModule) -> String {
     let mut out = String::new();
     out.push_str(&format!("#ifndef {guard}\n#define {guard}\n\n"));
     out.push_str("#include <stdbool.h>\n#include <stddef.h>\n#include <stdint.h>\n\n");
+    if ir_uses_struct_timeval(ir) {
+        out.push_str("#include <sys/time.h>\n\n");
+    }
     out.push_str("#ifdef __cplusplus\nextern \"C\" {\n#endif\n\n");
 
     for opaque in &ir.opaque_types {
@@ -385,6 +388,7 @@ fn render_cpp_arg(ty: IrType, name: &str) -> String {
     match ty.kind.as_str() {
         "string" => format!("std::string({name} != nullptr ? {name} : \"\")"),
         "reference" => format!("*{name}"),
+        "extern_struct_reference" => format!("*{name}"),
         "model_reference" => format!(
             "*reinterpret_cast<{}*>({name})",
             base_model_cpp_type(&ty.cpp_type)
@@ -543,6 +547,23 @@ fn base_model_cpp_type(value: &str) -> String {
         .trim_end_matches('*')
         .trim()
         .to_string()
+}
+
+fn ir_uses_struct_timeval(ir: &IrModule) -> bool {
+    ir.functions
+        .iter()
+        .flat_map(|function| {
+            std::iter::once(&function.returns).chain(function.params.iter().map(|param| &param.ty))
+        })
+        .chain(ir.callbacks.iter().flat_map(|callback| {
+            std::iter::once(&callback.returns).chain(callback.params.iter().map(|param| &param.ty))
+        }))
+        .any(|ty| {
+            matches!(
+                ty.kind.as_str(),
+                "extern_struct_reference" | "extern_struct_pointer"
+            ) && base_model_cpp_type(&ty.c_type) == "struct timeval"
+        })
 }
 
 fn render_string_free(config: &Config) -> String {
