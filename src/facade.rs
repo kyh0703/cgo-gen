@@ -152,13 +152,16 @@ fn render_go_facade_file(
         });
     let requires_unsafe = functions
         .iter()
-        .any(|function| has_string_params(function.params.iter()))
+        .any(|function| {
+            has_string_params(function.params.iter())
+                || function.returns.kind == "pointer"
+        })
         || classes.iter().any(|class| {
             has_string_params(class.constructor.params.iter())
-                || class
-                    .methods
-                    .iter()
-                    .any(|function| has_string_params(function.params.iter().skip(1)))
+                || class.methods.iter().any(|function| {
+                    has_string_params(function.params.iter().skip(1))
+                        || function.returns.kind == "pointer"
+                })
         });
     let requires_sync = !callback_usages.is_empty();
 
@@ -463,6 +466,10 @@ fn render_general_api_method(
     match function.returns.kind.as_str() {
         "void" => out.push_str(" {\n"),
         "string" | "c_string" => out.push_str(" (string, error) {\n"),
+        "pointer" => out.push_str(&format!(
+            " {} {{\n",
+            go_pointer_return_type(&function.returns).unwrap()
+        )),
         _ => out.push_str(&format!(
             " {} {{\n",
             go_type_for_ir(&function.returns).unwrap()
@@ -477,6 +484,7 @@ fn render_general_api_method(
         "string" | "c_string" => {
             out.push_str("        return \"\", errors.New(\"facade receiver is nil\")\n")
         }
+        "pointer" => out.push_str("        return nil\n"),
         _ => out.push_str(&format!(
             "        return {}\n",
             zero_value_for_go_type(go_type_for_ir(&function.returns).unwrap())
@@ -524,6 +532,19 @@ fn render_general_api_method(
             out.push_str(
                 "    if raw == nil {\n        return \"\", errors.New(\"wrapper returned nil string\")\n    }\n    return C.GoString(raw), nil\n",
             );
+        }
+        "pointer" => {
+            let go_type = go_pointer_return_type(&function.returns).unwrap();
+            out.push_str(&format!("    raw := {}\n", call));
+            for line in prep.post_call_lines {
+                out.push_str("    ");
+                out.push_str(&line);
+                out.push('\n');
+            }
+            out.push_str(&format!(
+                "    return ({})(unsafe.Pointer(raw))\n",
+                go_type
+            ));
         }
         _ => {
             let go_type = go_type_for_ir(&function.returns).unwrap();
@@ -599,6 +620,16 @@ fn render_free_function(config: &Config, function: &IrFunction) -> String {
             );
             out
         }
+        "pointer" => {
+            let go_type = go_pointer_return_type(&function.returns).unwrap();
+            let mut out = format!("func {}({}) {} {{\n", go_name, params, go_type);
+            out.push_str(&indented_lines(&prep.setup_lines));
+            out.push_str(&indented_lines(&prep.defer_lines));
+            out.push_str(&format!("    raw := {}\n", call));
+            out.push_str(&indented_lines(&prep.post_call_lines));
+            out.push_str(&format!("    return ({})(unsafe.Pointer(raw))\n}}\n", go_type));
+            out
+        }
         _ => {
             let go_type = go_type_for_ir(&function.returns).unwrap();
             let mut out = format!(
@@ -650,6 +681,10 @@ fn render_callback_method(
     match function.returns.kind.as_str() {
         "void" => out.push_str(" {\n"),
         "string" | "c_string" => out.push_str(" (string, error) {\n"),
+        "pointer" => out.push_str(&format!(
+            " {} {{\n",
+            go_pointer_return_type(&function.returns).unwrap()
+        )),
         _ => out.push_str(&format!(
             " {} {{\n",
             go_type_for_ir(&function.returns).unwrap()
@@ -664,6 +699,7 @@ fn render_callback_method(
         "string" | "c_string" => {
             out.push_str("        return \"\", errors.New(\"facade receiver is nil\")\n")
         }
+        "pointer" => out.push_str("        return nil\n"),
         _ => out.push_str(&format!(
             "        return {}\n",
             zero_value_for_go_type(go_type_for_ir(&function.returns).unwrap())
@@ -686,6 +722,14 @@ fn render_callback_method(
             out.push_str(
                 "    if raw == nil {\n        return \"\", errors.New(\"wrapper returned nil string\")\n    }\n    return C.GoString(raw), nil\n",
             );
+        }
+        "pointer" => {
+            let go_type = go_pointer_return_type(&function.returns).unwrap();
+            out.push_str(&format!("    raw := {}\n", call));
+            out.push_str(&format!(
+                "    return ({})(unsafe.Pointer(raw))\n",
+                go_type
+            ));
         }
         _ => {
             out.push_str(&format!("    result := {}\n", call));
@@ -710,6 +754,10 @@ fn render_callback_free_function(config: &Config, function: &IrFunction) -> Stri
     match function.returns.kind.as_str() {
         "void" => out.push_str(" {\n"),
         "string" | "c_string" => out.push_str(" (string, error) {\n"),
+        "pointer" => out.push_str(&format!(
+            " {} {{\n",
+            go_pointer_return_type(&function.returns).unwrap()
+        )),
         _ => out.push_str(&format!(
             " {} {{\n",
             go_type_for_ir(&function.returns).unwrap()
@@ -731,6 +779,14 @@ fn render_callback_free_function(config: &Config, function: &IrFunction) -> Stri
             out.push_str(
                 "    if raw == nil {\n        return \"\", errors.New(\"wrapper returned nil string\")\n    }\n    return C.GoString(raw), nil\n",
             );
+        }
+        "pointer" => {
+            let go_type = go_pointer_return_type(&function.returns).unwrap();
+            out.push_str(&format!("    raw := {}\n", call));
+            out.push_str(&format!(
+                "    return ({})(unsafe.Pointer(raw))\n",
+                go_type
+            ));
         }
         _ => {
             out.push_str(&format!("    result := {}\n", call));
@@ -992,6 +1048,17 @@ fn go_return_supported(ty: &IrType) -> bool {
     ty.kind == "void"
         || matches!(ty.kind.as_str(), "string" | "c_string")
         || (ty.kind == "primitive" && go_type_for_ir(ty).is_some())
+        || (ty.kind == "pointer" && go_pointer_return_type(ty).is_some())
+}
+
+fn go_pointer_return_type(ty: &IrType) -> Option<String> {
+    if ty.kind != "pointer" {
+        return None;
+    }
+    let base = ty.cpp_type.trim_end_matches('*').trim();
+    primitive_go_type(base)
+        .or_else(|| primitive_go_type(ty.c_type.trim_end_matches('*').trim()))
+        .map(|go_type| format!("*{go_type}"))
 }
 
 fn zero_value_for_go_type(go_type: &str) -> &'static str {
