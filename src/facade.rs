@@ -1,4 +1,4 @@
-﻿use std::{collections::BTreeMap, path::Path};
+use std::{collections::BTreeMap, path::Path};
 
 use anyhow::{Result, bail};
 
@@ -150,22 +150,19 @@ fn render_go_facade_file(
                 .iter()
                 .any(|function| matches!(function.returns.kind.as_str(), "string" | "c_string"))
         });
-    let requires_unsafe = functions
-        .iter()
-        .any(|function| {
-            has_string_params(function.params.iter())
-                || has_pointer_params(function.params.iter())
-                || function.returns.kind == "pointer"
-        })
-        || classes.iter().any(|class| {
-            has_string_params(class.constructor.params.iter())
-                || has_pointer_params(class.constructor.params.iter())
-                || class.methods.iter().any(|function| {
-                    has_string_params(function.params.iter().skip(1))
-                        || has_pointer_params(function.params.iter().skip(1))
-                        || function.returns.kind == "pointer"
-                })
-        });
+    let requires_unsafe = functions.iter().any(|function| {
+        has_string_params(function.params.iter())
+            || has_pointer_params(function.params.iter())
+            || function.returns.kind == "pointer"
+    }) || classes.iter().any(|class| {
+        has_string_params(class.constructor.params.iter())
+            || has_pointer_params(class.constructor.params.iter())
+            || class.methods.iter().any(|function| {
+                has_string_params(function.params.iter().skip(1))
+                    || has_pointer_params(function.params.iter().skip(1))
+                    || function.returns.kind == "pointer"
+            })
+    });
     let requires_sync = !callback_usages.is_empty();
 
     let mut out = String::new();
@@ -298,13 +295,7 @@ fn render_callback_type(callback: &IrCallback) -> String {
     let params = callback
         .params
         .iter()
-        .map(|param| {
-            format!(
-                "{} {}",
-                param.name,
-                callback_go_type(&param.ty)
-            )
-        })
+        .map(|param| format!("{} {}", param.name, callback_go_type(&param.ty)))
         .collect::<Vec<_>>()
         .join(", ");
     let returns = if callback.returns.kind == "void" {
@@ -328,13 +319,7 @@ fn render_callback_export(usage: &CallbackUsage<'_>) -> String {
         .callback
         .params
         .iter()
-        .map(|param| {
-            format!(
-                "{} {}",
-                param.name,
-                callback_cgo_param_type(&param.ty)
-            )
-        })
+        .map(|param| format!("{} {}", param.name, callback_cgo_param_type(&param.ty)))
         .collect::<Vec<_>>()
         .join(", ");
     let mut out = String::new();
@@ -544,10 +529,7 @@ fn render_general_api_method(
                 out.push_str(&line);
                 out.push('\n');
             }
-            out.push_str(&format!(
-                "    return ({})(unsafe.Pointer(raw))\n",
-                go_type
-            ));
+            out.push_str(&format!("    return ({})(unsafe.Pointer(raw))\n", go_type));
         }
         _ => {
             let go_type = go_type_for_ir(&function.returns).unwrap();
@@ -630,17 +612,15 @@ fn render_free_function(config: &Config, function: &IrFunction) -> String {
             out.push_str(&indented_lines(&prep.defer_lines));
             out.push_str(&format!("    raw := {}\n", call));
             out.push_str(&indented_lines(&prep.post_call_lines));
-            out.push_str(&format!("    return ({})(unsafe.Pointer(raw))\n}}\n", go_type));
+            out.push_str(&format!(
+                "    return ({})(unsafe.Pointer(raw))\n}}\n",
+                go_type
+            ));
             out
         }
         _ => {
             let go_type = go_type_for_ir(&function.returns).unwrap();
-            let mut out = format!(
-                "func {}({}) {} {{\n",
-                go_name,
-                params,
-                go_type
-            );
+            let mut out = format!("func {}({}) {} {{\n", go_name, params, go_type);
             out.push_str(&indented_lines(&prep.setup_lines));
             out.push_str(&indented_lines(&prep.defer_lines));
             if go_type == "bool" {
@@ -729,10 +709,7 @@ fn render_callback_method(
         "pointer" => {
             let go_type = go_pointer_return_type(&function.returns).unwrap();
             out.push_str(&format!("    raw := {}\n", call));
-            out.push_str(&format!(
-                "    return ({})(unsafe.Pointer(raw))\n",
-                go_type
-            ));
+            out.push_str(&format!("    return ({})(unsafe.Pointer(raw))\n", go_type));
         }
         _ => {
             out.push_str(&format!("    result := {}\n", call));
@@ -786,10 +763,7 @@ fn render_callback_free_function(config: &Config, function: &IrFunction) -> Stri
         "pointer" => {
             let go_type = go_pointer_return_type(&function.returns).unwrap();
             out.push_str(&format!("    raw := {}\n", call));
-            out.push_str(&format!(
-                "    return ({})(unsafe.Pointer(raw))\n",
-                go_type
-            ));
+            out.push_str(&format!("    return ({})(unsafe.Pointer(raw))\n", go_type));
         }
         _ => {
             out.push_str(&format!("    result := {}\n", call));
@@ -833,6 +807,12 @@ fn render_callback_call_prep(
             }
             "reference" => render_reference_arg(&mut prep, &param.ty, &param.name, index),
             "pointer" => render_pointer_arg(&mut prep, &param.ty, &param.name, index),
+            "extern_struct_reference" => {
+                render_extern_struct_arg(&mut prep, &param.ty, &param.name, index, true)
+            }
+            "extern_struct_pointer" => {
+                render_extern_struct_arg(&mut prep, &param.ty, &param.name, index, false)
+            }
             "model_reference" | "model_pointer" => {
                 render_model_arg(config, &mut prep, &param.ty, &param.name, index)
             }
@@ -872,6 +852,12 @@ fn render_call_prep(config: &Config, params: &[&crate::ir::IrParam]) -> Rendered
             }
             "reference" => render_reference_arg(&mut prep, &param.ty, &param.name, index),
             "pointer" => render_pointer_arg(&mut prep, &param.ty, &param.name, index),
+            "extern_struct_reference" => {
+                render_extern_struct_arg(&mut prep, &param.ty, &param.name, index, true)
+            }
+            "extern_struct_pointer" => {
+                render_extern_struct_arg(&mut prep, &param.ty, &param.name, index, false)
+            }
             "model_reference" | "model_pointer" => {
                 render_model_arg(config, &mut prep, &param.ty, &param.name, index)
             }
@@ -897,9 +883,28 @@ fn render_pointer_arg(prep: &mut RenderedCallPrep, ty: &IrType, name: &str, inde
     let c_type = primitive_cgo_cast_type(base_cpp)
         .or_else(|| primitive_cgo_cast_type(ty.c_type.trim_end_matches('*').trim()))
         .unwrap_or("C.int");
-    prep.setup_lines.push(format!(
-        "{c_name} := (*{c_type})(unsafe.Pointer({name}))"
-    ));
+    prep.setup_lines
+        .push(format!("{c_name} := (*{c_type})(unsafe.Pointer({name}))"));
+    prep.args.push(c_name);
+}
+
+fn render_extern_struct_arg(
+    prep: &mut RenderedCallPrep,
+    ty: &IrType,
+    name: &str,
+    index: usize,
+    require_non_nil: bool,
+) {
+    let c_name = format!("cArg{index}");
+    let go_type = extern_struct_go_type(ty).expect("external struct params must be prefiltered");
+    if require_non_nil {
+        prep.setup_lines.push(format!("if {name} == nil {{"));
+        prep.setup_lines
+            .push(format!("    panic(\"{name} reference is nil\")"));
+        prep.setup_lines.push("}".to_string());
+    }
+    prep.setup_lines
+        .push(format!("{c_name} := ({go_type})(unsafe.Pointer({name}))"));
     prep.args.push(c_name);
 }
 
@@ -937,7 +942,12 @@ fn has_string_params<'a>(mut params: impl Iterator<Item = &'a crate::ir::IrParam
 }
 
 fn has_pointer_params<'a>(mut params: impl Iterator<Item = &'a crate::ir::IrParam>) -> bool {
-    params.any(|param| param.ty.kind == "pointer")
+    params.any(|param| {
+        matches!(
+            param.ty.kind.as_str(),
+            "pointer" | "extern_struct_pointer" | "extern_struct_reference"
+        )
+    })
 }
 
 fn render_model_arg(
@@ -956,9 +966,8 @@ fn render_model_arg(
     prep.setup_lines.push(format!("var {c_name} *C.{handle}"));
     if ty.kind == "model_reference" {
         prep.setup_lines.push(format!("if {name} == nil {{"));
-        prep.setup_lines.push(
-            "    panic(\"reference facade/model argument cannot be nil\")".to_string(),
-        );
+        prep.setup_lines
+            .push("    panic(\"reference facade/model argument cannot be nil\")".to_string());
         prep.setup_lines.push("}".to_string());
     }
     prep.setup_lines.push(format!("if {name} != nil {{"));
@@ -1063,11 +1072,17 @@ fn go_param_type(config: &Config, ty: &IrType) -> Option<String> {
                 .or_else(|| primitive_go_type(ty.c_type.trim_end_matches('*').trim()))
                 .map(|go_type| format!("*{go_type}"))
         }
+        "extern_struct_pointer" | "extern_struct_reference" => extern_struct_go_type(ty),
         "callback" => Some(leaf_cpp_name(&ty.cpp_type)),
         "model_reference" | "model_pointer" => config
             .known_model_projection(&ty.cpp_type)
             .map(|projection| format!("*{}", projection.go_name))
-            .or_else(|| Some(format!("*{}", leaf_cpp_name(&base_model_cpp_type(&ty.cpp_type))))),
+            .or_else(|| {
+                Some(format!(
+                    "*{}",
+                    leaf_cpp_name(&base_model_cpp_type(&ty.cpp_type))
+                ))
+            }),
         _ => None,
     }
 }
@@ -1176,12 +1191,13 @@ fn normalize_type_key(value: &str) -> String {
 
 fn go_export_name(value: &str) -> String {
     let mut out = String::new();
-    for (index, segment) in value.split('_').filter(|segment| !segment.is_empty()).enumerate() {
+    for (index, segment) in value
+        .split('_')
+        .filter(|segment| !segment.is_empty())
+        .enumerate()
+    {
         if index > 0
-            && segment
-                .chars()
-                .next()
-                .is_some_and(|ch| ch.is_ascii_digit())
+            && segment.chars().next().is_some_and(|ch| ch.is_ascii_digit())
             && !out.is_empty()
         {
             out.push('_');
@@ -1244,6 +1260,8 @@ fn go_overload_token(ty: &IrType) -> String {
         "callback" => format!("{}Callback", go_export_name(&leaf_cpp_name(&ty.cpp_type))),
         "string" | "c_string" => string_overload_token(ty),
         "primitive" => primitive_overload_token(ty),
+        "extern_struct_reference" => extern_struct_overload_token(ty, "Ref"),
+        "extern_struct_pointer" => extern_struct_overload_token(ty, "Ptr"),
         "model_reference" => format!(
             "{}Ref",
             go_export_name(&flatten_qualified_cpp_name(&base_model_cpp_type(
@@ -1269,6 +1287,12 @@ fn model_pointer_depth(ty: &IrType) -> usize {
         return cpp_depth;
     }
     ty.c_type.chars().filter(|ch| *ch == '*').count().max(1)
+}
+
+fn extern_struct_overload_token(ty: &IrType, suffix: &str) -> String {
+    let base = base_model_cpp_type(&ty.c_type);
+    let tag = base.strip_prefix("struct ").unwrap_or(&base);
+    format!("{}{}", go_export_name(&sanitize_go_token(tag)), suffix)
 }
 
 fn primitive_overload_token(ty: &IrType) -> String {
@@ -1337,7 +1361,11 @@ fn callback_state_name_from_function(function: &IrFunction, index: usize) -> Str
 }
 
 fn callback_go_export_name(usage: &CallbackUsage<'_>) -> String {
-    format!("go_{}_cb{}", sanitize_go_token(&usage.function.name), usage.param_index)
+    format!(
+        "go_{}_cb{}",
+        sanitize_go_token(&usage.function.name),
+        usage.param_index
+    )
 }
 
 fn callback_cgo_param_type(ty: &IrType) -> &'static str {
@@ -1408,6 +1436,12 @@ fn base_model_cpp_type(value: &str) -> String {
         .trim_end_matches('*')
         .trim()
         .to_string()
+}
+
+fn extern_struct_go_type(ty: &IrType) -> Option<String> {
+    let base = base_model_cpp_type(&ty.c_type);
+    let tag = base.strip_prefix("struct ")?;
+    Some(format!("*C.struct_{}", sanitize_go_token(tag)))
 }
 
 fn sanitize_go_token(value: &str) -> String {
@@ -1601,7 +1635,9 @@ fn build_model_projection(
 ) -> Result<Option<ModelProjection>> {
     let setters = class_methods
         .iter()
-        .filter_map(|function| setter_suffix(function).map(|suffix| (suffix.to_string(), *function)))
+        .filter_map(|function| {
+            setter_suffix(function).map(|suffix| (suffix.to_string(), *function))
+        })
         .collect::<BTreeMap<_, _>>();
 
     let mut fields = Vec::new();
@@ -1647,10 +1683,12 @@ fn build_model_projection(
         return Ok(None);
     }
 
-    let constructor_symbol = constructor_symbol
-        .ok_or_else(|| anyhow::anyhow!("model projection `{owner}` is missing a constructor wrapper"))?;
-    let destructor_symbol = destructor_symbol
-        .ok_or_else(|| anyhow::anyhow!("model projection `{owner}` is missing a destructor wrapper"))?;
+    let constructor_symbol = constructor_symbol.ok_or_else(|| {
+        anyhow::anyhow!("model projection `{owner}` is missing a constructor wrapper")
+    })?;
+    let destructor_symbol = destructor_symbol.ok_or_else(|| {
+        anyhow::anyhow!("model projection `{owner}` is missing a destructor wrapper")
+    })?;
 
     Ok(Some(ModelProjection {
         cpp_type: owner.to_string(),
