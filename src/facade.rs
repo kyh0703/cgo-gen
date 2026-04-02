@@ -154,15 +154,12 @@ fn render_go_facade_file(
         .iter()
         .any(|function| {
             has_string_params(function.params.iter())
-                || has_pointer_params(function.params.iter())
                 || function.returns.kind == "pointer"
         })
         || classes.iter().any(|class| {
             has_string_params(class.constructor.params.iter())
-                || has_pointer_params(class.constructor.params.iter())
                 || class.methods.iter().any(|function| {
                     has_string_params(function.params.iter().skip(1))
-                        || has_pointer_params(function.params.iter().skip(1))
                         || function.returns.kind == "pointer"
                 })
         });
