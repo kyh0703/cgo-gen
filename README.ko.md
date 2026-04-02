@@ -104,7 +104,7 @@ cargo run --bin c-go -- generate --config cppgo-wrap.yaml --dump-ir
 | `input.translation_units` | 명시적 parse entry입니다. 값이 있으면 파싱은 `input.headers`보다 이 목록을 우선 사용합니다. |
 | `input.compile_commands` | `compile_commands.json`에서 compiler flag와 source TU 후보를 읽어옵니다. |
 | `input.include_dirs` | `input.clang_args` 앞에 `-I...` include flag를 prepend 합니다. |
-| `input.clang_args` | 추가 libclang 인자입니다. 상대 `-I...`, `-I <path>`, `-isystem` 경로는 config 파일 기준으로 해석됩니다. |
+| `input.clang_args` | 추가 libclang 인자입니다. 상대 `-I...`, `-I <path>`, `-isystem` 경로는 config 파일 기준으로 해석됩니다. `$VAR`, `$(VAR)`, `${VAR}` 형태의 exact env token도 현재 OS environment에서 확장합니다. |
 | `input.allow_diagnostics` | `true`면 libclang diagnostic이 발생한 translation unit을 실패 대신 skip 합니다. |
 | `output.dir` | 출력 디렉터리입니다. 상대 경로는 config 파일 기준입니다. |
 | `output.header` / `output.source` / `output.ir` | 출력 파일명 override입니다. 기본값을 유지하면 single-header 모드에서 `<header_stem>_wrapper.*`로 자동 추론됩니다. |
@@ -192,7 +192,8 @@ naming:
 
 - `input.allow_diagnostics: true`는 복구용 스위치이지 품질 향상 스위치가 아닙니다. 실패한 translation unit 자체를 통째로 skip 합니다.
 - multi-header directory 모드에서는 `output.header`, `output.source`, `output.ir`를 기본값으로 두는 편이 안전합니다. 그래야 헤더별 출력 파일명을 자동 추론할 수 있습니다.
-- 플랫폼이 `libclang`를 못 찾는다면 먼저 시스템 loader나 LLVM 설치를 고쳐야 합니다. `c-go` 자체가 별도의 프로젝트 전용 runtime env var 레이어를 제공하지는 않습니다.
+- 플랫폼이 `libclang`를 못 찾는다면 먼저 시스템 loader나 LLVM 설치를 고쳐야 합니다.
+- `input.clang_args`의 env 확장은 `$VAR`, `$(VAR)`, `${VAR}` 형태의 exact token만 지원합니다. `${VAR:-default}` 같은 shell 문법이나 문자열 일부 치환은 지원하지 않습니다.
 
 ## 라이선스
 
