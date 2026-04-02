@@ -4,6 +4,25 @@ use c_go::config::Config;
 #[cfg(unix)]
 use std::os::unix::fs::symlink;
 
+struct EnvGuard {
+    key: String,
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        unsafe {
+            env::remove_var(&self.key);
+        }
+    }
+}
+
+fn set_test_env(key: String, value: &str) -> EnvGuard {
+    unsafe {
+        env::set_var(&key, value);
+    }
+    EnvGuard { key }
+}
+
 fn normalize_expected_path(path: &Path) -> String {
     let value = path
         .canonicalize()
@@ -273,6 +292,104 @@ output:
             normalize_expected_path(&dir.join("deps/sys")),
         ]
     );
+}
+
+#[test]
+fn expands_env_tokens_in_clang_args() {
+    let mut dir = env::temp_dir();
+    dir.push(format!(
+        "c_go_config_env_clang_args_test_{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("include")).unwrap();
+    fs::create_dir_all(dir.join("deps/inc")).unwrap();
+    fs::create_dir_all(dir.join("deps/sys")).unwrap();
+    fs::write(dir.join("include/foo.hpp"), "int foo();").unwrap();
+
+    let plain_flag = format!("C_GO_TEST_CLANG_ARG_FLAG_{}", std::process::id());
+    let inline_include = format!("C_GO_TEST_CLANG_ARG_INCLUDE_{}", std::process::id());
+    let system_include = format!("C_GO_TEST_CLANG_ARG_SYSTEM_{}", std::process::id());
+    let braced_flag = format!("C_GO_TEST_CLANG_ARG_BRACED_{}", std::process::id());
+
+    let _plain_flag = set_test_env(plain_flag.clone(), "-DMODE=1");
+    let _inline_include = set_test_env(inline_include.clone(), "deps/inc");
+    let _system_include = set_test_env(system_include.clone(), "deps/sys");
+    let _braced_flag = set_test_env(braced_flag.clone(), "-Winvalid-offsetof");
+
+    let config_path = dir.join("cppgo-wrap.yaml");
+    fs::write(
+        &config_path,
+        format!(
+            r#"
+version: 1
+input:
+  headers:
+    - include/foo.hpp
+  clang_args:
+    - ${plain_flag}
+    - -I${{{inline_include}}}
+    - -isystem
+    - $({system_include})
+    - ${{{braced_flag}}}
+output:
+  dir: gen
+"#
+        ),
+    )
+    .unwrap();
+
+    let config = Config::load(&config_path).unwrap();
+
+    assert_eq!(
+        config.input.clang_args,
+        vec![
+            "-DMODE=1".to_string(),
+            format!("-I{}", normalize_expected_path(&dir.join("deps/inc"))),
+            "-isystem".to_string(),
+            normalize_expected_path(&dir.join("deps/sys")),
+            "-Winvalid-offsetof".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn rejects_missing_env_tokens_in_clang_args() {
+    let mut dir = env::temp_dir();
+    dir.push(format!(
+        "c_go_config_missing_env_clang_args_test_{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("include")).unwrap();
+    fs::write(dir.join("include/foo.hpp"), "int foo();").unwrap();
+
+    let missing = format!("C_GO_TEST_MISSING_CLANG_ARG_{}", std::process::id());
+    unsafe {
+        env::remove_var(&missing);
+    }
+
+    let config_path = dir.join("cppgo-wrap.yaml");
+    fs::write(
+        &config_path,
+        format!(
+            r#"
+version: 1
+input:
+  headers:
+    - include/foo.hpp
+  clang_args:
+    - -I${missing}
+output:
+  dir: gen
+"#
+        ),
+    )
+    .unwrap();
+
+    let error = Config::load(&config_path).unwrap_err().to_string();
+    assert!(error.contains("input.clang_args"));
+    assert!(error.contains(&missing));
 }
 
 #[test]
