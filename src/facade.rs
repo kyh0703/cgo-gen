@@ -1050,9 +1050,14 @@ fn go_type_for_reference(ty: &IrType) -> Option<&'static str> {
 }
 
 fn cgo_cast_type(ty: &IrType) -> &'static str {
-    primitive_cgo_cast_type(&ty.cpp_type).unwrap_or_else(|| {
-        primitive_cgo_cast_type(&ty.c_type).unwrap_or("C.int")
-    })
+    primitive_cgo_cast_type(&ty.cpp_type)
+        .or_else(|| primitive_cgo_cast_type(&ty.c_type))
+        .unwrap_or_else(|| {
+            panic!(
+                "unsupported type in cgo_cast_type: cpp_type={:?}, c_type={:?}",
+                ty.cpp_type, ty.c_type
+            )
+        })
 }
 
 fn primitive_go_type(value: &str) -> Option<&'static str> {
