@@ -11,7 +11,7 @@ CMD             := $(CURRENT_DIR)/cmd/simple-go
 .PHONY: gen
 gen:
 	@echo "🔄 Generating wrapper files..."
-	@cd ../.. && cargo run --bin c-go -- generate --config examples/simple-go/config.yaml --dump-ir
+	@cd ../.. && cargo run --bin cgo-gen -- generate --config examples/simple-go/config.yaml --dump-ir
 	@echo "✅ Generation complete"
 
 .PHONY: build

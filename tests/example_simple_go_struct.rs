@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use c_go::{config::Config, generator};
+use cgo_gen::{config::Config, generator};
 
 fn temp_output_dir(label: &str) -> PathBuf {
     let mut path = env::temp_dir();

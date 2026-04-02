@@ -2,7 +2,7 @@
 
 ## Goal
 
-Define the next major milestone that moves `c-go` from narrow, header-by-header SIL verification toward a real integrated SIL wrapping package built from the actual `D:/Project/IPRON/IE/SIL` source tree.
+Define the next major milestone that moves `cgo-gen` from narrow, header-by-header SIL verification toward a real integrated SIL wrapping package built from the actual `D:/Project/IPRON/IE/SIL` source tree.
 
 The immediate target is:
 
@@ -18,7 +18,7 @@ This milestone is about establishing a durable bulk-onboarding strategy and an i
 
 Current repository state:
 
-- `c-go` already supports `files.model` / `files.facade` classification.
+- `cgo-gen` already supports `files.model` / `files.facade` classification.
 - Raw/model/facade output layers already exist.
 - Real SIL verification has been performed only on a narrow checked-in slice.
 - Current durable docs intentionally keep `IsAAMaster.h` as the only verified checked-in `files.model` header.
@@ -161,7 +161,7 @@ Suggested plan skeleton:
 
 1. Real SIL environment contract
    - define include roots, compile arguments, and any machine-local config handling
-   - verification: `cargo run --bin c-go -- check` succeeds against a local real-SIL config
+   - verification: `cargo run --bin cgo-gen -- check` succeeds against a local real-SIL config
 
 2. Facade anchor stabilization
    - make `iSiLib.h` the primary reviewed facade surface
