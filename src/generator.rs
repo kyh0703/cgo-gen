@@ -109,28 +109,28 @@ fn collect_known_model_types(parsed: &parser::ParsedApi) -> Vec<String> {
 }
 
 pub fn generate(config: &Config, ir: &IrModule, write_ir: bool) -> Result<()> {
-    fs::create_dir_all(config.raw_output_dir()).with_context(|| {
+    fs::create_dir_all(config.output_dir()).with_context(|| {
         format!(
-            "failed to create raw output dir: {}",
-            config.raw_output_dir().display()
+            "failed to create output dir: {}",
+            config.output_dir().display()
         )
     })?;
 
-    let header_path = config.raw_output_dir().join(&config.output.header);
-    let source_path = config.raw_output_dir().join(&config.output.source);
-    let ir_path = config.raw_output_dir().join(&config.output.ir);
+    let header_path = config.output_dir().join(&config.output.header);
+    let source_path = config.output_dir().join(&config.output.source);
+    let ir_path = config.output_dir().join(&config.output.ir);
     fs::write(&header_path, render_header(config, ir))
         .with_context(|| format!("failed to write header: {}", header_path.display()))?;
     fs::write(&source_path, render_source(config, ir))
         .with_context(|| format!("failed to write source: {}", source_path.display()))?;
     for go_file in facade::render_go_facade(config, ir)? {
-        fs::create_dir_all(config.go_output_dir()).with_context(|| {
+        fs::create_dir_all(config.output_dir()).with_context(|| {
             format!(
                 "failed to create go output dir: {}",
-                config.go_output_dir().display()
+                config.output_dir().display()
             )
         })?;
-        let go_path = config.go_output_dir().join(&go_file.filename);
+        let go_path = config.output_dir().join(&go_file.filename);
         fs::write(&go_path, go_file.contents)
             .with_context(|| format!("failed to write Go wrapper: {}", go_path.display()))?;
     }

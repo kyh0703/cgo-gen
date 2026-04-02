@@ -37,7 +37,7 @@ fn checked_in_real_sil_model_config_generates_go_wrapper_when_sources_exist() {
     let ir = ir::normalize(&scoped, &parsed).unwrap();
     generator::generate(&scoped, &ir, true).unwrap();
 
-    let go_path = scoped.go_output_dir().join(scoped.go_filename(""));
+    let go_path = scoped.output_dir().join(scoped.go_filename(""));
     let go_wrapper = fs::read_to_string(&go_path).unwrap();
 
     assert!(go_path.exists());

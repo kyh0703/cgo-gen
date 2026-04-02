@@ -175,7 +175,7 @@ fn render_go_facade_file(
         out.push_str("#include <stdlib.h>\n");
         out.push_str(&format!(
             "#include \"{}\"\n",
-            config.raw_include_for_go(&config.output.header)
+            config.generated_header_include(&config.output.header)
         ));
         out.push_str("*/\n");
         out.push_str("import \"C\"\n\n");
@@ -1522,7 +1522,7 @@ pub fn collect_known_model_projections(
             cpp_type: projection.cpp_type,
             handle_name: projection.handle_name,
             go_name: projection.go_name,
-            output_header: config.raw_include_for_go(&config.output.header),
+            output_header: config.generated_header_include(&config.output.header),
             constructor_symbol: projection.constructor_symbol,
             destructor_symbol: Some(projection.destructor_symbol),
             fields: projection
