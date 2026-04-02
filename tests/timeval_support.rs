@@ -49,6 +49,7 @@ fn normalizes_timeval_pointer_and_reference_params() {
         .unwrap();
     assert_eq!(by_ptr.params[0].ty.kind, "extern_struct_pointer");
     assert_eq!(by_ptr.params[0].ty.c_type, "struct timeval*");
+    assert_eq!(by_ptr.params[0].ty.handle, None);
 
     let by_ref = ir
         .functions
@@ -57,6 +58,7 @@ fn normalizes_timeval_pointer_and_reference_params() {
         .unwrap();
     assert_eq!(by_ref.params[0].ty.kind, "extern_struct_reference");
     assert_eq!(by_ref.params[0].ty.c_type, "struct timeval*");
+    assert_eq!(by_ref.params[0].ty.handle, None);
 
     let alias = ir
         .functions
@@ -66,10 +68,11 @@ fn normalizes_timeval_pointer_and_reference_params() {
     assert_eq!(alias.params[0].ty.kind, "extern_struct_pointer");
     assert_eq!(alias.params[0].ty.cpp_type, "timeval*");
     assert_eq!(alias.params[0].ty.c_type, "struct timeval*");
+    assert_eq!(alias.params[0].ty.handle, None);
 }
 
 #[test]
-fn renders_timeval_header_and_go_preamble_with_sys_time_include() {
+fn renders_go_facade_and_cpp_wrapper_for_timeval_params() {
     let root = write_fixture(
         "timeval_render",
         r#"
@@ -108,22 +111,9 @@ fn renders_timeval_header_and_go_preamble_with_sys_time_include() {
             .contents
             .contains("cArg0 := (*C.struct_timeval)(unsafe.Pointer(value))")
     );
-}
+    assert!(go[0].contents.contains("panic(\"value reference is nil\")"));
 
-#[test]
-fn renders_cpp_wrapper_for_timeval_reference_calls() {
-    let root = write_fixture(
-        "timeval_source",
-        r#"
-        struct timeval;
-        bool TakeByRef(struct timeval& value);
-        "#,
-    );
-
-    let config = Config::load(root.join("config.yaml")).unwrap();
-    let parsed = parser::parse(&config).unwrap();
-    let ir = ir::normalize(&config, &parsed).unwrap();
     let source = render_source(&config, &ir);
-
+    assert!(source.contains("return TakeByPtr(value);"));
     assert!(source.contains("return TakeByRef(*value);"));
 }

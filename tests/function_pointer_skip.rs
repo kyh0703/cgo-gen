@@ -84,3 +84,81 @@ naming:
             .any(|item| item.cpp_name == "Api::SetCallback" && item.reason.contains("function pointer"))
     );
 }
+
+#[test]
+fn skips_operator_declarations() {
+    let root = temp_dir("operators");
+    fs::write(
+        root.join("include/Api.hpp"),
+        r#"
+        class Value {
+        public:
+            Value operator+(const Value& rhs) const;
+            bool operator==(const Value& rhs) const;
+            int GetCode() const;
+        };
+
+        Value operator-(const Value& lhs, const Value& rhs);
+        int plain_add(int lhs, int rhs);
+        "#,
+    )
+    .unwrap();
+
+    let config_path = root.join("cppgo-wrap.yaml");
+    fs::write(
+        &config_path,
+        r#"
+version: 1
+input:
+  headers:
+    - include/Api.hpp
+output:
+  dir: out
+naming:
+  prefix: cgowrap
+  style: preserve
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(&config_path).unwrap();
+    let parsed = parser::parse(&config).unwrap();
+    let ir = ir::normalize(&config, &parsed).unwrap();
+
+    assert!(ir.functions.iter().any(|item| item.name == "cgowrap_plain_add"));
+    assert!(ir.functions.iter().any(|item| item.name == "cgowrap_Value_GetCode"));
+    assert!(
+        !ir.functions
+            .iter()
+            .any(|item| item.cpp_name.contains("operator+"))
+    );
+    assert!(
+        !ir.functions
+            .iter()
+            .any(|item| item.cpp_name.contains("operator=="))
+    );
+    assert!(
+        !ir.functions
+            .iter()
+            .any(|item| item.cpp_name.contains("operator-"))
+    );
+
+    assert!(
+        ir.support
+            .skipped_declarations
+            .iter()
+            .any(|item| item.cpp_name == "Value::operator+" && item.reason.contains("operator declarations"))
+    );
+    assert!(
+        ir.support
+            .skipped_declarations
+            .iter()
+            .any(|item| item.cpp_name == "Value::operator==" && item.reason.contains("operator declarations"))
+    );
+    assert!(
+        ir.support
+            .skipped_declarations
+            .iter()
+            .any(|item| item.cpp_name == "operator-" && item.reason.contains("operator declarations"))
+    );
+}
