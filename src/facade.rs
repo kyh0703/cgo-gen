@@ -629,7 +629,7 @@ fn render_callback_method(
     let receiver = receiver_name(&class.go_name);
     let method_params = function.params.iter().skip(1).collect::<Vec<_>>();
     let params = render_param_list(config, &method_params);
-    let prep = render_callback_call_prep(config, function, &method_params);
+    let prep = render_callback_call_prep(config, function, &method_params, 1);
     let call = format!(
         "C.{}_bridge({})",
         function.name,
@@ -702,7 +702,7 @@ fn render_callback_method(
 fn render_callback_free_function(config: &Config, function: &IrFunction) -> String {
     let params_list = function.params.iter().collect::<Vec<_>>();
     let params = render_param_list(config, &params_list);
-    let prep = render_callback_call_prep(config, function, &params_list);
+    let prep = render_callback_call_prep(config, function, &params_list, 0);
     let call = format!("C.{}_bridge({})", function.name, prep.args.join(", "));
     let go_name = go_facade_export_name(function);
 
@@ -748,12 +748,13 @@ fn render_callback_call_prep(
     config: &Config,
     function: &IrFunction,
     params: &[&crate::ir::IrParam],
+    param_offset: usize,
 ) -> RenderedCallPrep {
     let mut prep = RenderedCallPrep::default();
 
     for (index, param) in params.iter().enumerate() {
         if param.ty.kind == "callback" {
-            let state = callback_state_name_from_function(function, index);
+            let state = callback_state_name_from_function(function, index + param_offset);
             prep.setup_lines.push(format!("{state}.mu.Lock()"));
             prep.setup_lines
                 .push(format!("{state}.fn = {}", param.name));
