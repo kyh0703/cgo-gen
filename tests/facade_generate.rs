@@ -19,12 +19,12 @@ fn generates_go_facade_for_simple_free_function_header() {
     let ir = ir::normalize(&config, &parsed).unwrap();
     generator::generate(&config, &ir, true).unwrap();
 
-    let go_facade = fs::read_to_string(config.go_output_dir().join(config.go_filename(""))).unwrap();
+    let go_facade = fs::read_to_string(config.output_dir().join(config.go_filename(""))).unwrap();
 
     assert!(go_facade.contains("import \"C\""));
     assert!(go_facade.contains(&format!(
         "#include \"{}\"",
-        config.raw_include_for_go(&config.output.header)
+        config.generated_header_include(&config.output.header)
     )));
     assert!(go_facade.contains("func Add(lhs int, rhs int) int {"));
     assert!(go_facade.contains("C.cgowrap_foo_add(C.int(lhs), C.int(rhs))"));
@@ -75,7 +75,7 @@ naming:
     let ir = ir::normalize(&config, &parsed).unwrap();
     generator::generate(&config, &ir, true).unwrap();
 
-    let go_facade = fs::read_to_string(config.go_output_dir().join(config.go_filename(""))).unwrap();
+    let go_facade = fs::read_to_string(config.output_dir().join(config.go_filename(""))).unwrap();
 
     assert!(go_facade.contains("import \"errors\""));
     assert!(go_facade.contains("func IsReady() bool {"));
