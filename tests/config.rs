@@ -1,6 +1,6 @@
 use std::{env, fs, path::Path};
 
-use c_go::config::Config;
+use cgo_gen::config::Config;
 #[cfg(unix)]
 use std::os::unix::fs::symlink;
 
