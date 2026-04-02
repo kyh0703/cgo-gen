@@ -220,11 +220,12 @@ pub fn render_source(config: &Config, ir: &IrModule) -> String {
         out.push('\n');
     }
     let callback_map = callback_map(ir);
-    for function in ir
-        .functions
-        .iter()
-        .filter(|function| function.params.iter().any(|param| param.ty.kind == "callback"))
-    {
+    for function in ir.functions.iter().filter(|function| {
+        function
+            .params
+            .iter()
+            .any(|param| param.ty.kind == "callback")
+    }) {
         out.push_str(&render_callback_bridge_def(function, &callback_map));
         out.push('\n');
     }
@@ -385,6 +386,7 @@ fn render_cpp_arg(ty: IrType, name: &str) -> String {
     match ty.kind.as_str() {
         "string" => format!("std::string({name} != nullptr ? {name} : \"\")"),
         "reference" => format!("*{name}"),
+        "extern_struct_reference" => format!("*{name}"),
         "model_reference" => format!(
             "*reinterpret_cast<{}*>({name})",
             base_model_cpp_type(&ty.cpp_type)
@@ -400,7 +402,12 @@ fn render_cpp_arg(ty: IrType, name: &str) -> String {
 fn callback_bridge_functions(ir: &IrModule) -> Vec<IrFunction> {
     ir.functions
         .iter()
-        .filter(|function| function.params.iter().any(|param| param.ty.kind == "callback"))
+        .filter(|function| {
+            function
+                .params
+                .iter()
+                .any(|param| param.ty.kind == "callback")
+        })
         .map(make_callback_bridge_function)
         .collect()
 }

@@ -120,12 +120,9 @@ pub fn normalize(config: &Config, api: &ParsedApi) -> Result<IrModule> {
     }
 
     for function in &api.functions {
-        if let Some(function) = normalize_function(
-            config,
-            function,
-            &callback_names,
-            &mut skipped_declarations,
-        )? {
+        if let Some(function) =
+            normalize_function(config, function, &callback_names, &mut skipped_declarations)?
+        {
             functions.push(function);
         }
     }
@@ -341,8 +338,7 @@ fn normalize_class(
             method,
             callback_names,
             skipped_declarations,
-        )?
-        {
+        )? {
             functions.push(function);
         }
     }
@@ -572,9 +568,7 @@ fn function_pointer_reason(
     }
 
     for param in params {
-        if param.is_function_pointer
-            && !is_named_callback_param(param, callback_names)
-        {
+        if param.is_function_pointer && !is_named_callback_param(param, callback_names) {
             issues.push(format!(
                 "parameter `{}` type `{}` uses a function pointer",
                 param.name,
@@ -667,11 +661,22 @@ fn normalize_type_with_canonical(
     callback_names: &BTreeSet<String>,
 ) -> Result<IrType> {
     let trimmed = cpp_type.trim();
+    let canonical_trimmed = canonical_type.trim();
     if let Ok(ty) = normalize_type(trimmed, callback_names) {
+        if matches!(ty.kind.as_str(), "model_reference" | "model_pointer")
+            && canonical_trimmed != trimmed
+            && let Ok(mut canonical_ty) = normalize_type(canonical_trimmed, callback_names)
+            && matches!(
+                canonical_ty.kind.as_str(),
+                "extern_struct_reference" | "extern_struct_pointer"
+            )
+        {
+            canonical_ty.cpp_type = trimmed.to_string();
+            return Ok(canonical_ty);
+        }
         return Ok(ty);
     }
 
-    let canonical_trimmed = canonical_type.trim();
     if canonical_trimmed != trimmed {
         if let Ok(mut ty) = normalize_type(canonical_trimmed, callback_names) {
             ty.cpp_type = trimmed.to_string();
@@ -700,7 +705,10 @@ fn normalize_type(cpp_type: &str, callback_names: &BTreeSet<String>) -> Result<I
     if let Some(stripped) = trimmed.strip_prefix("const ") {
         let stripped = stripped.trim();
         if !stripped.ends_with('*') && !stripped.ends_with('&') {
-            if let Ok(ty) = normalize_type(stripped, callback_names) {
+            if let Ok(mut ty) = normalize_type(stripped, callback_names) {
+                if ty.kind == "primitive" && ty.c_type == stripped {
+                    ty.c_type = trimmed.to_string();
+                }
                 return Ok(IrType {
                     cpp_type: trimmed.to_string(),
                     ..ty
@@ -776,6 +784,24 @@ fn normalize_type(cpp_type: &str, callback_names: &BTreeSet<String>) -> Result<I
                 handle: None,
             })
         }
+        _ if trimmed.ends_with('&') && extern_c_struct_base_type(trimmed).is_some() => {
+            let base = extern_c_struct_base_type(trimmed).unwrap();
+            Ok(IrType {
+                kind: "extern_struct_reference".to_string(),
+                cpp_type: trimmed.to_string(),
+                c_type: format!("{base}*"),
+                handle: None,
+            })
+        }
+        _ if trimmed.ends_with('*') && extern_c_struct_base_type(trimmed).is_some() => {
+            let base = extern_c_struct_base_type(trimmed).unwrap();
+            Ok(IrType {
+                kind: "extern_struct_pointer".to_string(),
+                cpp_type: trimmed.to_string(),
+                c_type: format!("{base}*"),
+                handle: None,
+            })
+        }
         _ if trimmed.ends_with('&') && raw_safe_model_handle_name(trimmed).is_some() => {
             let handle_name = raw_safe_model_handle_name(trimmed).unwrap();
             Ok(IrType {
@@ -827,7 +853,8 @@ fn callback_name_set(api: &ParsedApi) -> BTreeSet<String> {
 }
 
 fn is_named_callback_param(param: &CppParam, callback_names: &BTreeSet<String>) -> bool {
-    param.callback_typedef
+    param
+        .callback_typedef
         .as_deref()
         .is_some_and(|name| callback_names.contains(name))
 }
@@ -938,6 +965,14 @@ fn type_signature_token(ty: &IrType) -> String {
             "ref_{}",
             sanitize_symbol_token(ty.cpp_type.trim_end_matches('&'))
         ),
+        "extern_struct_pointer" => format!(
+            "extern_ptr_{}",
+            sanitize_symbol_token(&base_model_cpp_type(&ty.c_type))
+        ),
+        "extern_struct_reference" => format!(
+            "extern_ref_{}",
+            sanitize_symbol_token(&base_model_cpp_type(&ty.c_type))
+        ),
         "opaque" => format!(
             "opaque_{}",
             sanitize_symbol_token(&base_model_cpp_type(&ty.cpp_type))
@@ -1019,15 +1054,59 @@ fn base_model_cpp_type(value: &str) -> String {
         .to_string()
 }
 
+fn extern_c_struct_base_type(cpp_type: &str) -> Option<String> {
+    let base = base_model_cpp_type(cpp_type);
+    let tag = base.strip_prefix("struct ")?;
+    (!tag.trim().is_empty()).then(|| format!("struct {}", tag.trim()))
+}
+
 fn raw_safe_model_handle_name(cpp_type: &str) -> Option<String> {
     let base = base_model_cpp_type(cpp_type);
     if base.is_empty()
         || base.contains('<')
         || base.starts_with("std::")
+        || base.starts_with("struct ")
         || is_supported_primitive(&base)
     {
         return None;
     }
 
     Some(format!("{}Handle", flatten_qualified_cpp_name(&base)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalizes_struct_timeval_pointer_and_reference_as_external_structs() {
+        let callback_names = BTreeSet::new();
+
+        let pointer = normalize_type("struct timeval*", &callback_names).unwrap();
+        assert_eq!(pointer.kind, "extern_struct_pointer");
+        assert_eq!(pointer.c_type, "struct timeval*");
+        assert_eq!(pointer.handle, None);
+
+        let reference = normalize_type("struct timeval&", &callback_names).unwrap();
+        assert_eq!(reference.kind, "extern_struct_reference");
+        assert_eq!(reference.c_type, "struct timeval*");
+        assert_eq!(reference.handle, None);
+    }
+
+    #[test]
+    fn normalizes_timeval_alias_from_canonical_type() {
+        let callback_names = BTreeSet::new();
+        let ty = normalize_type_with_canonical(
+            &Config::default(),
+            "timeval*",
+            "struct timeval*",
+            &callback_names,
+        )
+        .unwrap();
+
+        assert_eq!(ty.kind, "extern_struct_pointer");
+        assert_eq!(ty.cpp_type, "timeval*");
+        assert_eq!(ty.c_type, "struct timeval*");
+        assert_eq!(ty.handle, None);
+    }
 }
