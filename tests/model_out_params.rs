@@ -68,7 +68,7 @@ naming:
     let config = Config::load(&config_path).unwrap();
     generator::generate_all(&config, true).unwrap();
 
-    let raw_output_dir = root.join("gen/raw");
+    let raw_output_dir = root.join("gen");
     let api_header = fs::read_to_string(raw_output_dir.join("api_wrapper.h")).unwrap();
     let api_source = fs::read_to_string(raw_output_dir.join("api_wrapper.cpp")).unwrap();
     let api_go = fs::read_to_string(root.join("gen/api_wrapper.go")).unwrap();

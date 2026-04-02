@@ -120,12 +120,9 @@ pub fn normalize(config: &Config, api: &ParsedApi) -> Result<IrModule> {
     }
 
     for function in &api.functions {
-        if let Some(function) = normalize_function(
-            config,
-            function,
-            &callback_names,
-            &mut skipped_declarations,
-        )? {
+        if let Some(function) =
+            normalize_function(config, function, &callback_names, &mut skipped_declarations)?
+        {
             functions.push(function);
         }
     }
@@ -341,8 +338,7 @@ fn normalize_class(
             method,
             callback_names,
             skipped_declarations,
-        )?
-        {
+        )? {
             functions.push(function);
         }
     }
@@ -397,6 +393,13 @@ fn normalize_method(
 ) -> Result<Option<IrFunction>> {
     let qualified = cpp_qualified(&class.namespace, &class.name);
     let cpp_name = format!("{}::{}", qualified, method.name);
+    if is_operator_name(&method.name) {
+        skipped_declarations.push(SkippedDeclaration {
+            cpp_name,
+            reason: "operator declarations are unsupported in v1".to_string(),
+        });
+        return Ok(None);
+    }
     if let Some(reason) = function_pointer_reason(
         Some((
             &method.return_type,
@@ -466,6 +469,13 @@ fn normalize_function(
     skipped_declarations: &mut Vec<SkippedDeclaration>,
 ) -> Result<Option<IrFunction>> {
     let cpp_name = cpp_qualified(&function.namespace, &function.name);
+    if is_operator_name(&function.name) {
+        skipped_declarations.push(SkippedDeclaration {
+            cpp_name,
+            reason: "operator declarations are unsupported in v1".to_string(),
+        });
+        return Ok(None);
+    }
     if let Some(reason) = function_pointer_reason(
         Some((
             &function.return_type,
@@ -572,9 +582,7 @@ fn function_pointer_reason(
     }
 
     for param in params {
-        if param.is_function_pointer
-            && !is_named_callback_param(param, callback_names)
-        {
+        if param.is_function_pointer && !is_named_callback_param(param, callback_names) {
             issues.push(format!(
                 "parameter `{}` type `{}` uses a function pointer",
                 param.name,
@@ -714,11 +722,7 @@ fn normalize_type(cpp_type: &str, callback_names: &BTreeSet<String>) -> Result<I
             if let Ok(ty) = normalize_type(stripped, callback_names) {
                 return Ok(IrType {
                     cpp_type: trimmed.to_string(),
-                    c_type: if trimmed == "const char" {
-                        trimmed.to_string()
-                    } else {
-                        ty.c_type.clone()
-                    },
+                    c_type: ty.c_type.clone(),
                     ..ty
                 });
             }
@@ -775,20 +779,40 @@ fn normalize_type(cpp_type: &str, callback_names: &BTreeSet<String>) -> Result<I
         _ if trimmed.ends_with('*')
             && is_supported_primitive(trimmed.trim_end_matches('*').trim()) =>
         {
+            let base = trimmed.trim_end_matches('*').trim();
             Ok(IrType {
                 kind: "pointer".to_string(),
                 cpp_type: trimmed.to_string(),
-                c_type: trimmed.to_string(),
+                c_type: format!("{}*", canonical_primitive_c_type(base)),
                 handle: None,
             })
         }
         _ if trimmed.ends_with('&')
             && is_supported_primitive(trimmed.trim_end_matches('&').trim()) =>
         {
+            let base = trimmed.trim_end_matches('&').trim();
             Ok(IrType {
                 kind: "reference".to_string(),
                 cpp_type: trimmed.to_string(),
-                c_type: format!("{}*", trimmed.trim_end_matches('&').trim()),
+                c_type: format!("{}*", canonical_primitive_c_type(base)),
+                handle: None,
+            })
+        }
+        _ if trimmed.ends_with('&') && extern_c_struct_base_type(trimmed).is_some() => {
+            let base = extern_c_struct_base_type(trimmed).unwrap();
+            Ok(IrType {
+                kind: "extern_struct_reference".to_string(),
+                cpp_type: trimmed.to_string(),
+                c_type: format!("{base}*"),
+                handle: None,
+            })
+        }
+        _ if trimmed.ends_with('*') && extern_c_struct_base_type(trimmed).is_some() => {
+            let base = extern_c_struct_base_type(trimmed).unwrap();
+            Ok(IrType {
+                kind: "extern_struct_pointer".to_string(),
+                cpp_type: trimmed.to_string(),
+                c_type: format!("{base}*"),
                 handle: None,
             })
         }
@@ -850,6 +874,20 @@ fn alias_primitive_type(cpp_name: &str, c_name: &str) -> IrType {
     }
 }
 
+fn canonical_primitive_c_type(name: &str) -> &str {
+    match name {
+        "uint8" => "uint8_t",
+        "uint16" => "uint16_t",
+        "uint32" => "uint32_t",
+        "uint64" => "uint64_t",
+        "int8" => "int8_t",
+        "int16" => "int16_t",
+        "int32" => "int32_t",
+        "int64" => "int64_t",
+        other => other,
+    }
+}
+
 fn callback_name_set(api: &ParsedApi) -> BTreeSet<String> {
     api.callbacks
         .iter()
@@ -861,9 +899,14 @@ fn callback_name_set(api: &ParsedApi) -> BTreeSet<String> {
 }
 
 fn is_named_callback_param(param: &CppParam, callback_names: &BTreeSet<String>) -> bool {
-    param.callback_typedef
+    param
+        .callback_typedef
         .as_deref()
         .is_some_and(|name| callback_names.contains(name))
+}
+
+fn is_operator_name(name: &str) -> bool {
+    name.trim().starts_with("operator")
 }
 
 fn is_supported_primitive(name: &str) -> bool {
@@ -1089,18 +1132,6 @@ fn raw_safe_model_handle_name(cpp_type: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn test_config() -> Config {
-        Config {
-            version: Some(1),
-            naming: crate::config::NamingConfig {
-                prefix: "cgowrap".to_string(),
-                style: "preserve".to_string(),
-            },
-            ..Config::default()
-        }
-    }
-
     #[test]
     fn normalizes_struct_timeval_pointer_and_reference_as_external_structs() {
         let callback_names = BTreeSet::new();
@@ -1118,11 +1149,9 @@ mod tests {
 
     #[test]
     fn normalizes_timeval_alias_from_canonical_type() {
-        let config = test_config();
         let callback_names = BTreeSet::new();
-
         let ty = normalize_type_with_canonical(
-            &config,
+            &Config::default(),
             "timeval*",
             "struct timeval*",
             &callback_names,
@@ -1132,5 +1161,6 @@ mod tests {
         assert_eq!(ty.kind, "extern_struct_pointer");
         assert_eq!(ty.cpp_type, "timeval*");
         assert_eq!(ty.c_type, "struct timeval*");
+        assert_eq!(ty.handle, None);
     }
 }

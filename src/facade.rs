@@ -1,4 +1,4 @@
-﻿use std::{collections::BTreeMap, path::Path};
+use std::{collections::BTreeMap, path::Path};
 
 use anyhow::{Result, bail};
 
@@ -150,22 +150,19 @@ fn render_go_facade_file(
                 .iter()
                 .any(|function| matches!(function.returns.kind.as_str(), "string" | "c_string"))
         });
-    let requires_unsafe = functions
-        .iter()
-        .any(|function| {
-            has_string_params(function.params.iter())
-                || has_pointer_params(function.params.iter())
-                || function.returns.kind == "pointer"
-        })
-        || classes.iter().any(|class| {
-            has_string_params(class.constructor.params.iter())
-                || has_pointer_params(class.constructor.params.iter())
-                || class.methods.iter().any(|function| {
-                    has_string_params(function.params.iter().skip(1))
-                        || has_pointer_params(function.params.iter().skip(1))
-                        || function.returns.kind == "pointer"
-                })
-        });
+    let requires_unsafe = functions.iter().any(|function| {
+        has_string_params(function.params.iter())
+            || has_pointer_params(function.params.iter())
+            || function.returns.kind == "pointer"
+    }) || classes.iter().any(|class| {
+        has_string_params(class.constructor.params.iter())
+            || has_pointer_params(class.constructor.params.iter())
+            || class.methods.iter().any(|function| {
+                has_string_params(function.params.iter().skip(1))
+                    || has_pointer_params(function.params.iter().skip(1))
+                    || function.returns.kind == "pointer"
+            })
+    });
     let requires_sync = !callback_usages.is_empty();
 
     let mut out = String::new();
@@ -178,7 +175,7 @@ fn render_go_facade_file(
         }
         out.push_str(&format!(
             "#include \"{}\"\n",
-            config.raw_include_for_go(&config.output.header)
+            config.generated_header_include(&config.output.header)
         ));
         out.push_str("*/\n");
         out.push_str("import \"C\"\n\n");
@@ -301,13 +298,7 @@ fn render_callback_type(callback: &IrCallback) -> String {
     let params = callback
         .params
         .iter()
-        .map(|param| {
-            format!(
-                "{} {}",
-                param.name,
-                callback_go_type(&param.ty)
-            )
-        })
+        .map(|param| format!("{} {}", param.name, callback_go_type(&param.ty)))
         .collect::<Vec<_>>()
         .join(", ");
     let returns = if callback.returns.kind == "void" {
@@ -331,13 +322,7 @@ fn render_callback_export(usage: &CallbackUsage<'_>) -> String {
         .callback
         .params
         .iter()
-        .map(|param| {
-            format!(
-                "{} {}",
-                param.name,
-                callback_cgo_param_type(&param.ty)
-            )
-        })
+        .map(|param| format!("{} {}", param.name, callback_cgo_param_type(&param.ty)))
         .collect::<Vec<_>>()
         .join(", ");
     let mut out = String::new();
@@ -547,10 +532,7 @@ fn render_general_api_method(
                 out.push_str(&line);
                 out.push('\n');
             }
-            out.push_str(&format!(
-                "    return ({})(unsafe.Pointer(raw))\n",
-                go_type
-            ));
+            out.push_str(&format!("    return ({})(unsafe.Pointer(raw))\n", go_type));
         }
         _ => {
             let go_type = go_type_for_ir(&function.returns).unwrap();
@@ -633,17 +615,15 @@ fn render_free_function(config: &Config, function: &IrFunction) -> String {
             out.push_str(&indented_lines(&prep.defer_lines));
             out.push_str(&format!("    raw := {}\n", call));
             out.push_str(&indented_lines(&prep.post_call_lines));
-            out.push_str(&format!("    return ({})(unsafe.Pointer(raw))\n}}\n", go_type));
+            out.push_str(&format!(
+                "    return ({})(unsafe.Pointer(raw))\n}}\n",
+                go_type
+            ));
             out
         }
         _ => {
             let go_type = go_type_for_ir(&function.returns).unwrap();
-            let mut out = format!(
-                "func {}({}) {} {{\n",
-                go_name,
-                params,
-                go_type
-            );
+            let mut out = format!("func {}({}) {} {{\n", go_name, params, go_type);
             out.push_str(&indented_lines(&prep.setup_lines));
             out.push_str(&indented_lines(&prep.defer_lines));
             if go_type == "bool" {
@@ -732,10 +712,7 @@ fn render_callback_method(
         "pointer" => {
             let go_type = go_pointer_return_type(&function.returns).unwrap();
             out.push_str(&format!("    raw := {}\n", call));
-            out.push_str(&format!(
-                "    return ({})(unsafe.Pointer(raw))\n",
-                go_type
-            ));
+            out.push_str(&format!("    return ({})(unsafe.Pointer(raw))\n", go_type));
         }
         _ => {
             out.push_str(&format!("    result := {}\n", call));
@@ -789,10 +766,7 @@ fn render_callback_free_function(config: &Config, function: &IrFunction) -> Stri
         "pointer" => {
             let go_type = go_pointer_return_type(&function.returns).unwrap();
             out.push_str(&format!("    raw := {}\n", call));
-            out.push_str(&format!(
-                "    return ({})(unsafe.Pointer(raw))\n",
-                go_type
-            ));
+            out.push_str(&format!("    return ({})(unsafe.Pointer(raw))\n", go_type));
         }
         _ => {
             out.push_str(&format!("    result := {}\n", call));
@@ -912,9 +886,8 @@ fn render_pointer_arg(prep: &mut RenderedCallPrep, ty: &IrType, name: &str, inde
     let c_type = primitive_cgo_cast_type(base_cpp)
         .or_else(|| primitive_cgo_cast_type(ty.c_type.trim_end_matches('*').trim()))
         .unwrap_or("C.int");
-    prep.setup_lines.push(format!(
-        "{c_name} := (*{c_type})(unsafe.Pointer({name}))"
-    ));
+    prep.setup_lines
+        .push(format!("{c_name} := (*{c_type})(unsafe.Pointer({name}))"));
     prep.args.push(c_name);
 }
 
@@ -996,9 +969,8 @@ fn render_model_arg(
     prep.setup_lines.push(format!("var {c_name} *C.{handle}"));
     if ty.kind == "model_reference" {
         prep.setup_lines.push(format!("if {name} == nil {{"));
-        prep.setup_lines.push(
-            "    panic(\"reference facade/model argument cannot be nil\")".to_string(),
-        );
+        prep.setup_lines
+            .push("    panic(\"reference facade/model argument cannot be nil\")".to_string());
         prep.setup_lines.push("}".to_string());
     }
     prep.setup_lines.push(format!("if {name} != nil {{"));
@@ -1108,7 +1080,12 @@ fn go_param_type(config: &Config, ty: &IrType) -> Option<String> {
         "model_reference" | "model_pointer" => config
             .known_model_projection(&ty.cpp_type)
             .map(|projection| format!("*{}", projection.go_name))
-            .or_else(|| Some(format!("*{}", leaf_cpp_name(&base_model_cpp_type(&ty.cpp_type))))),
+            .or_else(|| {
+                Some(format!(
+                    "*{}",
+                    leaf_cpp_name(&base_model_cpp_type(&ty.cpp_type))
+                ))
+            }),
         _ => None,
     }
 }
@@ -1217,12 +1194,13 @@ fn normalize_type_key(value: &str) -> String {
 
 fn go_export_name(value: &str) -> String {
     let mut out = String::new();
-    for (index, segment) in value.split('_').filter(|segment| !segment.is_empty()).enumerate() {
+    for (index, segment) in value
+        .split('_')
+        .filter(|segment| !segment.is_empty())
+        .enumerate()
+    {
         if index > 0
-            && segment
-                .chars()
-                .next()
-                .is_some_and(|ch| ch.is_ascii_digit())
+            && segment.chars().next().is_some_and(|ch| ch.is_ascii_digit())
             && !out.is_empty()
         {
             out.push('_');
@@ -1386,7 +1364,11 @@ fn callback_state_name_from_function(function: &IrFunction, index: usize) -> Str
 }
 
 fn callback_go_export_name(usage: &CallbackUsage<'_>) -> String {
-    format!("go_{}_cb{}", sanitize_go_token(&usage.function.name), usage.param_index)
+    format!(
+        "go_{}_cb{}",
+        sanitize_go_token(&usage.function.name),
+        usage.param_index
+    )
 }
 
 fn callback_cgo_param_type(ty: &IrType) -> &'static str {
@@ -1491,7 +1473,6 @@ fn ir_uses_struct_timeval(
             ) && base_model_cpp_type(&ty.c_type) == "struct timeval"
         })
 }
-
 fn sanitize_go_token(value: &str) -> String {
     value
         .chars()
@@ -1604,7 +1585,7 @@ pub fn collect_known_model_projections(
             cpp_type: projection.cpp_type,
             handle_name: projection.handle_name,
             go_name: projection.go_name,
-            output_header: config.raw_include_for_go(&config.output.header),
+            output_header: config.generated_header_include(&config.output.header),
             constructor_symbol: projection.constructor_symbol,
             destructor_symbol: Some(projection.destructor_symbol),
             fields: projection
@@ -1683,7 +1664,9 @@ fn build_model_projection(
 ) -> Result<Option<ModelProjection>> {
     let setters = class_methods
         .iter()
-        .filter_map(|function| setter_suffix(function).map(|suffix| (suffix.to_string(), *function)))
+        .filter_map(|function| {
+            setter_suffix(function).map(|suffix| (suffix.to_string(), *function))
+        })
         .collect::<BTreeMap<_, _>>();
 
     let mut fields = Vec::new();
@@ -1729,10 +1712,12 @@ fn build_model_projection(
         return Ok(None);
     }
 
-    let constructor_symbol = constructor_symbol
-        .ok_or_else(|| anyhow::anyhow!("model projection `{owner}` is missing a constructor wrapper"))?;
-    let destructor_symbol = destructor_symbol
-        .ok_or_else(|| anyhow::anyhow!("model projection `{owner}` is missing a destructor wrapper"))?;
+    let constructor_symbol = constructor_symbol.ok_or_else(|| {
+        anyhow::anyhow!("model projection `{owner}` is missing a constructor wrapper")
+    })?;
+    let destructor_symbol = destructor_symbol.ok_or_else(|| {
+        anyhow::anyhow!("model projection `{owner}` is missing a destructor wrapper")
+    })?;
 
     Ok(Some(ModelProjection {
         cpp_type: owner.to_string(),
@@ -1802,7 +1787,7 @@ mod tests {
                 cpp_type: "ThingModel".to_string(),
                 handle_name: "ThingModelHandle".to_string(),
                 go_name: "ThingModel".to_string(),
-                output_header: "raw/thing_model_wrapper.h".to_string(),
+                output_header: "thing_model_wrapper.h".to_string(),
                 constructor_symbol: "cgowrap_ThingModel_new".to_string(),
                 destructor_symbol: Some("cgowrap_ThingModel_delete".to_string()),
                 fields: vec![KnownModelField {
