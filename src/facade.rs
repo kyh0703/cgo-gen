@@ -1157,9 +1157,9 @@ fn primitive_cgo_cast_type(value: &str) -> Option<&'static str> {
         "uint8" | "uint8_t" | "unsignedchar" => Some("C.uint8_t"),
         "uint16" | "uint16_t" | "unsignedshort" => Some("C.uint16_t"),
         "uint32" | "uint32_t" | "unsignedint" | "unsigned" => Some("C.uint32_t"),
-        "uint64" | "uint64_t" => Some("C.uint64_t"),
+        "uint64" | "uint64_t" | "unsignedlong" | "unsignedlonglong" => Some("C.uint64_t"),
         "int" => Some("C.int"),
-        "long" => Some("C.long"),
+        "long" | "longlong" => Some("C.int64_t"),
         "size_t" => Some("C.size_t"),
         _ => None,
     }
