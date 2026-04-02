@@ -1,6 +1,8 @@
 use std::{env, fs, path::Path};
 
 use c_go::config::Config;
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
 
 fn normalize_expected_path(path: &Path) -> String {
     let value = path
@@ -108,7 +110,10 @@ output:
 #[test]
 fn rejects_config_without_dir_or_headers() {
     let mut dir = env::temp_dir();
-    dir.push(format!("c_go_config_missing_input_test_{}", std::process::id()));
+    dir.push(format!(
+        "c_go_config_missing_input_test_{}",
+        std::process::id()
+    ));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
 
@@ -161,7 +166,10 @@ output:
 #[test]
 fn scoped_header_from_dir_only_config_switches_back_to_header_mode() {
     let mut dir = env::temp_dir();
-    dir.push(format!("c_go_config_scoped_dir_only_test_{}", std::process::id()));
+    dir.push(format!(
+        "c_go_config_scoped_dir_only_test_{}",
+        std::process::id()
+    ));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join("include")).unwrap();
     fs::write(dir.join("include/model.hpp"), "class ModelThing {};").unwrap();
@@ -273,11 +281,67 @@ fn loads_real_sil_model_config() {
 
     assert_eq!(config.naming.prefix, "sil");
     assert!(config.input.headers.is_empty());
-    assert!(config.input.dir.as_ref().is_some_and(|path| path.is_absolute()));
-    assert!(
-        config.output.dir.ends_with(
-            Path::new("pkg")
-                .join("sil-real-model")
-        )
+    assert!(config
+        .input
+        .dir
+        .as_ref()
+        .is_some_and(|path| path.is_absolute()));
+    assert!(config
+        .output
+        .dir
+        .ends_with(Path::new("pkg").join("sil-real-model")));
+}
+
+#[cfg(unix)]
+#[test]
+fn resolves_symlinked_external_project_paths_from_config_dir() {
+    let mut dir = env::temp_dir();
+    dir.push(format!(
+        "c_go_config_symlink_project_test_{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&dir);
+
+    let external = dir.join("external-sdk");
+    fs::create_dir_all(external.join("include")).unwrap();
+    fs::create_dir_all(external.join("build")).unwrap();
+    fs::write(external.join("include/foo.hpp"), "int foo();").unwrap();
+    fs::write(external.join("build/compile_commands.json"), "[]").unwrap();
+
+    let workspace = dir.join("workspace");
+    fs::create_dir_all(workspace.join("third_party")).unwrap();
+    symlink(&external, workspace.join("third_party/external-sdk")).unwrap();
+
+    let config_path = workspace.join("cppgo-wrap.yaml");
+    fs::write(
+        &config_path,
+        r#"
+version: 1
+input:
+  dir: third_party/external-sdk/include
+  compile_commands: third_party/external-sdk/build/compile_commands.json
+  clang_args:
+    - -Ithird_party/external-sdk/include
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(&config_path).unwrap();
+    let expected_include = external.join("include").canonicalize().unwrap();
+    let expected_compdb = external
+        .join("build/compile_commands.json")
+        .canonicalize()
+        .unwrap();
+
+    assert_eq!(config.input.dir.as_ref(), Some(&expected_include));
+    assert_eq!(
+        config.input.compile_commands.as_ref(),
+        Some(&expected_compdb)
+    );
+    assert_eq!(
+        config.input.clang_args,
+        vec![format!("-I{}", normalize_expected_path(&expected_include))]
     );
 }
