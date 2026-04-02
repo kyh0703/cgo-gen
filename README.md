@@ -1,8 +1,8 @@
-# c-go
+# cgo-gen
 
 [한국어](./README.ko.md)
 
-`c-go` is a Rust CLI that parses a conservative subset of C/C++ headers and emits:
+`cgo-gen` is a Rust CLI that parses a conservative subset of C/C++ headers and emits:
 
 - C ABI wrapper headers and sources
 - optional normalized IR dumps
@@ -12,11 +12,11 @@ It is designed for controlled header surfaces, not for arbitrary modern C++.
 
 ## Status
 
-`c-go` is intentionally conservative. The public contract is the current CLI and config behavior described in this README. The repository also contains historical planning and design notes under [`docs/`](./docs/), but those are not a stronger source of truth than the code.
+`cgo-gen` is intentionally conservative. The public contract is the current CLI and config behavior described in this README. The repository also contains historical planning and design notes under [`docs/`](./docs/), but those are not a stronger source of truth than the code.
 
 ## What It Generates
 
-For each supported entry header, `c-go` can write these files into one output directory:
+For each supported entry header, `cgo-gen` can write these files into one output directory:
 
 - `<name>_wrapper.h`
 - `<name>_wrapper.cpp`
@@ -39,14 +39,14 @@ This crate is built with `clang-sys` feature `clang_18_0`, so an LLVM/Clang 18 e
 Run directly from the repository:
 
 ```bash
-cargo run --bin c-go -- check --config cppgo-wrap.yaml
+cargo run --bin cgo-gen -- check --config cppgo-wrap.yaml
 ```
 
 Or install the CLI locally:
 
 ```bash
 cargo install --path .
-c-go check --config cppgo-wrap.yaml
+cgo-gen check --config cppgo-wrap.yaml
 ```
 
 ## Quick Start
@@ -72,9 +72,9 @@ naming:
 Common commands:
 
 ```bash
-cargo run --bin c-go -- check --config cppgo-wrap.yaml
-cargo run --bin c-go -- ir --config cppgo-wrap.yaml --format yaml
-cargo run --bin c-go -- generate --config cppgo-wrap.yaml --dump-ir
+cargo run --bin cgo-gen -- check --config cppgo-wrap.yaml
+cargo run --bin cgo-gen -- ir --config cppgo-wrap.yaml --format yaml
+cargo run --bin cgo-gen -- generate --config cppgo-wrap.yaml --dump-ir
 ```
 
 Example projects:
@@ -84,7 +84,7 @@ Example projects:
 
 ## CLI
 
-`c-go` currently exposes three subcommands:
+`cgo-gen` currently exposes three subcommands:
 
 - `generate --config <path> [--dump-ir]`
 - `ir --config <path> [--output <path>] [--format yaml|json]`
@@ -191,7 +191,7 @@ Some unsupported declarations are skipped instead of aborting the whole run. Whe
 ## Practical Notes
 
 - `input.allow_diagnostics: true` is a recovery switch, not a quality switch. It skips failing translation units entirely.
-- In multi-header directory mode, leave `output.header`, `output.source`, and `output.ir` at defaults so `c-go` can infer one output set per header.
+- In multi-header directory mode, leave `output.header`, `output.source`, and `output.ir` at defaults so `cgo-gen` can infer one output set per header.
 - If your platform cannot find `libclang`, fix your system loader or LLVM setup first.
 - `input.clang_args` supports exact env token expansion for `$VAR`, `$(VAR)`, and `${VAR}` only. It is not a general shell interpolation layer and does not support forms like `${VAR:-default}` or partial-string substitution.
 
