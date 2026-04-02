@@ -155,7 +155,7 @@ output:
     assert_eq!(config.output.source, "foo_wrapper.cpp");
     assert_eq!(config.output.ir, "foo_wrapper.ir.yaml");
     assert_eq!(config.go_filename("Foo"), "foo_wrapper.go");
-    assert!(config.raw_output_dir().ends_with("gen/raw"));
+    assert!(config.raw_output_dir().ends_with("gen"));
     assert!(config.go_output_dir().ends_with("gen"));
 }
 

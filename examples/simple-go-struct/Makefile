@@ -34,5 +34,10 @@ clean:
 	@rm -rf $(GO_CACHE)
 	@rm -f $(CURRENT_DIR)/pkg/demo/thing_model_wrapper.go
 	@rm -f $(CURRENT_DIR)/pkg/demo/thing_api_wrapper.go
-	@rm -rf $(CURRENT_DIR)/pkg/demo/raw
+	@rm -f $(CURRENT_DIR)/pkg/demo/thing_model_wrapper.h
+	@rm -f $(CURRENT_DIR)/pkg/demo/thing_model_wrapper.cpp
+	@rm -f $(CURRENT_DIR)/pkg/demo/thing_model_wrapper.ir.yaml
+	@rm -f $(CURRENT_DIR)/pkg/demo/thing_api_wrapper.h
+	@rm -f $(CURRENT_DIR)/pkg/demo/thing_api_wrapper.cpp
+	@rm -f $(CURRENT_DIR)/pkg/demo/thing_api_wrapper.ir.yaml
 	@echo "Clean complete"
