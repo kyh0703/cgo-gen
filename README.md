@@ -104,7 +104,7 @@ All supported user-facing knobs are YAML config keys. Relative paths are resolve
 | `input.translation_units` | Explicit parse entries. When present, parsing prefers these over `input.headers`. |
 | `input.compile_commands` | Imports compiler flags and source translation unit discovery from `compile_commands.json`. |
 | `input.include_dirs` | Prepends `-I...` include flags before `input.clang_args`. |
-| `input.clang_args` | Extra libclang arguments. Relative `-I...`, `-I <path>`, and `-isystem` paths are resolved from the config file directory. |
+| `input.clang_args` | Extra libclang arguments. Relative `-I...`, `-I <path>`, and `-isystem` paths are resolved from the config file directory. Exact env tokens in the forms `$VAR`, `$(VAR)`, and `${VAR}` are also expanded from the current OS environment. |
 | `input.allow_diagnostics` | If `true`, translation units that produce libclang diagnostics are skipped instead of failing the run. |
 | `output.dir` | Output directory. Relative paths resolve from the config file directory. |
 | `output.header` / `output.source` / `output.ir` | Optional output filenames. When left at defaults in single-header mode, names are inferred as `<header_stem>_wrapper.*`. |
@@ -192,7 +192,8 @@ Some unsupported declarations are skipped instead of aborting the whole run. Whe
 
 - `input.allow_diagnostics: true` is a recovery switch, not a quality switch. It skips failing translation units entirely.
 - In multi-header directory mode, leave `output.header`, `output.source`, and `output.ir` at defaults so `c-go` can infer one output set per header.
-- If your platform cannot find `libclang`, fix your system loader or LLVM setup first. `c-go` does not add a project-specific runtime environment variable layer of its own.
+- If your platform cannot find `libclang`, fix your system loader or LLVM setup first.
+- `input.clang_args` supports exact env token expansion for `$VAR`, `$(VAR)`, and `${VAR}` only. It is not a general shell interpolation layer and does not support forms like `${VAR:-default}` or partial-string substitution.
 
 ## License
 
