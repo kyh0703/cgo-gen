@@ -152,13 +152,17 @@ fn render_go_facade_file(
         });
     let requires_unsafe = functions
         .iter()
-        .any(|function| has_string_params(function.params.iter()))
+        .any(|function| {
+            has_string_params(function.params.iter())
+                || has_pointer_params(function.params.iter())
+        })
         || classes.iter().any(|class| {
             has_string_params(class.constructor.params.iter())
-                || class
-                    .methods
-                    .iter()
-                    .any(|function| has_string_params(function.params.iter().skip(1)))
+                || has_pointer_params(class.constructor.params.iter())
+                || class.methods.iter().any(|function| {
+                    has_string_params(function.params.iter().skip(1))
+                        || has_pointer_params(function.params.iter().skip(1))
+                })
         });
     let requires_sync = !callback_usages.is_empty();
 
@@ -772,6 +776,7 @@ fn render_callback_call_prep(
                 prep.args.push(c_name);
             }
             "reference" => render_reference_arg(&mut prep, &param.ty, &param.name, index),
+            "pointer" => render_pointer_arg(&mut prep, &param.ty, &param.name, index),
             "model_reference" | "model_pointer" => {
                 render_model_arg(config, &mut prep, &param.ty, &param.name, index)
             }
@@ -810,6 +815,7 @@ fn render_call_prep(config: &Config, params: &[&crate::ir::IrParam]) -> Rendered
                 prep.args.push(c_name);
             }
             "reference" => render_reference_arg(&mut prep, &param.ty, &param.name, index),
+            "pointer" => render_pointer_arg(&mut prep, &param.ty, &param.name, index),
             "model_reference" | "model_pointer" => {
                 render_model_arg(config, &mut prep, &param.ty, &param.name, index)
             }
@@ -827,6 +833,18 @@ fn render_model_handle_arg(config: &Config, ty: &IrType, name: &str) -> Option<S
     } else {
         Some(format!("require{}Handle({})", projection.go_name, name))
     }
+}
+
+fn render_pointer_arg(prep: &mut RenderedCallPrep, ty: &IrType, name: &str, index: usize) {
+    let c_name = format!("cArg{index}");
+    let base_cpp = ty.cpp_type.trim_end_matches('*').trim();
+    let c_type = primitive_cgo_cast_type(base_cpp)
+        .or_else(|| primitive_cgo_cast_type(ty.c_type.trim_end_matches('*').trim()))
+        .unwrap_or("C.int");
+    prep.setup_lines.push(format!(
+        "{c_name} := (*{c_type})(unsafe.Pointer({name}))"
+    ));
+    prep.args.push(c_name);
 }
 
 fn render_reference_arg(prep: &mut RenderedCallPrep, ty: &IrType, name: &str, index: usize) {
@@ -860,6 +878,10 @@ fn indented_lines(lines: &[String]) -> String {
 
 fn has_string_params<'a>(mut params: impl Iterator<Item = &'a crate::ir::IrParam>) -> bool {
     params.any(|param| matches!(param.ty.kind.as_str(), "string" | "c_string"))
+}
+
+fn has_pointer_params<'a>(mut params: impl Iterator<Item = &'a crate::ir::IrParam>) -> bool {
+    params.any(|param| param.ty.kind == "pointer")
 }
 
 fn render_model_arg(
@@ -979,6 +1001,12 @@ fn go_param_type(config: &Config, ty: &IrType) -> Option<String> {
         "string" | "c_string" => Some("string".to_string()),
         "primitive" => go_type_for_ir(ty).map(str::to_string),
         "reference" => go_type_for_reference(ty).map(|go_type| format!("*{go_type}")),
+        "pointer" => {
+            let base = ty.cpp_type.trim_end_matches('*').trim();
+            primitive_go_type(base)
+                .or_else(|| primitive_go_type(ty.c_type.trim_end_matches('*').trim()))
+                .map(|go_type| format!("*{go_type}"))
+        }
         "callback" => Some(leaf_cpp_name(&ty.cpp_type)),
         "model_reference" | "model_pointer" => config
             .known_model_projection(&ty.cpp_type)
