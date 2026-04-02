@@ -273,7 +273,13 @@ fn normalize_class(
     let mut functions = Vec::new();
     let qualified = cpp_qualified(&class.namespace, &class.name);
 
-    if class.constructors.is_empty() {
+    if class.is_abstract {
+        skipped_declarations.push(SkippedDeclaration {
+            cpp_name: qualified.clone(),
+            reason: "abstract class: has pure virtual methods; constructor wrapper omitted"
+                .to_string(),
+        });
+    } else if class.constructors.is_empty() {
         functions.push(IrFunction {
             name: symbol_name(config, &class.namespace, &class.name, "new"),
             kind: "constructor".to_string(),
