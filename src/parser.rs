@@ -31,6 +31,7 @@ pub struct CppClass {
     pub constructors: Vec<CppConstructor>,
     pub has_destructor: bool,
     pub has_declared_constructor: bool,
+    pub is_abstract: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -344,6 +345,7 @@ fn parse_class(
     let mut constructors = Vec::new();
     let mut has_destructor = false;
     let mut has_declared_constructor = false;
+    let mut is_abstract = false;
 
     for child in direct_children(cursor) {
         if !should_collect_cursor(child, filter) {
@@ -353,6 +355,14 @@ fn parse_class(
         let accessible = matches!(unsafe { clang_getCXXAccessSpecifier(child) }, CX_CXXPublic)
             || (is_struct
                 && unsafe { clang_getCXXAccessSpecifier(child) } == CX_CXXInvalidAccessSpecifier);
+
+        match unsafe { clang_getCursorKind(child) } {
+            CXCursor_CXXMethod if unsafe { clang_CXXMethod_isPureVirtual(child) != 0 } => {
+                is_abstract = true;
+            }
+            _ => {}
+        }
+
         if !accessible {
             continue;
         }
@@ -387,6 +397,7 @@ fn parse_class(
         constructors,
         has_destructor,
         has_declared_constructor,
+        is_abstract,
     })
 }
 
