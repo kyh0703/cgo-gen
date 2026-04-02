@@ -1,5 +1,5 @@
 [package]
-name = "c-go"
+name = "cgo-gen"
 version = "0.1.0"
 edition = "2024"
 description = "Generate C ABI wrappers from a conservative subset of C++ APIs for downstream c-for-go consumption"

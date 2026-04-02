@@ -4,7 +4,7 @@
 
 목표:
 
-- `Makefile`에서 `c-go` wrapper 생성
+- `Makefile`에서 `cgo-gen` wrapper 생성
 - `go build`로 cgo + C++ wrapper 컴파일 확인
 - 현재 구조가 end-to-end로 동작하는지 빠르게 검증
 

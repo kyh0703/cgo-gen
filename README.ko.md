@@ -1,8 +1,8 @@
-# c-go
+# cgo-gen
 
 [English](./README.md)
 
-`c-go`는 보수적인 C/C++ 헤더 subset을 파싱해서 아래 산출물을 만드는 Rust CLI입니다.
+`cgo-gen`은 보수적인 C/C++ 헤더 subset을 파싱해서 아래 산출물을 만드는 Rust CLI입니다.
 
 - C ABI wrapper header/source
 - 선택적 normalized IR dump
@@ -12,11 +12,11 @@
 
 ## 상태
 
-`c-go`는 의도적으로 보수적인 범위를 유지합니다. 외부 사용자 기준의 공개 계약은 이 README에 적힌 현재 CLI와 설정 동작입니다. 저장소 안의 [`docs/`](./docs/)에는 과거 기획/설계 문서도 있지만, 코드보다 더 강한 진실의 원천은 아닙니다.
+`cgo-gen`은 의도적으로 보수적인 범위를 유지합니다. 외부 사용자 기준의 공개 계약은 이 README에 적힌 현재 CLI와 설정 동작입니다. 저장소 안의 [`docs/`](./docs/)에는 과거 기획/설계 문서도 있지만, 코드보다 더 강한 진실의 원천은 아닙니다.
 
 ## 생성물
 
-지원되는 엔트리 헤더마다 `c-go`는 한 출력 디렉터리에 다음 파일들을 생성할 수 있습니다.
+지원되는 엔트리 헤더마다 `cgo-gen`은 한 출력 디렉터리에 다음 파일들을 생성할 수 있습니다.
 
 - `<name>_wrapper.h`
 - `<name>_wrapper.cpp`
@@ -39,14 +39,14 @@
 저장소에서 바로 실행:
 
 ```bash
-cargo run --bin c-go -- check --config cppgo-wrap.yaml
+cargo run --bin cgo-gen -- check --config cppgo-wrap.yaml
 ```
 
 로컬 CLI로 설치:
 
 ```bash
 cargo install --path .
-c-go check --config cppgo-wrap.yaml
+cgo-gen check --config cppgo-wrap.yaml
 ```
 
 ## 빠른 시작
@@ -72,9 +72,9 @@ naming:
 주요 명령:
 
 ```bash
-cargo run --bin c-go -- check --config cppgo-wrap.yaml
-cargo run --bin c-go -- ir --config cppgo-wrap.yaml --format yaml
-cargo run --bin c-go -- generate --config cppgo-wrap.yaml --dump-ir
+cargo run --bin cgo-gen -- check --config cppgo-wrap.yaml
+cargo run --bin cgo-gen -- ir --config cppgo-wrap.yaml --format yaml
+cargo run --bin cgo-gen -- generate --config cppgo-wrap.yaml --dump-ir
 ```
 
 예제 프로젝트:

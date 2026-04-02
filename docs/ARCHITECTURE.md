@@ -1,6 +1,6 @@
 # Architecture
 
-`c-go` now targets a raw C ABI layer plus a shared Go package built on top of the native wrapper pipeline.
+`cgo-gen` now targets a raw C ABI layer plus a shared Go package built on top of the native wrapper pipeline.
 
 ## Core flow
 

@@ -1,6 +1,6 @@
 use std::{env, fs, path::PathBuf};
 
-use c_go::{config::Config, generator, ir, parser};
+use cgo_gen::{config::Config, generator, ir, parser};
 
 fn temp_output_dir(label: &str) -> PathBuf {
     let mut path = env::temp_dir();
