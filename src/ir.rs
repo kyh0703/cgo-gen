@@ -397,6 +397,13 @@ fn normalize_method(
 ) -> Result<Option<IrFunction>> {
     let qualified = cpp_qualified(&class.namespace, &class.name);
     let cpp_name = format!("{}::{}", qualified, method.name);
+    if is_operator_name(&method.name) {
+        skipped_declarations.push(SkippedDeclaration {
+            cpp_name,
+            reason: "operator declarations are unsupported in v1".to_string(),
+        });
+        return Ok(None);
+    }
     if let Some(reason) = function_pointer_reason(
         Some((
             &method.return_type,
@@ -466,6 +473,13 @@ fn normalize_function(
     skipped_declarations: &mut Vec<SkippedDeclaration>,
 ) -> Result<Option<IrFunction>> {
     let cpp_name = cpp_qualified(&function.namespace, &function.name);
+    if is_operator_name(&function.name) {
+        skipped_declarations.push(SkippedDeclaration {
+            cpp_name,
+            reason: "operator declarations are unsupported in v1".to_string(),
+        });
+        return Ok(None);
+    }
     if let Some(reason) = function_pointer_reason(
         Some((
             &function.return_type,
@@ -700,7 +714,10 @@ fn normalize_type(cpp_type: &str, callback_names: &BTreeSet<String>) -> Result<I
     if let Some(stripped) = trimmed.strip_prefix("const ") {
         let stripped = stripped.trim();
         if !stripped.ends_with('*') && !stripped.ends_with('&') {
-            if let Ok(ty) = normalize_type(stripped, callback_names) {
+            if let Ok(mut ty) = normalize_type(stripped, callback_names) {
+                if ty.kind == "primitive" && ty.c_type == stripped {
+                    ty.c_type = trimmed.to_string();
+                }
                 return Ok(IrType {
                     cpp_type: trimmed.to_string(),
                     ..ty
@@ -830,6 +847,10 @@ fn is_named_callback_param(param: &CppParam, callback_names: &BTreeSet<String>) 
     param.callback_typedef
         .as_deref()
         .is_some_and(|name| callback_names.contains(name))
+}
+
+fn is_operator_name(name: &str) -> bool {
+    name.trim().starts_with("operator")
 }
 
 fn is_supported_primitive(name: &str) -> bool {
