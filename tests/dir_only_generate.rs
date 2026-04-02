@@ -67,17 +67,16 @@ files:
     let config = Config::load(root.join("config.yaml")).unwrap();
     generator::generate_all(&config, true).unwrap();
 
-    let raw_dir = root.join("gen/raw");
-    let go_dir = root.join("gen");
+    let output_dir = root.join("gen");
 
-    assert!(raw_dir.join("thing_model_wrapper.h").exists());
-    assert!(raw_dir.join("api_wrapper.h").exists());
-    assert!(go_dir.join("thing_model_wrapper.go").exists());
-    assert!(go_dir.join("api_wrapper.go").exists());
+    assert!(output_dir.join("thing_model_wrapper.h").exists());
+    assert!(output_dir.join("api_wrapper.h").exists());
+    assert!(output_dir.join("thing_model_wrapper.go").exists());
+    assert!(output_dir.join("api_wrapper.go").exists());
 }
 
 #[test]
-fn nested_output_dir_places_go_files_at_output_root_and_raw_below_it() {
+fn nested_output_dir_places_all_generated_files_at_output_root() {
     let root = temp_dir("nested_output");
     let include_dir = root.join("include");
     fs::create_dir_all(&include_dir).unwrap();
@@ -110,9 +109,8 @@ output:
     generator::generate_all(&config, true).unwrap();
 
     assert!(root.join("gen/test").is_dir());
-    assert!(root.join("gen/test/raw").is_dir());
     assert!(root.join("gen/test/thing_wrapper.go").exists());
-    assert!(root.join("gen/test/raw/thing_wrapper.h").exists());
-    assert!(root.join("gen/test/raw/thing_wrapper.cpp").exists());
-    assert!(root.join("gen/test/raw/thing_wrapper.ir.yaml").exists());
+    assert!(root.join("gen/test/thing_wrapper.h").exists());
+    assert!(root.join("gen/test/thing_wrapper.cpp").exists());
+    assert!(root.join("gen/test/thing_wrapper.ir.yaml").exists());
 }
