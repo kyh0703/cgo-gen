@@ -10,7 +10,7 @@ Updated: 2026-03-27
 
 ## Summary
 
-Current `c-go` work has been simplified toward **file-based generation**:
+Current `cgo-gen` work has been simplified toward **file-based generation**:
 
 - `filter` config support was removed
 - generation now relies on:

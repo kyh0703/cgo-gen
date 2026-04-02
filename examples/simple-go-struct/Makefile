@@ -11,7 +11,7 @@ CMD             := $(CURRENT_DIR)/cmd/simple-go-struct
 .PHONY: gen
 gen:
 	@echo "Generating handle-backed model/facade wrappers..."
-	@cd ../.. && cargo run --bin c-go -- generate --config examples/simple-go-struct/config.yaml --dump-ir
+	@cd ../.. && cargo run --bin cgo-gen -- generate --config examples/simple-go-struct/config.yaml --dump-ir
 	@echo "Generation complete"
 
 .PHONY: build
