@@ -1,6 +1,6 @@
 use std::{env, fs, path::PathBuf};
 
-use c_go::{compiler, config::Config, parser};
+use cgo_gen::{compiler, config::Config, parser};
 
 fn temp_fixture_dir(label: &str) -> PathBuf {
     let mut path = env::temp_dir();

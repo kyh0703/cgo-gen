@@ -1,4 +1,4 @@
-use c_go::{
+use cgo_gen::{
     config::Config,
     generator::{render_header, render_source},
     ir, parser,
