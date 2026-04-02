@@ -24,7 +24,7 @@
 - Lowest-level generated wrapper output.
 - Bridges C++ to stable C ABI.
 - Owns `wrapper.h` / `wrapper.cpp` style artifacts.
-- Emits physical files under `output.dir/raw/`.
+- Emits physical files under `output.dir/`.
 - Hides constructors, destructors, overload-safe symbol suffixing, and other C++-specific details.
 
 ### Shared model layer
@@ -81,7 +81,7 @@ For the current facade slice, the design now applies **model-aware routing first
   - model/facade semantic classification is determined only by explicit config (`files.model`, `files.facade`).
   - `model` headers can emit Go enum models and auto-project `IsAAMaster`-style getter/setter classes into handle-backed Go wrappers.
   - `facade` headers now generate phase-1 Go facade wrappers and still do not emit Go model files.
-  - generated files now emit under `raw/` for native artifacts and directly under `output.dir/` for Go artifacts.
+  - generated wrapper and Go files now emit together under `output.dir/`.
   - the base supported facade surface includes primitive/string free functions plus known-model `Model&` / `Model*` params routed as `*Model` wrappers.
   - facade class methods preserve raw `bool`/primitive/string returns instead of lifting known-model out-params into DTO-style return values.
   - unknown non-classified model reference/pointer declarations can now remain in raw wrapper output as opaque handles when the raw renderer can express them safely.

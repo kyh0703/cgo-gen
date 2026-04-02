@@ -34,7 +34,7 @@ fn renders_unified_go_wrapper() {
 }
 
 #[test]
-fn normalizes_const_char_value_types() {
+fn preserves_const_char_spelling_but_normalizes_c_value_type() {
     let root = std::env::temp_dir().join(format!(
         "c_go_const_char_value_{}",
         std::process::id()
@@ -74,7 +74,7 @@ output:
         .find(|function| function.cpp_name == "Api::GetMarker")
         .unwrap();
     assert_eq!(marker.returns.cpp_type, "const char");
-    assert_eq!(marker.returns.c_type, "const char");
+    assert_eq!(marker.returns.c_type, "char");
 }
 
 #[test]

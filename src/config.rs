@@ -464,7 +464,7 @@ impl Config {
     }
 
     pub fn raw_output_dir(&self) -> PathBuf {
-        self.output.dir.join("raw")
+        self.output.dir.clone()
     }
 
     pub fn go_output_dir(&self) -> PathBuf {
@@ -472,7 +472,7 @@ impl Config {
     }
 
     pub fn raw_include_for_go(&self, header: &str) -> String {
-        format!("raw/{header}")
+        header.to_string()
     }
 
     fn apply_output_defaults(&mut self) {
