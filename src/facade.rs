@@ -173,6 +173,9 @@ fn render_go_facade_file(
     if requires_cgo {
         out.push_str("/*\n");
         out.push_str("#include <stdlib.h>\n");
+        if ir_uses_struct_timeval(functions, classes) {
+            out.push_str("#include <sys/time.h>\n");
+        }
         out.push_str(&format!(
             "#include \"{}\"\n",
             config.raw_include_for_go(&config.output.header)
@@ -833,6 +836,12 @@ fn render_callback_call_prep(
             }
             "reference" => render_reference_arg(&mut prep, &param.ty, &param.name, index),
             "pointer" => render_pointer_arg(&mut prep, &param.ty, &param.name, index),
+            "extern_struct_reference" => {
+                render_extern_struct_arg(&mut prep, &param.ty, &param.name, index, true)
+            }
+            "extern_struct_pointer" => {
+                render_extern_struct_arg(&mut prep, &param.ty, &param.name, index, false)
+            }
             "model_reference" | "model_pointer" => {
                 render_model_arg(config, &mut prep, &param.ty, &param.name, index)
             }
@@ -872,6 +881,12 @@ fn render_call_prep(config: &Config, params: &[&crate::ir::IrParam]) -> Rendered
             }
             "reference" => render_reference_arg(&mut prep, &param.ty, &param.name, index),
             "pointer" => render_pointer_arg(&mut prep, &param.ty, &param.name, index),
+            "extern_struct_reference" => {
+                render_extern_struct_arg(&mut prep, &param.ty, &param.name, index, true)
+            }
+            "extern_struct_pointer" => {
+                render_extern_struct_arg(&mut prep, &param.ty, &param.name, index, false)
+            }
             "model_reference" | "model_pointer" => {
                 render_model_arg(config, &mut prep, &param.ty, &param.name, index)
             }
@@ -900,6 +915,26 @@ fn render_pointer_arg(prep: &mut RenderedCallPrep, ty: &IrType, name: &str, inde
     prep.setup_lines.push(format!(
         "{c_name} := (*{c_type})(unsafe.Pointer({name}))"
     ));
+    prep.args.push(c_name);
+}
+
+fn render_extern_struct_arg(
+    prep: &mut RenderedCallPrep,
+    ty: &IrType,
+    name: &str,
+    index: usize,
+    require_non_nil: bool,
+) {
+    let c_name = format!("cArg{index}");
+    let go_type = extern_struct_go_type(ty).expect("external struct params must be prefiltered");
+    if require_non_nil {
+        prep.setup_lines.push(format!("if {name} == nil {{"));
+        prep.setup_lines
+            .push(format!("    panic(\"{name} reference is nil\")"));
+        prep.setup_lines.push("}".to_string());
+    }
+    prep.setup_lines
+        .push(format!("{c_name} := ({go_type})(unsafe.Pointer({name}))"));
     prep.args.push(c_name);
 }
 
@@ -937,7 +972,12 @@ fn has_string_params<'a>(mut params: impl Iterator<Item = &'a crate::ir::IrParam
 }
 
 fn has_pointer_params<'a>(mut params: impl Iterator<Item = &'a crate::ir::IrParam>) -> bool {
-    params.any(|param| param.ty.kind == "pointer")
+    params.any(|param| {
+        matches!(
+            param.ty.kind.as_str(),
+            "pointer" | "extern_struct_pointer" | "extern_struct_reference"
+        )
+    })
 }
 
 fn render_model_arg(
@@ -1063,6 +1103,7 @@ fn go_param_type(config: &Config, ty: &IrType) -> Option<String> {
                 .or_else(|| primitive_go_type(ty.c_type.trim_end_matches('*').trim()))
                 .map(|go_type| format!("*{go_type}"))
         }
+        "extern_struct_pointer" | "extern_struct_reference" => extern_struct_go_type(ty),
         "callback" => Some(leaf_cpp_name(&ty.cpp_type)),
         "model_reference" | "model_pointer" => config
             .known_model_projection(&ty.cpp_type)
@@ -1244,6 +1285,8 @@ fn go_overload_token(ty: &IrType) -> String {
         "callback" => format!("{}Callback", go_export_name(&leaf_cpp_name(&ty.cpp_type))),
         "string" | "c_string" => string_overload_token(ty),
         "primitive" => primitive_overload_token(ty),
+        "extern_struct_reference" => extern_struct_overload_token(ty, "Ref"),
+        "extern_struct_pointer" => extern_struct_overload_token(ty, "Ptr"),
         "model_reference" => format!(
             "{}Ref",
             go_export_name(&flatten_qualified_cpp_name(&base_model_cpp_type(
@@ -1269,6 +1312,12 @@ fn model_pointer_depth(ty: &IrType) -> usize {
         return cpp_depth;
     }
     ty.c_type.chars().filter(|ch| *ch == '*').count().max(1)
+}
+
+fn extern_struct_overload_token(ty: &IrType, suffix: &str) -> String {
+    let base = base_model_cpp_type(&ty.c_type);
+    let tag = base.strip_prefix("struct ").unwrap_or(&base);
+    format!("{}{}", go_export_name(&sanitize_go_token(tag)), suffix)
 }
 
 fn primitive_overload_token(ty: &IrType) -> String {
@@ -1408,6 +1457,39 @@ fn base_model_cpp_type(value: &str) -> String {
         .trim_end_matches('*')
         .trim()
         .to_string()
+}
+
+fn extern_struct_go_type(ty: &IrType) -> Option<String> {
+    let base = base_model_cpp_type(&ty.c_type);
+    let tag = base.strip_prefix("struct ")?;
+    Some(format!("*C.struct_{}", sanitize_go_token(tag)))
+}
+
+fn ir_uses_struct_timeval(
+    functions: &[&IrFunction],
+    classes: &[AnalyzedFacadeClass<'_>],
+) -> bool {
+    functions
+        .iter()
+        .flat_map(|function| {
+            std::iter::once(&function.returns).chain(function.params.iter().map(|param| &param.ty))
+        })
+        .chain(classes.iter().flat_map(|class| {
+            std::iter::once(&class.constructor.returns)
+                .chain(class.constructor.params.iter().map(|param| &param.ty))
+                .chain(std::iter::once(&class.destructor.returns))
+                .chain(class.destructor.params.iter().map(|param| &param.ty))
+                .chain(class.methods.iter().flat_map(|function| {
+                    std::iter::once(&function.returns)
+                        .chain(function.params.iter().map(|param| &param.ty))
+                }))
+        }))
+        .any(|ty| {
+            matches!(
+                ty.kind.as_str(),
+                "extern_struct_reference" | "extern_struct_pointer"
+            ) && base_model_cpp_type(&ty.c_type) == "struct timeval"
+        })
 }
 
 fn sanitize_go_token(value: &str) -> String {

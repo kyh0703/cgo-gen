@@ -1,0 +1,129 @@
+use c_go::{
+    config::Config,
+    generator::{render_go_structs, render_header, render_source},
+    ir, parser,
+};
+
+fn write_fixture(name: &str, header: &str) -> std::path::PathBuf {
+    let root = std::env::temp_dir().join(format!("c_go_{name}_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("include")).unwrap();
+    std::fs::write(root.join("include/Api.hpp"), header).unwrap();
+    std::fs::write(
+        root.join("config.yaml"),
+        r#"
+version: 1
+input:
+  headers:
+    - include/Api.hpp
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+    root
+}
+
+#[test]
+fn normalizes_timeval_pointer_and_reference_params() {
+    let root = write_fixture(
+        "timeval_types",
+        r#"
+        struct timeval;
+        typedef struct timeval timeval;
+
+        bool TakeByPtr(struct timeval* value);
+        bool TakeByRef(struct timeval& value);
+        bool TakeAlias(timeval* value);
+        "#,
+    );
+
+    let config = Config::load(root.join("config.yaml")).unwrap();
+    let parsed = parser::parse(&config).unwrap();
+    let ir = ir::normalize(&config, &parsed).unwrap();
+
+    let by_ptr = ir
+        .functions
+        .iter()
+        .find(|function| function.cpp_name == "TakeByPtr")
+        .unwrap();
+    assert_eq!(by_ptr.params[0].ty.kind, "extern_struct_pointer");
+    assert_eq!(by_ptr.params[0].ty.c_type, "struct timeval*");
+
+    let by_ref = ir
+        .functions
+        .iter()
+        .find(|function| function.cpp_name == "TakeByRef")
+        .unwrap();
+    assert_eq!(by_ref.params[0].ty.kind, "extern_struct_reference");
+    assert_eq!(by_ref.params[0].ty.c_type, "struct timeval*");
+
+    let alias = ir
+        .functions
+        .iter()
+        .find(|function| function.cpp_name == "TakeAlias")
+        .unwrap();
+    assert_eq!(alias.params[0].ty.kind, "extern_struct_pointer");
+    assert_eq!(alias.params[0].ty.cpp_type, "timeval*");
+    assert_eq!(alias.params[0].ty.c_type, "struct timeval*");
+}
+
+#[test]
+fn renders_timeval_header_and_go_preamble_with_sys_time_include() {
+    let root = write_fixture(
+        "timeval_render",
+        r#"
+        struct timeval;
+        typedef struct timeval timeval;
+
+        bool TakeByPtr(struct timeval* value);
+        bool TakeByRef(struct timeval& value);
+        "#,
+    );
+
+    let config = Config::load(root.join("config.yaml")).unwrap();
+    let parsed = parser::parse(&config).unwrap();
+    let ir = ir::normalize(&config, &parsed).unwrap();
+
+    let header = render_header(&config, &ir);
+    assert!(header.contains("#include <sys/time.h>"));
+    assert!(header.contains("bool cgowrap_TakeByPtr(struct timeval* value);"));
+    assert!(header.contains("bool cgowrap_TakeByRef(struct timeval* value);"));
+
+    let go = render_go_structs(&config, &ir).unwrap();
+    assert_eq!(go.len(), 1);
+    assert!(go[0].contents.contains("#include <sys/time.h>"));
+    assert!(
+        go[0]
+            .contents
+            .contains("func TakeByPtr(value *C.struct_timeval) bool {")
+    );
+    assert!(
+        go[0]
+            .contents
+            .contains("func TakeByRef(value *C.struct_timeval) bool {")
+    );
+    assert!(
+        go[0]
+            .contents
+            .contains("cArg0 := (*C.struct_timeval)(unsafe.Pointer(value))")
+    );
+}
+
+#[test]
+fn renders_cpp_wrapper_for_timeval_reference_calls() {
+    let root = write_fixture(
+        "timeval_source",
+        r#"
+        struct timeval;
+        bool TakeByRef(struct timeval& value);
+        "#,
+    );
+
+    let config = Config::load(root.join("config.yaml")).unwrap();
+    let parsed = parser::parse(&config).unwrap();
+    let ir = ir::normalize(&config, &parsed).unwrap();
+    let source = render_source(&config, &ir);
+
+    assert!(source.contains("return TakeByRef(*value);"));
+}
