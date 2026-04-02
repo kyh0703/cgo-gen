@@ -693,6 +693,22 @@ fn normalize_type(cpp_type: &str, callback_names: &BTreeSet<String>) -> Result<I
             handle: None,
         });
     }
+
+    // Strip leading "const " for value types and retry.
+    // Only applies to non-pointer/reference types to preserve const semantics
+    // on pointer targets (e.g. "const char*" is handled separately above).
+    if let Some(stripped) = trimmed.strip_prefix("const ") {
+        let stripped = stripped.trim();
+        if !stripped.ends_with('*') && !stripped.ends_with('&') {
+            if let Ok(ty) = normalize_type(stripped, callback_names) {
+                return Ok(IrType {
+                    cpp_type: trimmed.to_string(),
+                    ..ty
+                });
+            }
+        }
+    }
+
     match trimmed {
         "void" => Ok(primitive_type(trimmed)),
         "bool" | "int" | "short" | "long" | "long long" | "float" | "double" | "size_t"
