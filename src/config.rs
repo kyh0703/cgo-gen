@@ -463,15 +463,11 @@ impl Config {
         format!("{stem}.go")
     }
 
-    pub fn raw_output_dir(&self) -> PathBuf {
+    pub fn output_dir(&self) -> PathBuf {
         self.output.dir.clone()
     }
 
-    pub fn go_output_dir(&self) -> PathBuf {
-        self.output.dir.clone()
-    }
-
-    pub fn raw_include_for_go(&self, header: &str) -> String {
+    pub fn generated_header_include(&self, header: &str) -> String {
         header.to_string()
     }
 

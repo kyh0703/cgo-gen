@@ -81,10 +81,10 @@ fn parses_and_generates_wrapper_for_isaamaster_fixture() {
 
     generator::generate(&config, &ir, true).unwrap();
 
-    let header = fs::read_to_string(config.raw_output_dir().join(&config.output.header)).unwrap();
-    let source = fs::read_to_string(config.raw_output_dir().join(&config.output.source)).unwrap();
-    let ir_yaml = fs::read_to_string(config.raw_output_dir().join(&config.output.ir)).unwrap();
-    let go_struct_path = config.go_output_dir().join(config.go_filename("IsAAMaster"));
+    let header = fs::read_to_string(config.output_dir().join(&config.output.header)).unwrap();
+    let source = fs::read_to_string(config.output_dir().join(&config.output.source)).unwrap();
+    let ir_yaml = fs::read_to_string(config.output_dir().join(&config.output.ir)).unwrap();
+    let go_struct_path = config.output_dir().join(config.go_filename("IsAAMaster"));
     let go_structs = fs::read_to_string(go_struct_path).unwrap();
     let expected_dir = fixture_dir().join("expected");
     let expected_header = fs::read_to_string(expected_dir.join("is_aa_master_wrapper.h")).unwrap();
@@ -162,11 +162,11 @@ fn generated_wrapper_compiles_and_runs_against_isaamaster_fixture() {
     let status = Command::new(&compiler)
         .current_dir(&root)
         .arg("-std=c++11")
-        .arg(config.raw_output_dir().join(&config.output.source))
+        .arg(config.output_dir().join(&config.output.source))
         .arg(fixture_dir.join("src/IsAAMaster.cpp"))
         .arg(&smoke_cpp)
         .arg("-I")
-        .arg(config.raw_output_dir())
+        .arg(config.output_dir())
         .arg("-I")
         .arg(fixture_dir.join("include"))
         .arg("-o")
@@ -189,7 +189,7 @@ fn unified_go_wrapper_renders_isaamaster_methods() {
     let ir = ir::normalize(&config, &parsed).unwrap();
     generator::generate(&config, &ir, true).unwrap();
 
-    let go_struct_path = config.go_output_dir().join(config.go_filename("IsAAMaster"));
+    let go_struct_path = config.output_dir().join(config.go_filename("IsAAMaster"));
     let go_wrapper = fs::read_to_string(go_struct_path).unwrap();
 
     assert!(go_wrapper.contains("type IsAAMaster struct {"));
