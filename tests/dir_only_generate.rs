@@ -109,3 +109,63 @@ output:
     assert!(root.join("gen/test/thing_wrapper.cpp").exists());
     assert!(root.join("gen/test/thing_wrapper.ir.yaml").exists());
 }
+
+#[test]
+fn dir_generation_skips_standalone_outputs_for_owner_inline_headers() {
+    let root = temp_dir("owner_inline_headers");
+    let include_dir = root.join("include");
+    fs::create_dir_all(&include_dir).unwrap();
+
+    fs::write(
+        include_dir.join("Api.hpp"),
+        r#"
+        #pragma once
+
+        class Api {
+        public:
+            Api() = default;
+            ~Api() = default;
+            bool IsReady() const;
+        };
+        "#,
+    )
+    .unwrap();
+
+    fs::write(
+        include_dir.join("Api-inl.hpp"),
+        r#"
+        #pragma once
+        #include "Api.hpp"
+
+        inline bool Api::IsReady() const { return true; }
+        "#,
+    )
+    .unwrap();
+
+    fs::write(
+        root.join("config.yaml"),
+        r#"
+version: 1
+input:
+  dir: include
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(root.join("config.yaml")).unwrap();
+    generator::generate_all(&config, true).unwrap();
+
+    let output_dir = root.join("gen");
+    assert!(output_dir.join("api_wrapper.h").exists());
+    assert!(output_dir.join("api_wrapper.cpp").exists());
+    assert!(output_dir.join("api_wrapper.go").exists());
+    assert!(!output_dir.join("api_inl_wrapper.h").exists());
+    assert!(!output_dir.join("api_inl_wrapper.cpp").exists());
+    assert!(!output_dir.join("api_inl_wrapper.go").exists());
+
+    let raw_source = fs::read_to_string(output_dir.join("api_wrapper.cpp")).unwrap();
+    assert!(raw_source.contains("cgowrap_Api_IsReady"));
+    assert!(raw_source.contains("#include \"Api.hpp\""));
+}

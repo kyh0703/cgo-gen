@@ -123,6 +123,13 @@ impl ParsedApi {
             .collect();
         filtered
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.functions.is_empty()
+            && self.classes.is_empty()
+            && self.enums.is_empty()
+            && self.callbacks.is_empty()
+    }
 }
 
 pub fn parse(config: &Config) -> Result<ParsedApi> {
