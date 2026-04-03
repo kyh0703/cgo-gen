@@ -225,6 +225,69 @@ output:
 }
 
 #[test]
+fn struct_fields_generate_synthetic_accessors() {
+    let root = env::temp_dir().join(format!("c_go_struct_field_accessors_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join("include")).unwrap();
+    fs::write(
+        root.join("include/Counter.hpp"),
+        r#"
+        #include <stdint.h>
+
+        struct Counter {
+            int value;
+            uint32_t total_count;
+            const int read_only = 7;
+        };
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("config.yaml"),
+        r#"
+version: 1
+input:
+  headers:
+    - include/Counter.hpp
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(root.join("config.yaml")).unwrap();
+    let parsed = parser::parse(&config).unwrap();
+    let ir = ir::normalize(&config, &parsed).unwrap();
+    let header = render_header(&config, &ir);
+    let source = render_source(&config, &ir);
+    let go = render_go_structs(&config, &ir).unwrap();
+
+    assert!(header.contains("int cgowrap_Counter_GetValue(const CounterHandle* self);"));
+    assert!(header.contains("void cgowrap_Counter_SetValue(CounterHandle* self, int value);"));
+    assert!(header.contains(
+        "unsigned int cgowrap_Counter_GetTotalCount(const CounterHandle* self);"
+    ));
+    assert!(header.contains(
+        "void cgowrap_Counter_SetTotalCount(CounterHandle* self, unsigned int value);"
+    ));
+    assert!(header.contains("int cgowrap_Counter_GetReadOnly(const CounterHandle* self);"));
+    assert!(!header.contains("cgowrap_Counter_SetReadOnly"));
+
+    assert!(source.contains("return reinterpret_cast<const Counter*>(self)->value;"));
+    assert!(source.contains("reinterpret_cast<Counter*>(self)->value = value;"));
+    assert!(source.contains("return reinterpret_cast<const Counter*>(self)->total_count;"));
+    assert!(source.contains("reinterpret_cast<Counter*>(self)->total_count = value;"));
+
+    assert_eq!(go.len(), 1);
+    assert!(go[0].contents.contains("type Counter struct {"));
+    assert!(go[0].contents.contains("func (c *Counter) GetValue() int {"));
+    assert!(go[0].contents.contains("func (c *Counter) SetValue(value int) {"));
+    assert!(go[0].contents.contains("func (c *Counter) GetTotalCount() uint32 {"));
+    assert!(go[0].contents.contains("func (c *Counter) SetTotalCount(value uint32) {"));
+    assert!(!go[0].contents.contains("SetReadOnly("));
+}
+
+#[test]
 fn renders_model_value_return_as_owned_handle_copy() {
     let root = env::temp_dir().join(format!("c_go_model_value_return_{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
