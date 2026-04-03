@@ -216,9 +216,6 @@ fn dir_only_config_expands_classified_header_directory_into_all_grouped_headers(
 version: 1
 input:
   dir: include
-files:
-  model:
-    - include/entry.hpp
 output:
   dir: gen
 "#,
