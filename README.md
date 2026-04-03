@@ -23,6 +23,11 @@ For each supported entry header, `cgo-gen` can write these files into one output
 - `<name>_wrapper.go`
 - `<name>_wrapper.ir.yaml` when `--dump-ir` is enabled
 
+When `generate` runs with `--go-module <module-path>`, it also writes:
+
+- `build_flags.go`
+- `go.mod`
+
 The generated `.go`, `.h`, `.cpp`, and `.ir.yaml` files are intentionally co-located so a downstream `cgo` package can build them together.
 
 ## Requirements
@@ -75,6 +80,7 @@ Common commands:
 cargo run --bin cgo-gen -- check --config cppgo-wrap.yaml
 cargo run --bin cgo-gen -- ir --config cppgo-wrap.yaml --format yaml
 cargo run --bin cgo-gen -- generate --config cppgo-wrap.yaml --dump-ir
+cargo run --bin cgo-gen -- generate --config cppgo-wrap.yaml --go-module example.com/acme/foo
 ```
 
 Example projects:
@@ -86,9 +92,20 @@ Example projects:
 
 `cgo-gen` currently exposes three subcommands:
 
-- `generate --config <path> [--dump-ir]`
+- `generate --config <path> [--dump-ir] [--go-module <module-path>]`
 - `ir --config <path> [--output <path>] [--format yaml|json]`
 - `check --config <path>`
+
+## External Go Package Metadata
+
+Use `generate --go-module <module-path>` when you want `output.dir` to behave like a standalone Go module.
+
+- `go.mod` is emitted with `module <module-path>` and `go 1.25`
+- `build_flags.go` always emits `#cgo CFLAGS: -I${SRCDIR}`
+- `build_flags.go` exports `#cgo CXXFLAGS` from raw `input.clang_args` only
+- exported `CXXFLAGS` keep authored spellings where possible and allow only `-I/-isystem`, `-D`, and `-std=...`
+- `input.include_dirs` is ignored for exported package metadata
+- linker flags are not generated; downstream consumers still own `#cgo LDFLAGS`
 
 ## Configuration Reference
 

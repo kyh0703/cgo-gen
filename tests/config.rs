@@ -359,6 +359,14 @@ output:
             normalize_expected_path(&dir.join("deps/sys")),
         ]
     );
+    assert_eq!(
+        config.raw_clang_args(),
+        &[
+            "-Ideps/inc".to_string(),
+            "-isystem".to_string(),
+            "deps/sys".to_string(),
+        ]
+    );
 }
 
 #[test]
@@ -465,15 +473,19 @@ fn loads_real_sil_model_config() {
 
     assert_eq!(config.naming.prefix, "sil");
     assert!(config.input.headers.is_empty());
-    assert!(config
-        .input
-        .dir
-        .as_ref()
-        .is_some_and(|path| path.is_absolute()));
-    assert!(config
-        .output
-        .dir
-        .ends_with(Path::new("pkg").join("sil-real-model")));
+    assert!(
+        config
+            .input
+            .dir
+            .as_ref()
+            .is_some_and(|path| path.is_absolute())
+    );
+    assert!(
+        config
+            .output
+            .dir
+            .ends_with(Path::new("pkg").join("sil-real-model"))
+    );
 }
 
 #[cfg(unix)]
@@ -528,4 +540,47 @@ output:
         config.input.clang_args,
         vec![format!("-I{}", normalize_expected_path(&expected_include))]
     );
+}
+
+#[test]
+fn preserves_raw_clang_args_without_include_dirs_injected() {
+    let mut dir = env::temp_dir();
+    dir.push(format!(
+        "c_go_config_raw_clang_args_test_{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("include")).unwrap();
+    fs::create_dir_all(dir.join("deps/inc")).unwrap();
+    fs::create_dir_all(dir.join("manual/inc")).unwrap();
+    fs::write(dir.join("include/foo.hpp"), "int foo();").unwrap();
+
+    let config_path = dir.join("cppgo-wrap.yaml");
+    fs::write(
+        &config_path,
+        r#"
+version: 1
+input:
+  headers:
+    - include/foo.hpp
+  include_dirs:
+    - deps/inc
+  clang_args:
+    - -Imanual/inc
+    - -DMODE=1
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(&config_path).unwrap();
+
+    assert_eq!(
+        config.raw_clang_args(),
+        &["-Imanual/inc".to_string(), "-DMODE=1".to_string()]
+    );
+    assert_eq!(config.input.clang_args.len(), 3);
+    assert!(config.input.clang_args[0].starts_with("-I"));
+    assert!(config.input.clang_args[0].contains("deps"));
 }
