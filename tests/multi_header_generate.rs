@@ -51,10 +51,6 @@ input:
     - include/BetaThing.hpp
 output:
   dir: gen
-files:
-  model:
-    - include/AlphaThing.hpp
-    - include/BetaThing.hpp
 naming:
   prefix: cgowrap
   style: preserve
