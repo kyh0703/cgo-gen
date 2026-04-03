@@ -421,6 +421,18 @@ fn render_destructor_body(function: &IrFunction) -> String {
 
 fn render_method_body(function: &IrFunction) -> String {
     let owner = function.owner_cpp_type.as_deref().unwrap_or("void");
+    if let Some(accessor) = &function.field_accessor {
+        let receiver = if function.is_const.unwrap_or(false) {
+            format!("reinterpret_cast<const {}*>(self)", owner)
+        } else {
+            format!("reinterpret_cast<{}*>(self)", owner)
+        };
+        return match accessor.access.as_str() {
+            "get" => format!("    return {receiver}->{};\n", accessor.field_name),
+            "set" => format!("    {receiver}->{} = value;\n", accessor.field_name),
+            _ => unreachable!("unsupported field accessor kind"),
+        };
+    }
     let receiver = if function.is_const.unwrap_or(false) {
         format!("reinterpret_cast<const {}*>(self)", owner)
     } else {
@@ -584,6 +596,7 @@ fn make_callback_bridge_function(function: &IrFunction) -> IrFunction {
         method_of: function.method_of.clone(),
         owner_cpp_type: function.owner_cpp_type.clone(),
         is_const: function.is_const,
+        field_accessor: None,
         returns: function.returns.clone(),
         params,
     }
