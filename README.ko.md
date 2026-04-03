@@ -82,6 +82,43 @@ cargo run --bin cgo-gen -- generate --config cppgo-wrap.yaml --dump-ir
 - [`examples/simple-go`](./examples/simple-go)
 - [`examples/simple-go-struct`](./examples/simple-go-struct)
 
+## Command Recipes
+
+CLI 설치 또는 도움말 확인:
+
+```bash
+cargo install --path .
+cgo-gen --help
+cgo-gen generate --help
+```
+
+설치 없이 저장소에서 바로 실행:
+
+```bash
+cargo run --bin cgo-gen -- check --config cppgo-wrap.yaml
+cargo run --bin cgo-gen -- ir --config cppgo-wrap.yaml --format yaml
+cargo run --bin cgo-gen -- generate --config cppgo-wrap.yaml --dump-ir
+```
+
+예제 설정으로 wrapper 생성:
+
+```bash
+cargo run --bin cgo-gen -- generate --config examples/simple-go/config.yaml
+cargo run --bin cgo-gen -- generate --config examples/simple-go-struct/config.yaml
+```
+
+체크인된 Go 예제를 end-to-end로 빌드:
+
+```bash
+make -C examples/simple-go gen
+make -C examples/simple-go build
+make -C examples/simple-go run
+
+make -C examples/simple-go-struct gen
+make -C examples/simple-go-struct build
+make -C examples/simple-go-struct run
+```
+
 ## CLI
 
 현재 제공하는 서브커맨드는 세 가지입니다.
