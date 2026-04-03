@@ -7,18 +7,15 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default)]
     pub version: Option<u32>,
-    #[serde(default)]
-    pub project_root: Option<PathBuf>,
     pub input: InputConfig,
     #[serde(default)]
     pub output: OutputConfig,
     #[serde(default)]
     pub naming: NamingConfig,
-    #[serde(default)]
-    pub policies: PolicyConfig,
     #[serde(skip)]
     pub known_model_types: Vec<String>,
     #[serde(skip)]
@@ -109,46 +106,6 @@ impl Default for NamingConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PolicyConfig {
-    #[serde(default = "default_string_mode")]
-    pub string_mode: String,
-    #[serde(default = "default_enum_mode")]
-    pub enum_mode: String,
-    #[serde(default)]
-    pub unsupported: UnsupportedPolicy,
-}
-
-impl Default for PolicyConfig {
-    fn default() -> Self {
-        Self {
-            string_mode: default_string_mode(),
-            enum_mode: default_enum_mode(),
-            unsupported: UnsupportedPolicy::default(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UnsupportedPolicy {
-    #[serde(default = "default_error")]
-    pub templates: String,
-    #[serde(default = "default_skip")]
-    pub stl_containers: String,
-    #[serde(default = "default_error")]
-    pub exceptions: String,
-}
-
-impl Default for UnsupportedPolicy {
-    fn default() -> Self {
-        Self {
-            templates: default_error(),
-            stl_containers: default_skip(),
-            exceptions: default_error(),
-        }
-    }
-}
-
 fn default_output_dir() -> PathBuf {
     PathBuf::from("gen")
 }
@@ -166,18 +123,6 @@ fn default_prefix() -> String {
 }
 fn default_style() -> String {
     "preserve".to_string()
-}
-fn default_string_mode() -> String {
-    "c_str".to_string()
-}
-fn default_enum_mode() -> String {
-    "c_enum".to_string()
-}
-fn default_error() -> String {
-    "error".to_string()
-}
-fn default_skip() -> String {
-    "skip".to_string()
 }
 
 fn resolve_relative_clang_args(args: &mut Vec<String>, base_dir: &Path) -> Result<()> {

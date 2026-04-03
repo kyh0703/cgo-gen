@@ -38,9 +38,6 @@ version: 1
 input:
   headers:
     - include/ThingModel.hpp
-files:
-  model:
-    - include/ThingModel.hpp
 output:
   dir: gen
 naming:

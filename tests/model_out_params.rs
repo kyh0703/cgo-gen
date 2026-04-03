@@ -51,11 +51,6 @@ input:
   headers:
     - include/ThingModel.hpp
     - include/Api.hpp
-files:
-  model:
-    - include/ThingModel.hpp
-  facade:
-    - include/Api.hpp
 output:
   dir: gen
 naming:
@@ -127,11 +122,6 @@ version: 1
 input:
   headers:
     - include/ThingModel.hpp
-    - include/Api.hpp
-files:
-  model:
-    - include/ThingModel.hpp
-  facade:
     - include/Api.hpp
 output:
   dir: gen
