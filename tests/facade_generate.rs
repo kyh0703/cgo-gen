@@ -58,9 +58,6 @@ version: 1
 input:
   headers:
     - include/Api.hpp
-files:
-  facade:
-    - include/Api.hpp
 output:
   dir: out
 naming:
@@ -121,9 +118,6 @@ version: 1
 input:
   headers:
     - include/Api.hpp
-files:
-  facade:
-    - include/Api.hpp
 output:
   dir: out
 naming:
@@ -175,9 +169,6 @@ fn preserves_numeric_suffix_underscores_in_go_method_names() {
 version: 1
 input:
   headers:
-    - include/Media.hpp
-files:
-  facade:
     - include/Media.hpp
 output:
   dir: out
@@ -239,9 +230,6 @@ fn supports_facade_classes_with_object_pointer_constructor_params() {
 version: 1
 input:
   headers:
-    - include/Api.hpp
-files:
-  facade:
     - include/Api.hpp
 output:
   dir: out
@@ -305,9 +293,6 @@ fn supports_facade_classes_with_object_reference_constructor_params() {
 version: 1
 input:
   headers:
-    - include/Api.hpp
-files:
-  facade:
     - include/Api.hpp
 output:
   dir: out
@@ -379,11 +364,6 @@ version: 1
 input:
   headers:
     - include/ThingModel.hpp
-    - include/Api.hpp
-files:
-  model:
-    - include/ThingModel.hpp
-  facade:
     - include/Api.hpp
 output:
   dir: out
@@ -478,11 +458,6 @@ input:
   headers:
     - include/ThingModel.hpp
     - include/Api.hpp
-files:
-  model:
-    - include/ThingModel.hpp
-  facade:
-    - include/Api.hpp
 output:
   dir: out
 naming:
@@ -571,11 +546,6 @@ input:
   headers:
     - include/ThingModel.hpp
     - include/Api.hpp
-files:
-  model:
-    - include/ThingModel.hpp
-  facade:
-    - include/Api.hpp
 output:
   dir: out
 naming:
@@ -659,9 +629,6 @@ version: 1
 input:
   headers:
     - include/Api.hpp
-files:
-  facade:
-    - include/Api.hpp
 output:
   dir: out
 naming:
@@ -727,11 +694,6 @@ input:
   headers:
     - include/ThingModel.hpp
     - include/Api.hpp
-files:
-  model:
-    - include/ThingModel.hpp
-  facade:
-    - include/Api.hpp
 output:
   dir: out
 naming:
@@ -795,11 +757,6 @@ version: 1
 input:
   headers:
     - include/IsWebHook.hpp
-    - include/ISiLib.hpp
-files:
-  model:
-    - include/IsWebHook.hpp
-  facade:
     - include/ISiLib.hpp
 output:
   dir: out
@@ -866,9 +823,6 @@ fn generates_callback_typedefs_and_facade_bridge_helpers() {
 version: 1
 input:
   headers:
-    - include/Api.hpp
-files:
-  facade:
     - include/Api.hpp
 output:
   dir: out

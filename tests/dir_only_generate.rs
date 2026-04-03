@@ -55,11 +55,6 @@ input:
   dir: include
 output:
   dir: gen
-files:
-  model:
-    - include/ThingModel.hpp
-  facade:
-    - include/Api.hpp
 "#,
     )
     .unwrap();
