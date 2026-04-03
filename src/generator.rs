@@ -9,7 +9,7 @@ use anyhow::{Context, Result, bail};
 use crate::{
     config::Config,
     facade,
-    ir::{IrCallback, IrEnum, IrFunction, IrModule, IrParam, IrType},
+    ir::{IrCallback, IrFunction, IrModule, IrParam, IrType},
     parser,
 };
 
@@ -263,9 +263,6 @@ pub fn render_header(config: &Config, ir: &IrModule) -> String {
         out.push('\n');
     }
 
-    for item in &ir.enums {
-        render_enum_decl(&mut out, item);
-    }
     for callback in &ir.callbacks {
         render_callback_decl(&mut out, callback);
     }
@@ -336,17 +333,6 @@ pub fn render_source(config: &Config, ir: &IrModule) -> String {
 
 pub fn render_go_structs(config: &Config, ir: &IrModule) -> Result<Vec<GeneratedGoFile>> {
     facade::render_go_facade(config, ir)
-}
-
-fn render_enum_decl(out: &mut String, item: &IrEnum) {
-    out.push_str(&format!("typedef enum {} {{\n", item.name));
-    for variant in &item.variants {
-        match &variant.value {
-            Some(value) => out.push_str(&format!("    {} = {},\n", variant.name, value)),
-            None => out.push_str(&format!("    {},\n", variant.name)),
-        }
-    }
-    out.push_str(&format!("}} {};\n\n", item.name));
 }
 
 fn render_callback_decl(out: &mut String, callback: &IrCallback) {
@@ -477,8 +463,16 @@ fn call_args(function: &IrFunction, start: usize) -> String {
 
 fn render_cpp_arg(ty: IrType, name: &str) -> String {
     match ty.kind.as_str() {
+        "primitive" if ty.cpp_type != ty.c_type => {
+            format!("static_cast<{}>({name})", ty.cpp_type)
+        }
         "string" => format!("std::string({name} != nullptr ? {name} : \"\")"),
-        "reference" => format!("*{name}"),
+        "reference" => primitive_alias_cast_target(&ty)
+            .map(|cpp_type| format!("*reinterpret_cast<{}*>({name})", cpp_type))
+            .unwrap_or_else(|| format!("*{name}")),
+        "pointer" => primitive_alias_cast_target(&ty)
+            .map(|cpp_type| format!("reinterpret_cast<{}*>({name})", cpp_type))
+            .unwrap_or_else(|| name.to_string()),
         "extern_struct_reference" => format!("*{name}"),
         "model_reference" => format!(
             "*reinterpret_cast<{}*>({name})",
@@ -490,6 +484,59 @@ fn render_cpp_arg(ty: IrType, name: &str) -> String {
         ),
         _ => name.to_string(),
     }
+}
+
+fn primitive_alias_cast_target(ty: &IrType) -> Option<&str> {
+    let cpp_base = match ty.kind.as_str() {
+        "reference" => ty.cpp_type.trim_end_matches('&').trim(),
+        "pointer" => ty.cpp_type.trim_end_matches('*').trim(),
+        _ => return None,
+    };
+    let c_base = ty.c_type.trim_end_matches('*').trim();
+    if generator_supported_primitive(cpp_base) && cpp_base != c_base {
+        Some(cpp_base)
+    } else {
+        None
+    }
+}
+
+fn generator_supported_primitive(name: &str) -> bool {
+    matches!(
+        name,
+        "bool"
+            | "int"
+            | "int8_t"
+            | "int8"
+            | "int16_t"
+            | "int16"
+            | "int32_t"
+            | "int32"
+            | "int64_t"
+            | "int64"
+            | "short"
+            | "long"
+            | "long long"
+            | "float"
+            | "double"
+            | "size_t"
+            | "uint8_t"
+            | "uint8"
+            | "uint16_t"
+            | "uint16"
+            | "uint32_t"
+            | "uint32"
+            | "uint64_t"
+            | "uint64"
+            | "char"
+            | "const char"
+            | "unsigned"
+            | "unsigned int"
+            | "unsigned short"
+            | "unsigned long"
+            | "unsigned long long"
+            | "signed char"
+            | "unsigned char"
+    )
 }
 
 fn callback_bridge_functions(ir: &IrModule) -> Vec<IrFunction> {
