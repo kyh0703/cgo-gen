@@ -28,3 +28,4 @@ workspace_status: reset-ready
 - legacy compatibility folders were removed after migration
 - unresolved mapping notes live in `docs/v2/research/unresolved-mapping-notes.md`
 - previous working documents are treated as archived history
+- current workspace is ready to start the next plan
