@@ -155,15 +155,15 @@ const char* sil_IsAAMaster_GetDigitS_Num(IsAAMasterHandle* self) {
 }
 
 void sil_IsAAMaster_SetAAMasterId(IsAAMasterHandle* self, uint32_t nAAMasterId) {
-    reinterpret_cast<IsAAMaster*>(self)->SetAAMasterId(nAAMasterId);
+    reinterpret_cast<IsAAMaster*>(self)->SetAAMasterId(static_cast<uint32>(nAAMasterId));
 }
 
 void sil_IsAAMaster_SetTenantId(IsAAMasterHandle* self, uint32_t nTenantId) {
-    reinterpret_cast<IsAAMaster*>(self)->SetTenantId(nTenantId);
+    reinterpret_cast<IsAAMaster*>(self)->SetTenantId(static_cast<uint32>(nTenantId));
 }
 
 void sil_IsAAMaster_SetNodeId(IsAAMasterHandle* self, uint32_t nNodeId) {
-    reinterpret_cast<IsAAMaster*>(self)->SetNodeId(nNodeId);
+    reinterpret_cast<IsAAMaster*>(self)->SetNodeId(static_cast<uint32>(nNodeId));
 }
 
 void sil_IsAAMaster_SetAADn(IsAAMasterHandle* self, const char* sAADn) {
@@ -175,31 +175,31 @@ void sil_IsAAMaster_SetAAName(IsAAMasterHandle* self, const char* sAAName) {
 }
 
 void sil_IsAAMaster_SetScenarioUseYn(IsAAMasterHandle* self, uint16_t nScenarioUseYn) {
-    reinterpret_cast<IsAAMaster*>(self)->SetScenarioUseYn(nScenarioUseYn);
+    reinterpret_cast<IsAAMaster*>(self)->SetScenarioUseYn(static_cast<uint16>(nScenarioUseYn));
 }
 
 void sil_IsAAMaster_SetScenarioId(IsAAMasterHandle* self, uint32_t nScenarioId) {
-    reinterpret_cast<IsAAMaster*>(self)->SetScenarioId(nScenarioId);
+    reinterpret_cast<IsAAMaster*>(self)->SetScenarioId(static_cast<uint32>(nScenarioId));
 }
 
 void sil_IsAAMaster_SetInitMentType(IsAAMasterHandle* self, uint16_t nMentType) {
-    reinterpret_cast<IsAAMaster*>(self)->SetInitMentType(nMentType);
+    reinterpret_cast<IsAAMaster*>(self)->SetInitMentType(static_cast<uint16>(nMentType));
 }
 
 void sil_IsAAMaster_SetInitMentId(IsAAMasterHandle* self, uint32_t nMentId) {
-    reinterpret_cast<IsAAMaster*>(self)->SetInitMentId(nMentId);
+    reinterpret_cast<IsAAMaster*>(self)->SetInitMentId(static_cast<uint32>(nMentId));
 }
 
 void sil_IsAAMaster_SetMenuMentType(IsAAMasterHandle* self, uint16_t nMentType) {
-    reinterpret_cast<IsAAMaster*>(self)->SetMenuMentType(nMentType);
+    reinterpret_cast<IsAAMaster*>(self)->SetMenuMentType(static_cast<uint16>(nMentType));
 }
 
 void sil_IsAAMaster_SetMenuMentId(IsAAMasterHandle* self, uint32_t nMentId) {
-    reinterpret_cast<IsAAMaster*>(self)->SetMenuMentId(nMentId);
+    reinterpret_cast<IsAAMaster*>(self)->SetMenuMentId(static_cast<uint32>(nMentId));
 }
 
 void sil_IsAAMaster_SetDigit1_Act(IsAAMasterHandle* self, uint16_t nDigitAct) {
-    reinterpret_cast<IsAAMaster*>(self)->SetDigit1_Act(nDigitAct);
+    reinterpret_cast<IsAAMaster*>(self)->SetDigit1_Act(static_cast<uint16>(nDigitAct));
 }
 
 void sil_IsAAMaster_SetDigit1_Num(IsAAMasterHandle* self, const char* sDigitNum) {
@@ -207,7 +207,7 @@ void sil_IsAAMaster_SetDigit1_Num(IsAAMasterHandle* self, const char* sDigitNum)
 }
 
 void sil_IsAAMaster_SetDigit2_Act(IsAAMasterHandle* self, uint16_t nDigitAct) {
-    reinterpret_cast<IsAAMaster*>(self)->SetDigit2_Act(nDigitAct);
+    reinterpret_cast<IsAAMaster*>(self)->SetDigit2_Act(static_cast<uint16>(nDigitAct));
 }
 
 void sil_IsAAMaster_SetDigit2_Num(IsAAMasterHandle* self, const char* sDigitNum) {
@@ -215,7 +215,7 @@ void sil_IsAAMaster_SetDigit2_Num(IsAAMasterHandle* self, const char* sDigitNum)
 }
 
 void sil_IsAAMaster_SetDigit3_Act(IsAAMasterHandle* self, uint16_t nDigitAct) {
-    reinterpret_cast<IsAAMaster*>(self)->SetDigit3_Act(nDigitAct);
+    reinterpret_cast<IsAAMaster*>(self)->SetDigit3_Act(static_cast<uint16>(nDigitAct));
 }
 
 void sil_IsAAMaster_SetDigit3_Num(IsAAMasterHandle* self, const char* sDigitNum) {
@@ -223,7 +223,7 @@ void sil_IsAAMaster_SetDigit3_Num(IsAAMasterHandle* self, const char* sDigitNum)
 }
 
 void sil_IsAAMaster_SetDigit4_Act(IsAAMasterHandle* self, uint16_t nDigitAct) {
-    reinterpret_cast<IsAAMaster*>(self)->SetDigit4_Act(nDigitAct);
+    reinterpret_cast<IsAAMaster*>(self)->SetDigit4_Act(static_cast<uint16>(nDigitAct));
 }
 
 void sil_IsAAMaster_SetDigit4_Num(IsAAMasterHandle* self, const char* sDigitNum) {
@@ -231,7 +231,7 @@ void sil_IsAAMaster_SetDigit4_Num(IsAAMasterHandle* self, const char* sDigitNum)
 }
 
 void sil_IsAAMaster_SetDigit5_Act(IsAAMasterHandle* self, uint16_t nDigitAct) {
-    reinterpret_cast<IsAAMaster*>(self)->SetDigit5_Act(nDigitAct);
+    reinterpret_cast<IsAAMaster*>(self)->SetDigit5_Act(static_cast<uint16>(nDigitAct));
 }
 
 void sil_IsAAMaster_SetDigit5_Num(IsAAMasterHandle* self, const char* sDigitNum) {
@@ -239,7 +239,7 @@ void sil_IsAAMaster_SetDigit5_Num(IsAAMasterHandle* self, const char* sDigitNum)
 }
 
 void sil_IsAAMaster_SetDigit6_Act(IsAAMasterHandle* self, uint16_t nDigitAct) {
-    reinterpret_cast<IsAAMaster*>(self)->SetDigit6_Act(nDigitAct);
+    reinterpret_cast<IsAAMaster*>(self)->SetDigit6_Act(static_cast<uint16>(nDigitAct));
 }
 
 void sil_IsAAMaster_SetDigit6_Num(IsAAMasterHandle* self, const char* sDigitNum) {
@@ -247,7 +247,7 @@ void sil_IsAAMaster_SetDigit6_Num(IsAAMasterHandle* self, const char* sDigitNum)
 }
 
 void sil_IsAAMaster_SetDigit7_Act(IsAAMasterHandle* self, uint16_t nDigitAct) {
-    reinterpret_cast<IsAAMaster*>(self)->SetDigit7_Act(nDigitAct);
+    reinterpret_cast<IsAAMaster*>(self)->SetDigit7_Act(static_cast<uint16>(nDigitAct));
 }
 
 void sil_IsAAMaster_SetDigit7_Num(IsAAMasterHandle* self, const char* sDigitNum) {
@@ -255,7 +255,7 @@ void sil_IsAAMaster_SetDigit7_Num(IsAAMasterHandle* self, const char* sDigitNum)
 }
 
 void sil_IsAAMaster_SetDigit8_Act(IsAAMasterHandle* self, uint16_t nDigitAct) {
-    reinterpret_cast<IsAAMaster*>(self)->SetDigit8_Act(nDigitAct);
+    reinterpret_cast<IsAAMaster*>(self)->SetDigit8_Act(static_cast<uint16>(nDigitAct));
 }
 
 void sil_IsAAMaster_SetDigit8_Num(IsAAMasterHandle* self, const char* sDigitNum) {
@@ -263,7 +263,7 @@ void sil_IsAAMaster_SetDigit8_Num(IsAAMasterHandle* self, const char* sDigitNum)
 }
 
 void sil_IsAAMaster_SetDigit9_Act(IsAAMasterHandle* self, uint16_t nDigitAct) {
-    reinterpret_cast<IsAAMaster*>(self)->SetDigit9_Act(nDigitAct);
+    reinterpret_cast<IsAAMaster*>(self)->SetDigit9_Act(static_cast<uint16>(nDigitAct));
 }
 
 void sil_IsAAMaster_SetDigit9_Num(IsAAMasterHandle* self, const char* sDigitNum) {
@@ -271,7 +271,7 @@ void sil_IsAAMaster_SetDigit9_Num(IsAAMasterHandle* self, const char* sDigitNum)
 }
 
 void sil_IsAAMaster_SetDigit0_Act(IsAAMasterHandle* self, uint16_t nDigitAct) {
-    reinterpret_cast<IsAAMaster*>(self)->SetDigit0_Act(nDigitAct);
+    reinterpret_cast<IsAAMaster*>(self)->SetDigit0_Act(static_cast<uint16>(nDigitAct));
 }
 
 void sil_IsAAMaster_SetDigit0_Num(IsAAMasterHandle* self, const char* sDigitNum) {
@@ -279,7 +279,7 @@ void sil_IsAAMaster_SetDigit0_Num(IsAAMasterHandle* self, const char* sDigitNum)
 }
 
 void sil_IsAAMaster_SetDigitA_Act(IsAAMasterHandle* self, uint16_t nDigitAct) {
-    reinterpret_cast<IsAAMaster*>(self)->SetDigitA_Act(nDigitAct);
+    reinterpret_cast<IsAAMaster*>(self)->SetDigitA_Act(static_cast<uint16>(nDigitAct));
 }
 
 void sil_IsAAMaster_SetDigitA_Num(IsAAMasterHandle* self, const char* sDigitNum) {
@@ -287,7 +287,7 @@ void sil_IsAAMaster_SetDigitA_Num(IsAAMasterHandle* self, const char* sDigitNum)
 }
 
 void sil_IsAAMaster_SetDigitS_Act(IsAAMasterHandle* self, uint16_t nDigitAct) {
-    reinterpret_cast<IsAAMaster*>(self)->SetDigitS_Act(nDigitAct);
+    reinterpret_cast<IsAAMaster*>(self)->SetDigitS_Act(static_cast<uint16>(nDigitAct));
 }
 
 void sil_IsAAMaster_SetDigitS_Num(IsAAMasterHandle* self, const char* sDigitNum) {
