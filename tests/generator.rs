@@ -107,11 +107,13 @@ output:
     let parsed = parser::parse(&config).unwrap();
     let ir = ir::normalize(&config, &parsed).unwrap();
     let header = render_header(&config, &ir);
+    let go = render_go_structs(&config, &ir).unwrap();
 
     assert!(parsed.enums.iter().any(|item| item.name == "FooState"));
-    assert!(header.contains("typedef enum FooState {"));
-    assert!(header.contains("} FooState;"));
-    assert!(!header.contains("(unnamed enum at"));
+    assert!(!header.contains("FooState"));
+    assert!(go[0].contents.contains("type FooState int64"));
+    assert!(go[0].contents.contains("FooDisabled FooState = 0"));
+    assert!(go[0].contents.contains("FooEnabled FooState = 1"));
 }
 
 #[test]
@@ -185,8 +187,6 @@ version: 1
 input:
   headers:
     - include/Api.hpp
-  include_dirs:
-    - sdk/include
   clang_args:
     - -I${SDK_INCLUDE}
     - -DMODE=1
