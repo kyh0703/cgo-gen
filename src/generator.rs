@@ -134,6 +134,7 @@ pub fn generate(config: &Config, ir: &IrModule, write_ir: bool) -> Result<()> {
         fs::write(&go_path, go_file.contents)
             .with_context(|| format!("failed to write Go wrapper: {}", go_path.display()))?;
     }
+    write_go_package_metadata(config)?;
     if write_ir {
         let serialized = serde_yaml::to_string(ir)?;
         fs::write(&ir_path, serialized)
@@ -147,6 +148,95 @@ pub fn write_ir(path: &Path, ir: &IrModule) -> Result<()> {
     fs::write(path, serialized)
         .with_context(|| format!("failed to write ir dump: {}", path.display()))?;
     Ok(())
+}
+
+fn write_go_package_metadata(config: &Config) -> Result<()> {
+    let Some(go_module) = config.go_module.as_deref() else {
+        return Ok(());
+    };
+
+    let go_mod_path = config.output_dir().join("go.mod");
+    fs::write(&go_mod_path, render_go_mod(go_module))
+        .with_context(|| format!("failed to write go.mod: {}", go_mod_path.display()))?;
+
+    let build_flags_path = config.output_dir().join("build_flags.go");
+    fs::write(&build_flags_path, render_build_flags(config)).with_context(|| {
+        format!(
+            "failed to write build_flags.go: {}",
+            build_flags_path.display()
+        )
+    })?;
+
+    Ok(())
+}
+
+fn render_go_mod(go_module: &str) -> String {
+    format!("module {go_module}\n\ngo 1.25\n")
+}
+
+fn render_build_flags(config: &Config) -> String {
+    let package_name = go_package_name(&config.output.dir);
+    let cxxflags = exported_cxxflags(config);
+    let cxxflags_line = cxxflags.join(" ");
+    format!(
+        "package {package_name}\n\n/*\n#cgo CFLAGS: -I${{SRCDIR}}\n#cgo CXXFLAGS: {cxxflags_line}\n*/\nimport \"C\"\n"
+    )
+}
+
+fn exported_cxxflags(config: &Config) -> Vec<String> {
+    let mut flags = vec!["-I${SRCDIR}".to_string()];
+    let mut index = 0;
+    let raw = config.raw_clang_args();
+
+    while index < raw.len() {
+        let arg = &raw[index];
+
+        if arg == "-I" || arg == "-isystem" || arg == "-D" {
+            if let Some(value) = raw.get(index + 1) {
+                flags.push(arg.clone());
+                flags.push(value.clone());
+            }
+            index += 2;
+            continue;
+        }
+
+        if arg.starts_with("-I") && arg.len() > 2 {
+            flags.push(arg.clone());
+        } else if arg.starts_with("-isystem") && arg.len() > "-isystem".len() {
+            flags.push(arg.clone());
+        } else if arg.starts_with("-D") && arg.len() > 2 {
+            flags.push(arg.clone());
+        } else if arg.starts_with("-std=") {
+            flags.push(arg.clone());
+        }
+
+        index += 1;
+    }
+
+    flags
+}
+
+fn go_package_name(path: &Path) -> String {
+    let source = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or("bindings");
+    let sanitized = source
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '_' {
+                ch.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    if sanitized.is_empty() {
+        "bindings".to_string()
+    } else {
+        sanitized
+    }
 }
 
 pub fn render_header(config: &Config, ir: &IrModule) -> String {
