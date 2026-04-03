@@ -103,8 +103,7 @@ All supported user-facing knobs are YAML config keys. Relative paths are resolve
 | `input.dirs` | Recursively expands both headers and translation units from directories. |
 | `input.translation_units` | Explicit parse entries. When present, parsing prefers these over `input.headers`. |
 | `input.compile_commands` | Imports compiler flags and source translation unit discovery from `compile_commands.json`. |
-| `input.include_dirs` | Prepends `-I...` include flags before `input.clang_args`. |
-| `input.clang_args` | Extra libclang arguments. Relative `-I...`, `-I <path>`, and `-isystem` paths are resolved from the config file directory. Exact env tokens in the forms `$VAR`, `$(VAR)`, and `${VAR}` are also expanded from the current OS environment. |
+| `input.clang_args` | Extra libclang arguments. Relative `-I...`, `-I <path>`, and `-isystem` paths are resolved from the config file directory. Exact env tokens in the forms `$VAR`, `$(VAR)`, and `${VAR}` are also expanded from the current OS environment. Author include roots here with explicit `-I...` tokens. |
 | `input.allow_diagnostics` | If `true`, translation units that produce libclang diagnostics are skipped instead of failing the run. |
 | `output.dir` | Output directory. Relative paths resolve from the config file directory. |
 | `output.header` / `output.source` / `output.ir` | Optional output filenames. When left at defaults in single-header mode, names are inferred as `<header_stem>_wrapper.*`. |

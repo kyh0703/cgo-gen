@@ -103,8 +103,7 @@ cargo run --bin cgo-gen -- generate --config cppgo-wrap.yaml --dump-ir
 | `input.dirs` | 디렉터리를 재귀적으로 돌며 헤더와 translation unit을 함께 확장합니다. |
 | `input.translation_units` | 명시적 parse entry입니다. 값이 있으면 파싱은 `input.headers`보다 이 목록을 우선 사용합니다. |
 | `input.compile_commands` | `compile_commands.json`에서 compiler flag와 source TU 후보를 읽어옵니다. |
-| `input.include_dirs` | `input.clang_args` 앞에 `-I...` include flag를 prepend 합니다. |
-| `input.clang_args` | 추가 libclang 인자입니다. 상대 `-I...`, `-I <path>`, `-isystem` 경로는 config 파일 기준으로 해석됩니다. `$VAR`, `$(VAR)`, `${VAR}` 형태의 exact env token도 현재 OS environment에서 확장합니다. |
+| `input.clang_args` | 추가 libclang 인자입니다. 상대 `-I...`, `-I <path>`, `-isystem` 경로는 config 파일 기준으로 해석됩니다. `$VAR`, `$(VAR)`, `${VAR}` 형태의 exact env token도 현재 OS environment에서 확장합니다. include root가 필요하면 여기에 `-I...` 토큰으로 직접 적습니다. |
 | `input.allow_diagnostics` | `true`면 libclang diagnostic이 발생한 translation unit을 실패 대신 skip 합니다. |
 | `output.dir` | 출력 디렉터리입니다. 상대 경로는 config 파일 기준입니다. |
 | `output.header` / `output.source` / `output.ir` | 출력 파일명 override입니다. 기본값을 유지하면 single-header 모드에서 `<header_stem>_wrapper.*`로 자동 추론됩니다. |
