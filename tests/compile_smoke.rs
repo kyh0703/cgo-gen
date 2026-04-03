@@ -190,3 +190,81 @@ output:
     let status = Command::new(&binary).status().unwrap();
     assert!(status.success(), "generated smoke binary failed: {status}");
 }
+
+#[test]
+fn generated_wrapper_compiles_for_struct_field_accessors() {
+    let root = temp_output_dir("struct_fields");
+    fs::create_dir_all(root.join("include")).unwrap();
+    fs::write(
+        root.join("include/Counter.hpp"),
+        r#"
+        #include <stdint.h>
+
+        struct Counter {
+            int value;
+            uint32_t total_count;
+        };
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("config.yaml"),
+        r#"
+version: 1
+input:
+  headers:
+    - include/Counter.hpp
+output:
+  dir: out
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(root.join("config.yaml")).unwrap();
+    let parsed = parser::parse(&config).unwrap();
+    let ir = ir::normalize(&config, &parsed).unwrap();
+    generator::generate(&config, &ir, true).unwrap();
+
+    let smoke_cpp = config.output.dir.join("smoke.cpp");
+    fs::write(
+        &smoke_cpp,
+        format!(
+            r#"
+        #include "{}"
+        int main() {{
+            CounterHandle* counter = cgowrap_Counter_new();
+            if (counter == nullptr) return 10;
+            cgowrap_Counter_SetValue(counter, 9);
+            if (cgowrap_Counter_GetValue(counter) != 9) return 11;
+            cgowrap_Counter_SetTotalCount(counter, 42);
+            if (cgowrap_Counter_GetTotalCount(counter) != 42) return 12;
+            cgowrap_Counter_delete(counter);
+            return 0;
+        }}
+        "#,
+            config.output.header
+        ),
+    )
+    .unwrap();
+
+    let binary = config.output.dir.join("smoke");
+    let compiler = pick_clangxx();
+    let status = Command::new(&compiler)
+        .current_dir(&root)
+        .arg("-std=c++17")
+        .arg(config.output_dir().join(&config.output.source))
+        .arg(&smoke_cpp)
+        .arg("-I")
+        .arg(config.output_dir())
+        .arg("-I")
+        .arg(root.join("include"))
+        .arg("-o")
+        .arg(&binary)
+        .status()
+        .unwrap();
+
+    assert!(status.success(), "generated wrapper did not compile/link");
+
+    let status = Command::new(&binary).status().unwrap();
+    assert!(status.success(), "generated smoke binary failed: {status}");
+}
