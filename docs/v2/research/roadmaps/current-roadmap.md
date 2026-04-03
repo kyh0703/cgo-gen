@@ -12,7 +12,7 @@
 
 이 저장소에서 이전에 완료된 핵심 축은 다음과 같습니다.
 
-- `files.model` / `files.facade` 기반 파일 분류
+- shared model / facade-oriented file generation baseline
 - raw / model / facade 출력 분리
 - 기본 raw wrapper 생성
 - 일부 model projection과 facade lifting

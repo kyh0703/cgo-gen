@@ -92,7 +92,7 @@ Example projects:
 
 ## Configuration Reference
 
-All supported user-facing knobs are YAML config keys. Relative paths are resolved from the config file directory and existing paths are canonicalized, so symlink paths collapse to their real target as soon as the config is loaded.
+All supported user-facing knobs are YAML config keys. Relative paths are resolved from the config file directory and existing paths are canonicalized, so symlink paths collapse to their real target as soon as the config is loaded. Unknown keys are rejected at load time.
 
 | Key | Current behavior |
 | --- | --- |
@@ -110,20 +110,6 @@ All supported user-facing knobs are YAML config keys. Relative paths are resolve
 | `output.header` / `output.source` / `output.ir` | Optional output filenames. When left at defaults in single-header mode, names are inferred as `<header_stem>_wrapper.*`. |
 | `naming.prefix` | Prefix for generated C ABI symbols, including `<prefix>_string_free`. |
 | `naming.style` | `preserve` keeps symbol case closer to the source spelling. Any other value currently falls back to lowercasing symbol parts; checked-in configs use `snake_case` for that behavior. |
-
-## Reserved Or Historical Knobs
-
-These keys are worth calling out because they may appear in internal docs or old configs, but they are not full public behavior switches today:
-
-| Key | Current status |
-| --- | --- |
-| `project_root` | Parsed in the Rust config struct, but not used by the generator. |
-| `policies.string_mode` | Parsed, but not used for behavior branching today. |
-| `policies.enum_mode` | Parsed, but not used for behavior branching today. |
-| `policies.unsupported.templates` | Parsed, but not used for behavior branching today. |
-| `policies.unsupported.stl_containers` | Parsed, but not used for behavior branching today. |
-| `policies.unsupported.exceptions` | Parsed, but not used for behavior branching today. |
-| `files.model` / `files.facade` | Mentioned in historical internal docs and tests, but not consumed by the current public `Config` loader. Do not rely on them as active config keys. |
 
 ## Using A Symlinked External Project
 
