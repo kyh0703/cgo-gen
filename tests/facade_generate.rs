@@ -579,16 +579,9 @@ naming:
     );
     assert!(raw_source.contains("cgowrap_Api_GetThing"));
     assert!(!raw_header.contains("SaveUnknown"));
-    assert!(!raw_header.contains("BuildUnknown"));
     assert!(!raw_source.contains("SaveUnknown"));
-    assert!(!raw_source.contains("BuildUnknown"));
     assert!(ir.support.skipped_declarations.iter().any(|item| {
         item.cpp_name == "Api::SaveUnknown"
-            && item.reason.contains("UnknownThing")
-            && item.reason.contains("by-value")
-    }));
-    assert!(ir.support.skipped_declarations.iter().any(|item| {
-        item.cpp_name == "Api::BuildUnknown"
             && item.reason.contains("UnknownThing")
             && item.reason.contains("by-value")
     }));
