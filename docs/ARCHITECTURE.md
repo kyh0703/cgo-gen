@@ -53,7 +53,7 @@ Primary reference surface:
 
 The key principle is **type-driven facade routing**:
 
-- if a facade API fills a known model type from `files.model`
+- if a facade API fills a known shared model type
 - and that model appears directly in the signature as an out-parameter
 - then the wrapper layer should prefer generating a Go API that accepts the shared model wrapper directly
 
@@ -75,21 +75,19 @@ For the current facade slice, the design now applies **model-aware routing first
 ## Current implementation note (2026-03-19)
 
 - Raw native wrapper generation is implemented and remains the current stable base layer.
-- File-level classification config now exists via `files.model` and `files.facade`.
 - A dedicated Go model rendering path now exists beside raw wrapper generation.
-- Current classification effect is still intentionally partial:
-  - model/facade semantic classification is determined only by explicit config (`files.model`, `files.facade`).
-  - `model` headers can emit Go enum models and auto-project `IsAAMaster`-style getter/setter classes into handle-backed Go wrappers.
-  - `facade` headers now generate phase-1 Go facade wrappers and still do not emit Go model files.
+- Current shared-model routing is still intentionally partial:
+  - verified shared model headers can emit Go enum models and auto-project `IsAAMaster`-style getter/setter classes into handle-backed Go wrappers.
+  - supported facade headers can generate phase-1 Go facade wrappers and still do not emit separate Go model files.
   - generated wrapper and Go files now emit together under `output.dir/`.
   - the base supported facade surface includes primitive/string free functions plus known-model `Model&` / `Model*` params routed as `*Model` wrappers.
   - facade class methods preserve raw `bool`/primitive/string returns instead of lifting known-model out-params into DTO-style return values.
   - unknown non-classified model reference/pointer declarations can now remain in raw wrapper output as opaque handles when the raw renderer can express them safely.
-  - the same unknown model declarations are still filtered out from Go facade/model projection layers unless they map to `files.model`.
+  - the same unknown model declarations are still filtered out from Go facade/model projection layers unless they map to a verified shared model type.
   - raw-unsafe by-value object declarations are now skipped at declaration level and recorded in `support.skipped_declarations` instead of aborting the whole header.
   - known-model Go helpers now enforce `Model&` as non-nil live handles and allow `Model*` to pass `nil` through when requested.
   - overloaded raw wrapper symbols are now disambiguated deterministically from parameter signatures instead of aborting normalization.
   - overloaded Go facade exports are also disambiguated for renderable methods such as `GetAAMasterUint32(...)` versus `GetAAMasterString(...)`.
   - namespaced facade functions that would collide in Go export names are rejected during generation.
 - Typedef/DTO model generation, model-mapped collection facade generation, callback facade generation, and richer type-driven facade lifting beyond the first out-param pattern are not implemented yet.
-- Review note (2026-03-25): the current durable real-SIL evidence still supports keeping `IsAAMaster.h` as the only verified checked-in `files.model` path. Raw-visible types such as `IsCluster` and `IsCSTASession` remain non-onboarded until a narrower public-model case is proven.
+- Review note (2026-03-25): the current durable real-SIL evidence still supports keeping `IsAAMaster.h` as the only verified checked-in shared model header. Raw-visible types such as `IsCluster` and `IsCSTASession` remain non-onboarded until a narrower public-model case is proven.

@@ -149,8 +149,43 @@ output:
     )
     .unwrap();
 
-    let error = Config::load(&config_path).unwrap_err().to_string();
+    let error = format!("{:#}", Config::load(&config_path).unwrap_err());
     assert!(error.contains("config.input.dir or config.input.headers must be set"));
+}
+
+#[test]
+fn rejects_removed_reserved_config_keys() {
+    let mut dir = env::temp_dir();
+    dir.push(format!(
+        "c_go_config_removed_reserved_keys_test_{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("include")).unwrap();
+    fs::write(dir.join("include/foo.hpp"), "int foo();").unwrap();
+
+    let config_path = dir.join("cppgo-wrap.yaml");
+    fs::write(
+        &config_path,
+        r#"
+version: 1
+project_root: .
+input:
+  headers:
+    - include/foo.hpp
+files:
+  model:
+    - include/foo.hpp
+policies:
+  string_mode: c_str
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+
+    let error = Config::load(&config_path).unwrap_err().to_string();
+    assert!(error.contains("failed to parse YAML config"));
 }
 
 #[test]
