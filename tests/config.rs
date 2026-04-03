@@ -127,6 +127,38 @@ output:
 }
 
 #[test]
+fn rejects_removed_input_include_dirs_key() {
+    let mut dir = env::temp_dir();
+    dir.push(format!(
+        "c_go_config_removed_include_dirs_test_{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("include")).unwrap();
+    fs::write(dir.join("include/foo.hpp"), "int foo();").unwrap();
+
+    let config_path = dir.join("cppgo-wrap.yaml");
+    fs::write(
+        &config_path,
+        r#"
+version: 1
+input:
+  headers:
+    - include/foo.hpp
+  include_dirs:
+    - include
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+
+    let error = Config::load(&config_path).unwrap_err().to_string();
+    assert!(error.contains("failed to parse YAML config"));
+    assert!(error.contains("include_dirs"));
+}
+
+#[test]
 fn rejects_config_without_dir_or_headers() {
     let mut dir = env::temp_dir();
     dir.push(format!(
