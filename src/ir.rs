@@ -192,7 +192,10 @@ fn collect_referenced_opaque_types(opaque_types: &mut Vec<OpaqueType>, functions
             if known.contains(handle) {
                 continue;
             }
-            if !matches!(ty.kind.as_str(), "model_reference" | "model_pointer") {
+            if !matches!(
+                ty.kind.as_str(),
+                "model_reference" | "model_pointer" | "model_value"
+            ) {
                 continue;
             }
 
@@ -791,7 +794,7 @@ fn raw_unsafe_by_value_reason(
     let mut issues = Vec::new();
 
     if let Some((display, canonical)) = return_type
-        && is_raw_unsafe_by_value_type(display, canonical, callback_names)
+        && is_raw_unsafe_by_value_return_type(display, canonical, callback_names)
     {
         issues.push(format!(
             "return type `{}` uses a raw-unsafe by-value object type",
@@ -800,7 +803,7 @@ fn raw_unsafe_by_value_reason(
     }
 
     for param in params {
-        if is_raw_unsafe_by_value_type(&param.ty, &param.canonical_ty, callback_names) {
+        if is_raw_unsafe_by_value_param_type(&param.ty, &param.canonical_ty, callback_names) {
             issues.push(format!(
                 "parameter `{}` type `{}` uses a raw-unsafe by-value object type",
                 param.name,
@@ -812,7 +815,34 @@ fn raw_unsafe_by_value_reason(
     (!issues.is_empty()).then(|| issues.join("; "))
 }
 
-fn is_raw_unsafe_by_value_type(
+fn is_raw_unsafe_by_value_return_type(
+    display: &str,
+    canonical: &str,
+    callback_names: &BTreeSet<String>,
+) -> bool {
+    if normalize_type_with_canonical(&Config::default(), display, canonical, callback_names)
+        .is_ok()
+    {
+        return false;
+    }
+    if normalize_type(display, callback_names).is_ok()
+    {
+        return false;
+    }
+    if !canonical.trim().is_empty()
+        && canonical.trim() != display.trim()
+        && normalize_type(canonical, callback_names).is_ok()
+    {
+        return false;
+    }
+
+    is_raw_unsafe_by_value_object_candidate(display)
+        || (!canonical.trim().is_empty()
+            && canonical.trim() != display.trim()
+            && is_raw_unsafe_by_value_object_candidate(canonical))
+}
+
+fn is_raw_unsafe_by_value_param_type(
     display: &str,
     canonical: &str,
     callback_names: &BTreeSet<String>,
@@ -820,14 +850,10 @@ fn is_raw_unsafe_by_value_type(
     let display = display.trim();
     let canonical = canonical.trim();
 
-    if normalize_type(display, callback_names).is_ok() {
-        return false;
-    }
-    if !canonical.is_empty()
-        && canonical != display
-        && normalize_type(canonical, callback_names).is_ok()
+    if let Ok(ty) =
+        normalize_type_with_canonical(&Config::default(), display, canonical, callback_names)
     {
-        return false;
+        return ty.kind == "model_value";
     }
 
     [display, canonical]
@@ -866,22 +892,34 @@ fn normalize_type_with_canonical(
     let trimmed = cpp_type.trim();
     let canonical_trimmed = canonical_type.trim();
     if let Ok(ty) = normalize_type(trimmed, callback_names) {
-        if matches!(ty.kind.as_str(), "model_reference" | "model_pointer")
+        if matches!(
+            ty.kind.as_str(),
+            "model_reference" | "model_pointer" | "model_value"
+        )
             && canonical_trimmed != trimmed
             && let Ok(mut canonical_ty) = normalize_type(canonical_trimmed, callback_names)
-            && matches!(
-                canonical_ty.kind.as_str(),
-                "extern_struct_reference" | "extern_struct_pointer"
-            )
         {
-            canonical_ty.cpp_type = trimmed.to_string();
-            return Ok(canonical_ty);
+            if matches!(
+                canonical_ty.kind.as_str(),
+                "extern_struct_reference"
+                    | "extern_struct_pointer"
+                    | "primitive"
+                    | "reference"
+                    | "pointer"
+                    | "string"
+                    | "c_string"
+            ) {
+                canonical_ty.cpp_type = trimmed.to_string();
+                return Ok(canonical_ty);
+            }
         }
         return Ok(ty);
     }
 
     if canonical_trimmed != trimmed {
-        if let Ok(mut ty) = normalize_type(canonical_trimmed, callback_names) {
+        if raw_type_shape(trimmed) == raw_type_shape(canonical_trimmed)
+            && let Ok(mut ty) = normalize_type(canonical_trimmed, callback_names)
+        {
             ty.cpp_type = trimmed.to_string();
             return Ok(ty);
         }
@@ -889,6 +927,17 @@ fn normalize_type_with_canonical(
     }
 
     bail!("unsupported C++ type in v1: {trimmed}");
+}
+
+fn raw_type_shape(cpp_type: &str) -> &'static str {
+    let trimmed = cpp_type.trim().trim_start_matches("const ").trim();
+    if trimmed.ends_with('*') {
+        "pointer"
+    } else if trimmed.ends_with('&') {
+        "reference"
+    } else {
+        "value"
+    }
 }
 
 fn normalize_type(cpp_type: &str, callback_names: &BTreeSet<String>) -> Result<IrType> {
@@ -1036,6 +1085,15 @@ fn normalize_type(cpp_type: &str, callback_names: &BTreeSet<String>) -> Result<I
             let handle_name = raw_safe_model_handle_name(trimmed).unwrap();
             Ok(IrType {
                 kind: "model_pointer".to_string(),
+                cpp_type: trimmed.to_string(),
+                c_type: format!("{handle_name}*"),
+                handle: Some(handle_name),
+            })
+        }
+        _ if raw_safe_model_handle_name(trimmed).is_some() => {
+            let handle_name = raw_safe_model_handle_name(trimmed).unwrap();
+            Ok(IrType {
+                kind: "model_value".to_string(),
                 cpp_type: trimmed.to_string(),
                 c_type: format!("{handle_name}*"),
                 handle: Some(handle_name),
@@ -1224,6 +1282,10 @@ fn type_signature_token(ty: &IrType) -> String {
             "model_ptr_{}",
             sanitize_symbol_token(&base_model_cpp_type(&ty.cpp_type))
         ),
+        "model_value" => format!(
+            "model_value_{}",
+            sanitize_symbol_token(&base_model_cpp_type(&ty.cpp_type))
+        ),
         "callback" => format!("callback_{}", sanitize_symbol_token(&ty.cpp_type)),
         _ => sanitize_symbol_token(&ty.cpp_type),
     }
@@ -1351,5 +1413,41 @@ mod tests {
         assert_eq!(ty.cpp_type, "timeval*");
         assert_eq!(ty.c_type, "struct timeval*");
         assert_eq!(ty.handle, None);
+    }
+
+    #[test]
+    fn rejects_by_value_type_when_only_canonical_form_is_pointer() {
+        let callback_names = BTreeSet::new();
+        let result =
+            normalize_type_with_canonical(&Config::default(), "MTime", "MTime*", &callback_names)
+                .unwrap();
+
+        assert_eq!(result.kind, "model_value");
+        assert_eq!(result.c_type, "MTimeHandle*");
+    }
+
+    #[test]
+    fn rejects_by_value_type_when_only_canonical_form_is_reference() {
+        let callback_names = BTreeSet::new();
+        let result = normalize_type_with_canonical(
+            &Config::default(),
+            "TD_IE_CALL",
+            "TD_IE_CALL&",
+            &callback_names,
+        )
+        .unwrap();
+
+        assert_eq!(result.kind, "model_value");
+        assert_eq!(result.c_type, "TD_IE_CALLHandle*");
+    }
+
+    #[test]
+    fn by_value_model_params_remain_raw_unsafe() {
+        let callback_names = BTreeSet::new();
+        assert!(is_raw_unsafe_by_value_param_type(
+            "MTime",
+            "MTime",
+            &callback_names
+        ));
     }
 }
