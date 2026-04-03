@@ -1,5 +1,9 @@
 # simple-go
 
+Additional workflow:
+
+- [Symlinked build workspace](./SYMLINKED_BUILD.md)
+
 `simple-cpp`를 Go + cgo에서 소비하는 가장 단순한 예제입니다.
 
 목표:
