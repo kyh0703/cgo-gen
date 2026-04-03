@@ -4,19 +4,12 @@ Configuration is YAML-first.
 
 Top-level sections:
 - `version`
-- `input.headers`
-- `input.compile_commands`
-- `input.clang_args`
-- `output.dir`
-- `output.header`
-- `output.source`
-- `output.ir`
-- `files.model`
-- `files.facade`
+- `input.*`
+- `output.*`
 - `naming.*`
-- `policies.*`
 
 Relative paths are resolved from the config file location.
+Unknown keys are rejected when the config is loaded.
 
 Current output layout:
 - generated native wrapper artifacts: `output.dir/`

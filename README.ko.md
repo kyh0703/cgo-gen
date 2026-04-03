@@ -92,7 +92,7 @@ cargo run --bin cgo-gen -- generate --config cppgo-wrap.yaml --dump-ir
 
 ## 설정 키 설명
 
-지원되는 사용자 설정값은 YAML config 키 기준입니다. 상대 경로는 모두 config 파일 위치를 기준으로 해석되고, 실제로 존재하는 경로는 canonicalize 되기 때문에 symlink 경로를 써도 로드 시점에 실제 경로로 정규화됩니다.
+지원되는 사용자 설정값은 YAML config 키 기준입니다. 상대 경로는 모두 config 파일 위치를 기준으로 해석되고, 실제로 존재하는 경로는 canonicalize 되기 때문에 symlink 경로를 써도 로드 시점에 실제 경로로 정규화됩니다. 지원하지 않는 키는 config 로드 시 오류로 처리됩니다.
 
 | Key | 현재 동작 |
 | --- | --- |
@@ -110,20 +110,6 @@ cargo run --bin cgo-gen -- generate --config cppgo-wrap.yaml --dump-ir
 | `output.header` / `output.source` / `output.ir` | 출력 파일명 override입니다. 기본값을 유지하면 single-header 모드에서 `<header_stem>_wrapper.*`로 자동 추론됩니다. |
 | `naming.prefix` | 생성되는 C ABI symbol prefix입니다. `<prefix>_string_free`에도 사용됩니다. |
 | `naming.style` | `preserve`면 원본 케이스를 최대한 유지합니다. 그 외 값은 현재 symbol part를 소문자화하는 쪽으로 동작하며, 저장소 예제는 이 동작을 `snake_case`로 사용합니다. |
-
-## 예약됐거나 과거 문서에만 남은 키
-
-내부 문서나 오래된 설정에서 보여도 현재 공개 CLI 동작 스위치로 믿으면 안 되는 키들입니다.
-
-| Key | 현재 상태 |
-| --- | --- |
-| `project_root` | Rust config struct에는 있지만 generator는 사용하지 않습니다. |
-| `policies.string_mode` | 파싱은 되지만 현재 동작 분기에 쓰이지 않습니다. |
-| `policies.enum_mode` | 파싱은 되지만 현재 동작 분기에 쓰이지 않습니다. |
-| `policies.unsupported.templates` | 파싱은 되지만 현재 동작 분기에 쓰이지 않습니다. |
-| `policies.unsupported.stl_containers` | 파싱은 되지만 현재 동작 분기에 쓰이지 않습니다. |
-| `policies.unsupported.exceptions` | 파싱은 되지만 현재 동작 분기에 쓰이지 않습니다. |
-| `files.model` / `files.facade` | 과거 내부 문서와 테스트에는 보이지만, 현재 공개 `Config` loader가 읽는 키는 아닙니다. 활성 설정값으로 의존하면 안 됩니다. |
 
 ## 외부 프로젝트를 심볼릭 링크로 붙이는 방법
 

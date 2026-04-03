@@ -14,12 +14,9 @@ Current `cgo-gen` work has been simplified toward **file-based generation**:
 
 - `filter` config support was removed
 - generation now relies on:
-  - `input.headers`
-  - `files.model`
-  - `files.facade`
+  - `input`
   - `output`
   - `naming`
-  - `policies`
 
 This keeps SIL configs smaller and matches the current intended workflow.
 
@@ -27,7 +24,6 @@ This keeps SIL configs smaller and matches the current intended workflow.
 
 - Added SIL config regression coverage in `tests/config.rs`
   - loads `configs/sil-wrapper.example.yaml`
-  - validates `files.model` / `files.facade`
   - validates per-header output naming
 - Stabilized `tests/isaamaster_fixture.rs`
   - normalizes generated IR header paths before fixture comparison
@@ -108,16 +104,16 @@ Facade generation now classifies class methods before rendering:
 - otherwise supported primitive/string method
   - keep on the general facade API path
 
-This keeps `files.model` as the only semantic source of truth for model-aware lifting and avoids name-based collection inference.
+This keeps verified shared model types as the only semantic source of truth for model-aware lifting and avoids name-based collection inference.
 
 ### Raw-first unknown model handling
 
 Unknown non-classified model reference/pointer declarations are no longer treated as an automatic declaration-level failure when the raw layer can still represent them safely.
 
 - raw header/source generation keeps them as opaque-handle-based wrapper APIs
-- Go facade/model generation still excludes them unless they map to `files.model`
+- Go facade/model generation still excludes them unless they map to a verified shared model type
 
-This keeps C/raw coverage broader without weakening the `files.model` contract for Go-facing output.
+This keeps C/raw coverage broader without weakening the verified shared-model contract for Go-facing output.
 
 ### Raw-unsafe by-value object handling
 
@@ -155,11 +151,11 @@ Observed real-SIL evidence:
 
 ## Reviewed onboarding decision (2026-03-25)
 
-Current durable evidence is still not strong enough to approve any additional checked-in `files.model` header beyond `IsAAMaster.h`.
+Current durable evidence is still not strong enough to approve any additional checked-in shared model header beyond `IsAAMaster.h`.
 
 Reviewed classification:
 
-- keep `IsAAMaster.h` as the verified checked-in `files.model` path
+- keep `IsAAMaster.h` as the verified checked-in shared model path
 - keep `iSiLib.h` as the real facade verification surface, not a shared model header
 - keep `IsCluster.h` raw-only for now
 - keep `IsCSTASession.h` raw-only for now
@@ -176,5 +172,5 @@ For practical progress, prefer:
 
 1. keep `IsAAMaster` as the verified real model path
 2. treat raw-only internal types as non-onboarded by default unless a narrower public-model case is proven
-3. add a new `files.model` header only after a header-specific review of real `iSiLib` IR/output
+3. add a new shared model header only after a header-specific review of real `iSiLib` IR/output
 4. avoid widening the Go boundary just because a SIL class transitively contains `NsMap*` or other internal storage helpers

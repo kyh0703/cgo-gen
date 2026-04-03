@@ -11,11 +11,3 @@ output:
 naming:
   prefix: sil
   style: preserve
-
-policies:
-  string_mode: c_str
-  enum_mode: c_enum
-  unsupported:
-    templates: error
-    stl_containers: skip
-    exceptions: error
