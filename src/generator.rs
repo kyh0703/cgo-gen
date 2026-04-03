@@ -41,6 +41,9 @@ pub fn generate_all(config: &Config, write_ir: bool) -> Result<()> {
     for header in &generation_headers {
         let scoped = config.scoped_to_header(header.clone());
         let header_api = parsed.filter_to_header(header);
+        if header_api.is_empty() {
+            continue;
+        }
         let ir = crate::ir::normalize(&scoped, &header_api)?;
         generate(&scoped, &ir, write_ir)?;
     }
