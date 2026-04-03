@@ -663,10 +663,11 @@ fn render_callback_trampoline_decl(
         format!("return {}({});", go_symbol, call_args)
     };
     format!(
-        "    extern {} {}({});\n    auto {} = []({}) -> {} {{ {} }};\n",
+        "    extern {} {}({});\n    {} {} = []({}) -> {} {{ {} }};\n",
         callback.returns.c_type,
         go_symbol,
         params,
+        callback.name,
         callback_trampoline_name(function, index),
         params,
         callback.returns.c_type,
