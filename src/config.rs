@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -22,6 +22,10 @@ pub struct Config {
     pub known_model_projections: Vec<KnownModelProjection>,
     #[serde(skip)]
     pub target_header: Option<PathBuf>,
+    #[serde(skip)]
+    pub raw_clang_args: Vec<String>,
+    #[serde(skip)]
+    pub go_module: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -339,6 +343,7 @@ impl Config {
             .with_context(|| format!("failed to read config file: {}", path.display()))?;
         let mut config: Self = serde_yaml::from_str(&raw)
             .with_context(|| format!("failed to parse YAML config: {}", path.display()))?;
+        config.raw_clang_args = config.input.clang_args.clone();
         config.resolve_relative_paths(path)?;
         config.validate()?;
         Ok(config)
@@ -455,6 +460,10 @@ impl Config {
         self.output.dir.clone()
     }
 
+    pub fn raw_clang_args(&self) -> &[String] {
+        &self.raw_clang_args
+    }
+
     pub fn generated_header_include(&self, header: &str) -> String {
         header.to_string()
     }
@@ -495,6 +504,11 @@ impl Config {
         known_model_projections: Vec<KnownModelProjection>,
     ) -> Self {
         self.known_model_projections = known_model_projections;
+        self
+    }
+
+    pub fn with_go_module(mut self, go_module: Option<String>) -> Self {
+        self.go_module = go_module;
         self
     }
 

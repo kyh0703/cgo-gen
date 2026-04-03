@@ -183,3 +183,10 @@ naming:
 ## 라이선스
 
 [MIT](./LICENSE)
+
+## External Go Package Metadata
+
+`generate --go-module <module-path>`를 사용하면 `output.dir` 아래에 `go.mod`와 `build_flags.go`를 함께 생성합니다.
+`build_flags.go`는 항상 `#cgo CFLAGS: -I${SRCDIR}`를 포함합니다.
+`#cgo CXXFLAGS`는 raw `input.clang_args`에서 `-I/-isystem`, `-D`, `-std=...`만 반영합니다.
+`input.include_dirs`, `compile_commands.json`, linker flags는 metadata export에 그대로 사용하지 않습니다.

@@ -23,6 +23,8 @@ enum Command {
         config: PathBuf,
         #[arg(long, default_value_t = false)]
         dump_ir: bool,
+        #[arg(long)]
+        go_module: Option<String>,
     },
     Ir {
         #[arg(long)]
@@ -47,8 +49,12 @@ enum IrFormat {
 pub fn run() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Command::Generate { config, dump_ir } => {
-            let config = Config::load(config)?;
+        Command::Generate {
+            config,
+            dump_ir,
+            go_module,
+        } => {
+            let config = Config::load(config)?.with_go_module(go_module);
             generator::generate_all(&config, dump_ir)?;
         }
         Command::Ir {
