@@ -6,8 +6,8 @@ use serde::Serialize;
 use crate::{
     config::Config,
     parser::{
-        CppCallbackTypedef, CppClass, CppConstructor, CppEnum, CppFunction, CppMethod, CppParam,
-        ParsedApi,
+        CppCallbackTypedef, CppClass, CppConstructor, CppEnum, CppField, CppFunction, CppMethod,
+        CppParam, ParsedApi,
     },
 };
 
@@ -40,8 +40,16 @@ pub struct IrFunction {
     pub owner_cpp_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_const: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub field_accessor: Option<IrFieldAccessor>,
     pub returns: IrType,
     pub params: Vec<IrParam>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct IrFieldAccessor {
+    pub field_name: String,
+    pub access: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -284,6 +292,7 @@ fn normalize_class(
             method_of: Some(handle_name.to_string()),
             owner_cpp_type: Some(qualified.clone()),
             is_const: None,
+            field_accessor: None,
             returns: IrType {
                 kind: "opaque".to_string(),
                 cpp_type: qualified.clone(),
@@ -324,6 +333,7 @@ fn normalize_class(
         method_of: Some(handle_name.to_string()),
         owner_cpp_type: Some(qualified.clone()),
         is_const: None,
+        field_accessor: None,
         returns: primitive_type("void"),
         params: vec![IrParam {
             name: "self".to_string(),
@@ -349,7 +359,177 @@ fn normalize_class(
         }
     }
 
+    if class.is_struct {
+        functions.extend(normalize_struct_fields(
+            config,
+            class,
+            handle_name,
+            callback_names,
+        )?);
+    }
+
     Ok(functions)
+}
+
+fn normalize_struct_fields(
+    config: &Config,
+    class: &CppClass,
+    handle_name: &str,
+    callback_names: &BTreeSet<String>,
+) -> Result<Vec<IrFunction>> {
+    let qualified = cpp_qualified(&class.namespace, &class.name);
+    let existing_methods = class
+        .methods
+        .iter()
+        .map(|method| method.name.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut functions = Vec::new();
+
+    for field in &class.fields {
+        if field.is_function_pointer {
+            continue;
+        }
+
+        let suffix = struct_field_accessor_suffix(&field.name);
+        let getter_name = format!("Get{suffix}");
+        if existing_methods.contains(getter_name.as_str()) {
+            continue;
+        }
+
+        let Ok(field_ty) =
+            normalize_type_with_canonical(config, &field.ty, &field.canonical_ty, callback_names)
+        else {
+            continue;
+        };
+        if field_ty.kind != "primitive" {
+            continue;
+        }
+
+        functions.push(make_struct_field_getter(
+            config,
+            &class.namespace,
+            &class.name,
+            &qualified,
+            handle_name,
+            field,
+            field_ty.clone(),
+        ));
+
+        let setter_name = format!("Set{suffix}");
+        if existing_methods.contains(setter_name.as_str()) || field_is_read_only(field) {
+            continue;
+        }
+
+        functions.push(make_struct_field_setter(
+            config,
+            &class.namespace,
+            &class.name,
+            &qualified,
+            handle_name,
+            field,
+            field_ty,
+        ));
+    }
+
+    Ok(functions)
+}
+
+fn make_struct_field_getter(
+    config: &Config,
+    namespace: &[String],
+    owner_name: &str,
+    qualified: &str,
+    handle_name: &str,
+    field: &CppField,
+    returns: IrType,
+) -> IrFunction {
+    let method_name = format!("Get{}", struct_field_accessor_suffix(&field.name));
+    IrFunction {
+        name: symbol_name(config, namespace, owner_name, &method_name),
+        kind: "method".to_string(),
+        cpp_name: format!("{qualified}::{method_name}"),
+        method_of: Some(handle_name.to_string()),
+        owner_cpp_type: Some(qualified.to_string()),
+        is_const: Some(true),
+        field_accessor: Some(IrFieldAccessor {
+            field_name: field.name.clone(),
+            access: "get".to_string(),
+        }),
+        returns,
+        params: vec![IrParam {
+            name: "self".to_string(),
+            ty: IrType {
+                kind: "opaque".to_string(),
+                cpp_type: format!("const {}*", qualified),
+                c_type: format!("const {handle_name}*"),
+                handle: Some(handle_name.to_string()),
+            },
+        }],
+    }
+}
+
+fn make_struct_field_setter(
+    config: &Config,
+    namespace: &[String],
+    owner_name: &str,
+    qualified: &str,
+    handle_name: &str,
+    field: &CppField,
+    field_ty: IrType,
+) -> IrFunction {
+    let method_name = format!("Set{}", struct_field_accessor_suffix(&field.name));
+    IrFunction {
+        name: symbol_name(config, namespace, owner_name, &method_name),
+        kind: "method".to_string(),
+        cpp_name: format!("{qualified}::{method_name}"),
+        method_of: Some(handle_name.to_string()),
+        owner_cpp_type: Some(qualified.to_string()),
+        is_const: Some(false),
+        field_accessor: Some(IrFieldAccessor {
+            field_name: field.name.clone(),
+            access: "set".to_string(),
+        }),
+        returns: primitive_type("void"),
+        params: vec![
+            IrParam {
+                name: "self".to_string(),
+                ty: IrType {
+                    kind: "opaque".to_string(),
+                    cpp_type: format!("{}*", qualified),
+                    c_type: format!("{handle_name}*"),
+                    handle: Some(handle_name.to_string()),
+                },
+            },
+            IrParam {
+                name: "value".to_string(),
+                ty: field_ty,
+            },
+        ],
+    }
+}
+
+fn field_is_read_only(field: &CppField) -> bool {
+    let ty = field.ty.trim();
+    let canonical = field.canonical_ty.trim();
+    ty.starts_with("const ") || canonical.starts_with("const ")
+}
+
+fn struct_field_accessor_suffix(field_name: &str) -> String {
+    field_name
+        .split('_')
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(first) => {
+                    let mut out = first.to_uppercase().collect::<String>();
+                    out.push_str(chars.as_str());
+                    out
+                }
+                None => String::new(),
+            }
+        })
+        .collect::<String>()
 }
 
 fn normalize_constructor(
@@ -375,6 +555,7 @@ fn normalize_constructor(
         method_of: Some(handle_name.to_string()),
         owner_cpp_type: Some(qualified.clone()),
         is_const: None,
+        field_accessor: None,
         returns: IrType {
             kind: "opaque".to_string(),
             cpp_type: qualified.clone(),
@@ -458,6 +639,7 @@ fn normalize_method(
         method_of: Some(handle_name.to_string()),
         owner_cpp_type: Some(qualified),
         is_const: Some(method.is_const),
+        field_accessor: None,
         returns: normalize_type_with_canonical(
             config,
             &method.return_type,
@@ -509,6 +691,7 @@ fn normalize_function(
         method_of: None,
         owner_cpp_type: None,
         is_const: None,
+        field_accessor: None,
         returns: normalize_type_with_canonical(
             config,
             &function.return_type,

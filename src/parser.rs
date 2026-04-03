@@ -27,6 +27,8 @@ pub struct CppClass {
     pub source_header: PathBuf,
     pub namespace: Vec<String>,
     pub name: String,
+    pub is_struct: bool,
+    pub fields: Vec<CppField>,
     pub methods: Vec<CppMethod>,
     pub constructors: Vec<CppConstructor>,
     pub has_destructor: bool,
@@ -58,6 +60,14 @@ pub struct CppMethod {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CppConstructor {
     pub params: Vec<CppParam>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct CppField {
+    pub name: String,
+    pub ty: String,
+    pub canonical_ty: String,
+    pub is_function_pointer: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -293,6 +303,7 @@ fn collect_entity(
                 let parsed = parse_class(cursor, namespace.to_vec(), filter, discovered_headers)?;
                 if parsed.has_declared_constructor
                     || parsed.has_destructor
+                    || !parsed.fields.is_empty()
                     || !parsed.methods.is_empty()
                 {
                     api.classes.push(parsed);
@@ -348,6 +359,7 @@ fn parse_class(
     let source_header = normalized_cursor_file_path(cursor)
         .ok_or_else(|| anyhow!("failed to determine source header for class `{name}`"))?;
     let is_struct = unsafe { clang_getCursorKind(cursor) == CXCursor_StructDecl };
+    let mut fields = Vec::new();
     let mut methods = Vec::new();
     let mut constructors = Vec::new();
     let mut has_destructor = false;
@@ -382,6 +394,16 @@ fn parse_class(
                 });
             }
             CXCursor_Destructor => has_destructor = true,
+            CXCursor_FieldDecl => {
+                if let Some(name) = cursor_spelling(child) {
+                    fields.push(CppField {
+                        name,
+                        ty: canonicalize_type_name(&cursor_type_spelling(child)),
+                        canonical_ty: canonicalize_type_name(&cursor_canonical_type_spelling(child)),
+                        is_function_pointer: cursor_is_function_pointer(child),
+                    });
+                }
+            }
             CXCursor_CXXMethod => {
                 methods.push(CppMethod {
                     name: cursor_spelling(child).unwrap_or_default(),
@@ -400,6 +422,8 @@ fn parse_class(
         source_header,
         namespace,
         name,
+        is_struct,
+        fields,
         methods,
         constructors,
         has_destructor,
