@@ -446,6 +446,13 @@ fn render_callable_body(function: &IrFunction, target: &str, arg_start: usize) -
             "    std::string result = {}({});\n    char* buffer = static_cast<char*>(std::malloc(result.size() + 1));\n    if (buffer == nullptr) {{\n        return nullptr;\n    }}\n    std::memcpy(buffer, result.c_str(), result.size() + 1);\n    return buffer;\n",
             target, args
         ),
+        "model_value" => format!(
+            "    return reinterpret_cast<{}>(new {}({}({})));\n",
+            function.returns.c_type,
+            base_model_cpp_type(&function.returns.cpp_type),
+            target,
+            args
+        ),
         _ if function.returns.handle.is_some() => format!(
             "    return reinterpret_cast<{}>({}({}));\n",
             function.returns.c_type, target, args

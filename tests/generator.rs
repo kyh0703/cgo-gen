@@ -223,3 +223,58 @@ output:
     assert!(!build_flags.contains("-Winvalid-offsetof"));
     assert!(!build_flags.contains("-Wall"));
 }
+
+#[test]
+fn renders_model_value_return_as_owned_handle_copy() {
+    let root = env::temp_dir().join(format!("c_go_model_value_return_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join("include")).unwrap();
+    fs::write(
+        root.join("include/Api.hpp"),
+        r#"
+        class MTime {
+        public:
+            MTime() : value_(7) {}
+            int GetValue() const { return value_; }
+        private:
+            int value_;
+        };
+
+        class Api {
+        public:
+            MTime GetCreateTime() const { return MTime(); }
+        };
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("config.yaml"),
+        r#"
+version: 1
+input:
+  headers:
+    - include/Api.hpp
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(root.join("config.yaml")).unwrap();
+    let parsed = parser::parse(&config).unwrap();
+    let ir = ir::normalize(&config, &parsed).unwrap();
+    let header = render_header(&config, &ir);
+    let source = render_source(&config, &ir);
+
+    let getter = ir
+        .functions
+        .iter()
+        .find(|function| function.cpp_name == "Api::GetCreateTime")
+        .unwrap();
+    assert_eq!(getter.returns.kind, "model_value");
+    assert_eq!(getter.returns.c_type, "MTimeHandle*");
+    assert!(header.contains("MTimeHandle* cgowrap_Api_GetCreateTime(const ApiHandle* self);"));
+    assert!(source.contains(
+        "return reinterpret_cast<MTimeHandle*>(new MTime(reinterpret_cast<const Api*>(self)->GetCreateTime()));"
+    ));
+}
