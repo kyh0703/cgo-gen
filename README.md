@@ -83,6 +83,43 @@ cargo run --bin cgo-gen -- generate --config cppgo-wrap.yaml --dump-ir
 cargo run --bin cgo-gen -- generate --config cppgo-wrap.yaml --go-module example.com/acme/foo
 ```
 
+## Command Recipes
+
+Install or inspect the CLI:
+
+```bash
+cargo install --path .
+cgo-gen --help
+cgo-gen generate --help
+```
+
+Run commands from the repository without installing:
+
+```bash
+cargo run --bin cgo-gen -- check --config cppgo-wrap.yaml
+cargo run --bin cgo-gen -- ir --config cppgo-wrap.yaml --format yaml
+cargo run --bin cgo-gen -- generate --config cppgo-wrap.yaml --dump-ir
+```
+
+Generate wrappers into a custom directory:
+
+```bash
+cargo run --bin cgo-gen -- generate --config examples/simple-go/config.yaml
+cargo run --bin cgo-gen -- generate --config examples/simple-go-struct/config.yaml
+```
+
+Build the checked-in Go examples end to end:
+
+```bash
+make -C examples/simple-go gen
+make -C examples/simple-go build
+make -C examples/simple-go run
+
+make -C examples/simple-go-struct gen
+make -C examples/simple-go-struct build
+make -C examples/simple-go-struct run
+```
+
 Example projects:
 
 - [`examples/simple-go`](./examples/simple-go)
