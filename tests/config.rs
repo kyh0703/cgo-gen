@@ -543,7 +543,7 @@ output:
 }
 
 #[test]
-fn preserves_raw_clang_args_without_include_dirs_injected() {
+fn preserves_raw_clang_args_without_injection() {
     let mut dir = env::temp_dir();
     dir.push(format!(
         "c_go_config_raw_clang_args_test_{}",
@@ -551,7 +551,6 @@ fn preserves_raw_clang_args_without_include_dirs_injected() {
     ));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join("include")).unwrap();
-    fs::create_dir_all(dir.join("deps/inc")).unwrap();
     fs::create_dir_all(dir.join("manual/inc")).unwrap();
     fs::write(dir.join("include/foo.hpp"), "int foo();").unwrap();
 
@@ -563,8 +562,6 @@ version: 1
 input:
   headers:
     - include/foo.hpp
-  include_dirs:
-    - deps/inc
   clang_args:
     - -Imanual/inc
     - -DMODE=1
@@ -575,12 +572,14 @@ output:
     .unwrap();
 
     let config = Config::load(&config_path).unwrap();
+    let expected_manual = format!("-I{}", normalize_expected_path(&dir.join("manual/inc")));
 
     assert_eq!(
         config.raw_clang_args(),
         &["-Imanual/inc".to_string(), "-DMODE=1".to_string()]
     );
-    assert_eq!(config.input.clang_args.len(), 3);
-    assert!(config.input.clang_args[0].starts_with("-I"));
-    assert!(config.input.clang_args[0].contains("deps"));
+    assert_eq!(
+        config.input.clang_args,
+        vec![expected_manual, "-DMODE=1".to_string()]
+    );
 }
