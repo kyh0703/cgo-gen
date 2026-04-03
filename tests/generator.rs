@@ -3,6 +3,7 @@ use cgo_gen::{
     generator::{render_go_structs, render_header, render_source},
     ir, parser,
 };
+use std::{env, fs};
 
 #[test]
 fn renders_header_and_source_from_fixture() {
@@ -35,10 +36,7 @@ fn renders_unified_go_wrapper() {
 
 #[test]
 fn preserves_const_char_spelling_but_normalizes_c_value_type() {
-    let root = std::env::temp_dir().join(format!(
-        "c_go_const_char_value_{}",
-        std::process::id()
-    ));
+    let root = std::env::temp_dir().join(format!("c_go_const_char_value_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(root.join("include")).unwrap();
     std::fs::write(
@@ -79,10 +77,7 @@ output:
 
 #[test]
 fn renders_typedef_anonymous_enums_with_alias_name() {
-    let root = std::env::temp_dir().join(format!(
-        "c_go_typedef_enum_alias_{}",
-        std::process::id()
-    ));
+    let root = std::env::temp_dir().join(format!("c_go_typedef_enum_alias_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(root.join("include")).unwrap();
     std::fs::write(
@@ -121,10 +116,8 @@ output:
 
 #[test]
 fn normalizes_primitive_alias_pointer_and_reference_c_types_in_header() {
-    let root = std::env::temp_dir().join(format!(
-        "c_go_alias_pointer_header_{}",
-        std::process::id()
-    ));
+    let root =
+        std::env::temp_dir().join(format!("c_go_alias_pointer_header_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(root.join("include")).unwrap();
     std::fs::write(
@@ -177,4 +170,56 @@ output:
     assert!(header.contains("bool cgowrap_TakeAliasRef(uint32_t* value);"));
     assert!(!header.contains("int32* value"));
     assert!(!header.contains("uint32* value"));
+}
+
+#[test]
+fn generate_with_go_module_writes_build_flags_and_go_mod() {
+    let root = env::temp_dir().join(format!("c_go_go_package_metadata_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join("include")).unwrap();
+    fs::write(root.join("include/Api.hpp"), "int Add(int lhs, int rhs);").unwrap();
+    fs::write(
+        root.join("config.yaml"),
+        r#"
+version: 1
+input:
+  headers:
+    - include/Api.hpp
+  include_dirs:
+    - sdk/include
+  clang_args:
+    - -I${SDK_INCLUDE}
+    - -DMODE=1
+    - -std=c++20
+    - -Wall
+    - -Winvalid-offsetof
+output:
+  dir: out
+"#,
+    )
+    .unwrap();
+
+    unsafe {
+        std::env::set_var("SDK_INCLUDE", root.join("sdk/include"));
+    }
+
+    let config = Config::load(root.join("config.yaml"))
+        .unwrap()
+        .with_go_module(Some("example.com/demo/pkg".to_string()));
+    let parsed = parser::parse(&config).unwrap();
+    let ir = ir::normalize(&config, &parsed).unwrap();
+    cgo_gen::generator::generate(&config, &ir, false).unwrap();
+
+    let go_mod = fs::read_to_string(root.join("out/go.mod")).unwrap();
+    assert_eq!(go_mod, "module example.com/demo/pkg\n\ngo 1.25\n");
+
+    let build_flags = fs::read_to_string(root.join("out/build_flags.go")).unwrap();
+    assert!(build_flags.contains("package out"));
+    assert!(build_flags.contains("#cgo CFLAGS: -I${SRCDIR}"));
+    assert!(
+        build_flags.contains("#cgo CXXFLAGS: -I${SRCDIR} -I${SDK_INCLUDE} -DMODE=1 -std=c++20")
+    );
+    assert!(!build_flags.contains("sdk/include"));
+    assert!(!build_flags.contains("-Winvalid-offsetof"));
+    assert!(!build_flags.contains("-Wall"));
 }
