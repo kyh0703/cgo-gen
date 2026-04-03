@@ -45,6 +45,7 @@ pub struct KnownModelField {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct InputConfig {
     #[serde(default)]
     pub dir: Option<PathBuf>,
@@ -58,8 +59,6 @@ pub struct InputConfig {
     pub translation_units: Vec<PathBuf>,
     #[serde(default)]
     pub compile_commands: Option<PathBuf>,
-    #[serde(default)]
-    pub include_dirs: Vec<PathBuf>,
     #[serde(default)]
     pub clang_args: Vec<String>,
     #[serde(default)]
@@ -420,20 +419,7 @@ impl Config {
         if let Some(compdb) = &mut self.input.compile_commands {
             resolve_path(compdb, base_dir);
         }
-        for include_dir in &mut self.input.include_dirs {
-            resolve_path(include_dir, base_dir);
-        }
         resolve_relative_clang_args(&mut self.input.clang_args, base_dir)?;
-        if !self.input.include_dirs.is_empty() {
-            let mut include_args = self
-                .input
-                .include_dirs
-                .iter()
-                .map(|path| format!("-I{}", normalize_clang_config_path(path)))
-                .collect::<Vec<_>>();
-            include_args.extend(self.input.clang_args.clone());
-            self.input.clang_args = include_args;
-        }
         if self.output.dir.is_relative() {
             self.output.dir = base_dir.join(&self.output.dir);
         }
