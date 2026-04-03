@@ -1,5 +1,9 @@
 # simple-go-struct
 
+Additional workflow:
+
+- [Symlinked build workspace](./SYMLINKED_BUILD.md)
+
 `Select/Next + handle-backed model` 패턴을 보여주는 예제입니다.
 
 이 예제는 다음 흐름을 그대로 담습니다.
