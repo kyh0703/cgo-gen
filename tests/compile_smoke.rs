@@ -87,3 +87,106 @@ fn generated_wrapper_compiles_and_runs_against_sample_cpp_library() {
     let status = Command::new(&binary).status().unwrap();
     assert!(status.success(), "generated smoke binary failed: {status}");
 }
+
+#[test]
+fn generated_wrapper_compiles_for_enum_and_alias_overload_header() {
+    let root = temp_output_dir("iserialize_alias");
+    fs::create_dir_all(root.join("include")).unwrap();
+    fs::write(
+        root.join("include/iSerialize.h"),
+        r#"
+        #include <stdint.h>
+        typedef unsigned int uint32;
+        typedef unsigned long long uint64;
+
+        enum eSeriType {
+            eSeriTypeNone = 0,
+            eSeriTypeValue = 1,
+        };
+
+        class iSerialItem {
+        public:
+            iSerialItem() : value_(0) {}
+            inline void GetVal(uint64 &val) { val = value_; }
+
+        private:
+            uint64 value_;
+        };
+
+        class iSerialize {
+        public:
+            iSerialize() = default;
+            inline bool Add(uint32 nCode, uint64 val) { return nCode != 0 || val != 0; }
+            inline bool Get(uint32 nCode, uint64 &val) {
+                val = static_cast<uint64>(nCode) + 1;
+                return true;
+            }
+        };
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("config.yaml"),
+        r#"
+version: 1
+input:
+  headers:
+    - include/iSerialize.h
+output:
+  dir: out
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(root.join("config.yaml")).unwrap();
+    let parsed = parser::parse(&config).unwrap();
+    let ir = ir::normalize(&config, &parsed).unwrap();
+    generator::generate(&config, &ir, true).unwrap();
+
+    let smoke_cpp = config.output.dir.join("smoke.cpp");
+    fs::write(
+        &smoke_cpp,
+        format!(
+            r#"
+        #include "{}"
+        int main() {{
+            iSerializeHandle* ser = cgowrap_iSerialize_new();
+            if (ser == nullptr) return 10;
+            if (!cgowrap_iSerialize_Add(ser, 7, 9)) return 11;
+            uint64_t value = 0;
+            if (!cgowrap_iSerialize_Get(ser, 7, &value)) return 12;
+            if (value != 8) return 13;
+            iSerialItemHandle* item = cgowrap_iSerialItem_new();
+            if (item == nullptr) return 14;
+            cgowrap_iSerialItem_GetVal(item, &value);
+            cgowrap_iSerialItem_delete(item);
+            cgowrap_iSerialize_delete(ser);
+            return 0;
+        }}
+        "#,
+            config.output.header
+        ),
+    )
+    .unwrap();
+
+    let binary = config.output.dir.join("smoke");
+    let compiler = pick_clangxx();
+    let status = Command::new(&compiler)
+        .current_dir(&root)
+        .arg("-std=c++17")
+        .arg(config.output_dir().join(&config.output.source))
+        .arg(&smoke_cpp)
+        .arg("-I")
+        .arg(config.output_dir())
+        .arg("-I")
+        .arg(root.join("include"))
+        .arg("-o")
+        .arg(&binary)
+        .status()
+        .unwrap();
+
+    assert!(status.success(), "generated wrapper did not compile/link");
+
+    let status = Command::new(&binary).status().unwrap();
+    assert!(status.success(), "generated smoke binary failed: {status}");
+}
