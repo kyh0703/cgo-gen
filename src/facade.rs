@@ -1901,6 +1901,7 @@ mod tests {
             method_of: Some("Api".to_string()),
             owner_cpp_type: Some("Api".to_string()),
             is_const: Some(false),
+            field_accessor: None,
             returns: primitive_type("bool", "bool"),
             params: vec![
                 IrParam {
@@ -1936,6 +1937,7 @@ mod tests {
             method_of: Some("Api".to_string()),
             owner_cpp_type: Some("Api".to_string()),
             is_const: Some(false),
+            field_accessor: None,
             returns: primitive_type("bool", "bool"),
             params: vec![
                 IrParam {
@@ -1967,6 +1969,7 @@ mod tests {
             method_of: Some("Api".to_string()),
             owner_cpp_type: Some("Api".to_string()),
             is_const: Some(false),
+            field_accessor: None,
             returns: primitive_type("bool", "bool"),
             params: vec![
                 IrParam {
@@ -2085,6 +2088,7 @@ mod tests {
                     method_of: None,
                     owner_cpp_type: Some("myApi".to_string()),
                     is_const: None,
+                    field_accessor: None,
                     returns: IrType {
                         kind: "opaque".to_string(),
                         cpp_type: "myApi".to_string(),
@@ -2100,6 +2104,7 @@ mod tests {
                     method_of: None,
                     owner_cpp_type: Some("myApi".to_string()),
                     is_const: None,
+                    field_accessor: None,
                     returns: IrType {
                         kind: "void".to_string(),
                         cpp_type: "void".to_string(),
@@ -2115,6 +2120,7 @@ mod tests {
                     method_of: Some("myApi".to_string()),
                     owner_cpp_type: Some("myApi".to_string()),
                     is_const: Some(true),
+                    field_accessor: None,
                     returns: primitive_type("bool", "bool"),
                     params: vec![self_param],
                 },
@@ -2173,6 +2179,7 @@ mod tests {
             method_of: None,
             owner_cpp_type: Some("Api".to_string()),
             is_const: None,
+            field_accessor: None,
             returns: IrType {
                 kind: "opaque".to_string(),
                 cpp_type: "Api*".to_string(),
@@ -2188,6 +2195,7 @@ mod tests {
             method_of: None,
             owner_cpp_type: Some("Api".to_string()),
             is_const: None,
+            field_accessor: None,
             returns: void_type,
             params: vec![self_param.clone()],
         };
@@ -2198,6 +2206,7 @@ mod tests {
             method_of: Some("Api".to_string()),
             owner_cpp_type: Some("Api".to_string()),
             is_const: Some(false),
+            field_accessor: None,
             returns: model_type("model_pointer", "ThingModel"),
             params: vec![self_param],
         };
