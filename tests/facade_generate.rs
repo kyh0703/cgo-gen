@@ -849,7 +849,7 @@ naming:
     assert!(raw_header.contains("void sil_SetHACallback_bridge(bool use_cb0);"));
 
     assert!(raw_source.contains("extern void go_sil_SetHACallback_cb0"));
-    assert!(raw_source.contains("auto sil_SetHACallback_cb0_trampoline"));
+    assert!(raw_source.contains("SICHACALLBACK sil_SetHACallback_cb0_trampoline"));
     assert!(raw_source.contains(
         "sil_SetHACallback(use_cb0 ? sil_SetHACallback_cb0_trampoline : nullptr);"
     ));
