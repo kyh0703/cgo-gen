@@ -268,3 +268,100 @@ output:
     let status = Command::new(&binary).status().unwrap();
     assert!(status.success(), "generated smoke binary failed: {status}");
 }
+
+#[test]
+fn generated_wrapper_compiles_for_model_view_snapshot_copy_semantics() {
+    let root = temp_output_dir("model_view_snapshot");
+    fs::create_dir_all(root.join("include")).unwrap();
+    fs::write(
+        root.join("include/Models.hpp"),
+        r#"
+        #include <stdint.h>
+
+        struct Child {
+            int value;
+        };
+
+        struct Parent {
+            Child child;
+        };
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("config.yaml"),
+        r#"
+version: 1
+input:
+  headers:
+    - include/Models.hpp
+output:
+  dir: out
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(root.join("config.yaml")).unwrap();
+    let parsed = parser::parse(&config).unwrap();
+    let ir = ir::normalize(&config, &parsed).unwrap();
+    generator::generate(&config, &ir, true).unwrap();
+
+    let smoke_cpp = config.output.dir.join("smoke.cpp");
+    fs::write(
+        &smoke_cpp,
+        format!(
+            r#"
+        #include "{}"
+        int main() {{
+            ParentHandle* parent = cgowrap_Parent_new();
+            if (parent == nullptr) return 10;
+            ChildHandle* initial = cgowrap_Parent_GetChild(parent);
+            if (initial == nullptr) return 11;
+            cgowrap_Child_SetValue(initial, 3);
+            cgowrap_Parent_SetChild(parent, initial);
+            cgowrap_Child_delete(initial);
+
+            ChildHandle* snapshot = cgowrap_Parent_GetChild(parent);
+            if (snapshot == nullptr) return 12;
+            cgowrap_Child_SetValue(snapshot, 9);
+            ChildHandle* unchanged = cgowrap_Parent_GetChild(parent);
+            if (unchanged == nullptr) return 13;
+            if (cgowrap_Child_GetValue(unchanged) != 3) return 14;
+            cgowrap_Child_delete(unchanged);
+            cgowrap_Parent_SetChild(parent, snapshot);
+            ChildHandle* updated = cgowrap_Parent_GetChild(parent);
+            if (updated == nullptr) return 15;
+            if (cgowrap_Child_GetValue(updated) != 9) return 16;
+            cgowrap_Child_delete(updated);
+            cgowrap_Child_delete(snapshot);
+
+            cgowrap_Parent_delete(parent);
+            return 0;
+        }}
+        "#,
+            config.output.header
+        ),
+    )
+    .unwrap();
+
+    let binary = config.output.dir.join("smoke");
+    let compiler = pick_clangxx();
+    let status = Command::new(&compiler)
+        .current_dir(&root)
+        .arg("-std=c++17")
+        .arg(config.output_dir().join(&config.output.source))
+        .arg(&smoke_cpp)
+        .arg("-I")
+        .arg(config.output_dir())
+        .arg("-I")
+        .arg(root.join("include"))
+        .arg("-o")
+        .arg(&binary)
+        .status()
+        .unwrap();
+
+    assert!(status.success(), "generated wrapper did not compile/link");
+
+    let status = Command::new(&binary).status().unwrap();
+    assert!(status.success(), "generated smoke binary failed: {status}");
+}
