@@ -77,12 +77,9 @@ naming:
             .iter()
             .any(|item| item.cpp_name == "set_callback" && item.reason.contains("function pointer"))
     );
-    assert!(
-        ir.support
-            .skipped_declarations
-            .iter()
-            .any(|item| item.cpp_name == "Api::SetCallback" && item.reason.contains("function pointer"))
-    );
+    assert!(ir.support.skipped_declarations.iter().any(
+        |item| item.cpp_name == "Api::SetCallback" && item.reason.contains("function pointer")
+    ));
 }
 
 #[test]
@@ -125,8 +122,16 @@ naming:
     let parsed = parser::parse(&config).unwrap();
     let ir = ir::normalize(&config, &parsed).unwrap();
 
-    assert!(ir.functions.iter().any(|item| item.name == "cgowrap_plain_add"));
-    assert!(ir.functions.iter().any(|item| item.name == "cgowrap_Value_GetCode"));
+    assert!(
+        ir.functions
+            .iter()
+            .any(|item| item.name == "cgowrap_plain_add")
+    );
+    assert!(
+        ir.functions
+            .iter()
+            .any(|item| item.name == "cgowrap_Value_GetCode")
+    );
     assert!(
         !ir.functions
             .iter()
@@ -147,18 +152,21 @@ naming:
         ir.support
             .skipped_declarations
             .iter()
-            .any(|item| item.cpp_name == "Value::operator+" && item.reason.contains("operator declarations"))
+            .any(|item| item.cpp_name == "Value::operator+"
+                && item.reason.contains("operator declarations"))
     );
     assert!(
         ir.support
             .skipped_declarations
             .iter()
-            .any(|item| item.cpp_name == "Value::operator==" && item.reason.contains("operator declarations"))
+            .any(|item| item.cpp_name == "Value::operator=="
+                && item.reason.contains("operator declarations"))
     );
     assert!(
         ir.support
             .skipped_declarations
             .iter()
-            .any(|item| item.cpp_name == "operator-" && item.reason.contains("operator declarations"))
+            .any(|item| item.cpp_name == "operator-"
+                && item.reason.contains("operator declarations"))
     );
 }

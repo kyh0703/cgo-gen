@@ -203,13 +203,11 @@ fn exported_cxxflags(config: &Config) -> Vec<String> {
             continue;
         }
 
-        if arg.starts_with("-I") && arg.len() > 2 {
-            flags.push(arg.clone());
-        } else if arg.starts_with("-isystem") && arg.len() > "-isystem".len() {
-            flags.push(arg.clone());
-        } else if arg.starts_with("-D") && arg.len() > 2 {
-            flags.push(arg.clone());
-        } else if arg.starts_with("-std=") {
+        if (arg.starts_with("-I") && arg.len() > 2)
+            || (arg.starts_with("-isystem") && arg.len() > "-isystem".len())
+            || (arg.starts_with("-D") && arg.len() > 2)
+            || arg.starts_with("-std=")
+        {
             flags.push(arg.clone());
         }
 
@@ -428,8 +426,8 @@ fn render_method_body(function: &IrFunction) -> String {
             format!("reinterpret_cast<{}*>(self)", owner)
         };
         return match accessor.access.as_str() {
-            "get" => format!("    return {receiver}->{};\n", accessor.field_name),
-            "set" => format!("    {receiver}->{} = value;\n", accessor.field_name),
+            "get" => render_field_getter_body(function, &receiver, &accessor.field_name),
+            "set" => render_field_setter_body(function, &receiver, &accessor.field_name),
             _ => unreachable!("unsupported field accessor kind"),
         };
     }
@@ -458,6 +456,7 @@ fn render_callable_body(function: &IrFunction, target: &str, arg_start: usize) -
             "    std::string result = {}({});\n    char* buffer = static_cast<char*>(std::malloc(result.size() + 1));\n    if (buffer == nullptr) {{\n        return nullptr;\n    }}\n    std::memcpy(buffer, result.c_str(), result.size() + 1);\n    return buffer;\n",
             target, args
         ),
+        "model_view" => render_model_view_return(function, target, &args),
         "model_value" => format!(
             "    return reinterpret_cast<{}>(new {}({}({})));\n",
             function.returns.c_type,
@@ -471,6 +470,47 @@ fn render_callable_body(function: &IrFunction, target: &str, arg_start: usize) -
         ),
         _ => format!("    return {}({});\n", target, args),
     }
+}
+
+fn render_field_getter_body(function: &IrFunction, receiver: &str, field_name: &str) -> String {
+    match function.returns.kind.as_str() {
+        "model_value" => format!(
+            "    return reinterpret_cast<{}>(new {}({receiver}->{}));\n",
+            function.returns.c_type,
+            base_model_cpp_type(&function.returns.cpp_type),
+            field_name
+        ),
+        _ => format!("    return {receiver}->{};\n", field_name),
+    }
+}
+
+fn render_field_setter_body(function: &IrFunction, receiver: &str, field_name: &str) -> String {
+    let Some(value_param) = function.params.get(1) else {
+        return format!("    {receiver}->{} = value;\n", field_name);
+    };
+    match value_param.ty.kind.as_str() {
+        "model_value" => format!(
+            "    {receiver}->{} = *reinterpret_cast<{}*>(value);\n",
+            field_name,
+            base_model_cpp_type(&value_param.ty.cpp_type)
+        ),
+        _ => format!("    {receiver}->{} = value;\n", field_name),
+    }
+}
+
+fn render_model_view_return(function: &IrFunction, target: &str, args: &str) -> String {
+    let base = base_model_cpp_type(&function.returns.cpp_type);
+    if function.returns.cpp_type.trim_end().ends_with('*') {
+        return format!(
+            "    auto result = {}({});\n    if (result == nullptr) {{\n        return nullptr;\n    }}\n    return reinterpret_cast<{}>(new {}(*result));\n",
+            target, args, function.returns.c_type, base
+        );
+    }
+
+    format!(
+        "    return reinterpret_cast<{}>(new {}({}({})));\n",
+        function.returns.c_type, base, target, args
+    )
 }
 
 fn call_args(function: &IrFunction, start: usize) -> String {
@@ -579,9 +619,9 @@ fn make_callback_bridge_function(function: &IrFunction) -> IrFunction {
         .params
         .iter()
         .enumerate()
-        .filter_map(|(index, param)| {
+        .map(|(index, param)| {
             if param.ty.kind == "callback" {
-                Some(IrParam {
+                IrParam {
                     name: format!("use_cb{index}"),
                     ty: IrType {
                         kind: "primitive".to_string(),
@@ -589,9 +629,9 @@ fn make_callback_bridge_function(function: &IrFunction) -> IrFunction {
                         c_type: "bool".to_string(),
                         handle: None,
                     },
-                })
+                }
             } else {
-                Some(param.clone())
+                param.clone()
             }
         })
         .collect::<Vec<_>>();

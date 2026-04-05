@@ -436,13 +436,14 @@ impl Config {
         if self.input.dir.is_none() && self.input.headers.is_empty() {
             bail!("config.input.dir or config.input.headers must be set");
         }
-        if let Some(dir) = &self.input.dir {
-            if dir.exists() && !dir.is_dir() {
-                bail!(
-                    "config.input.dir must point to a directory: {}",
-                    dir.display()
-                );
-            }
+        if let Some(dir) = &self.input.dir
+            && dir.exists()
+            && !dir.is_dir()
+        {
+            bail!(
+                "config.input.dir must point to a directory: {}",
+                dir.display()
+            );
         }
         Ok(())
     }
