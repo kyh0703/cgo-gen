@@ -97,8 +97,18 @@ output:
     let config = Config::load(fixture.join("config.yaml")).unwrap();
     let parsed = parser::parse(&config).unwrap();
 
-    assert!(parsed.headers.iter().any(|header| header.ends_with("owned.hpp")));
-    assert!(!parsed.headers.iter().any(|header| header.ends_with("foreign.hpp")));
+    assert!(
+        parsed
+            .headers
+            .iter()
+            .any(|header| header.ends_with("owned.hpp"))
+    );
+    assert!(
+        !parsed
+            .headers
+            .iter()
+            .any(|header| header.ends_with("foreign.hpp"))
+    );
     assert!(parsed.classes.iter().any(|class| class.name == "Owned"));
     assert!(!parsed.classes.iter().any(|class| class.name == "LocalOnly"));
     assert!(!parsed.classes.iter().any(|class| class.name == "Foreign"));
@@ -301,5 +311,10 @@ output:
     assert_eq!(units.len(), 1);
     assert!(units[0].ends_with("tu.cpp"));
     assert!(parsed.classes.iter().any(|class| class.name == "Entry"));
-    assert!(!parsed.headers.iter().any(|header| header.ends_with("types.hpp")));
+    assert!(
+        !parsed
+            .headers
+            .iter()
+            .any(|header| header.ends_with("types.hpp"))
+    );
 }

@@ -66,10 +66,7 @@ fn disambiguates_overloaded_methods_with_signature_suffixes() {
 
 #[test]
 fn disambiguates_overloaded_constructors_without_panicking() {
-    let root = std::env::temp_dir().join(format!(
-        "c_go_overload_ctor_{}",
-        std::process::id()
-    ));
+    let root = std::env::temp_dir().join(format!("c_go_overload_ctor_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(root.join("include")).unwrap();
     std::fs::write(
