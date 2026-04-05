@@ -38,6 +38,7 @@ pub fn collect_clang_args(config: &Config, parse_entry: &Path) -> Result<Vec<Str
     }
 
     add_parse_entry_parent_include(&mut args, parse_entry);
+    add_platform_fallback_sysroot(&mut args);
     add_platform_fallback_includes(&mut args);
 
     Ok(args)
@@ -63,7 +64,11 @@ pub fn collect_translation_units(config: &Config) -> Result<Vec<PathBuf>> {
     };
 
     units.extend(collect_classified_translation_units(config, dir)?);
-    units = units.into_iter().collect::<BTreeSet<_>>().into_iter().collect();
+    units = units
+        .into_iter()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
 
     if units.is_empty() {
         units = scan_dir_translation_units(dir)?;
@@ -138,12 +143,89 @@ fn add_platform_fallback_includes(args: &mut Vec<String>) {
     }
 }
 
+fn add_platform_fallback_sysroot(args: &mut Vec<String>) {
+    if env::consts::OS != "macos" || args.iter().any(|arg| arg == "-isysroot") {
+        return;
+    }
+
+    let Some(sysroot) = discover_macos_sdk_path() else {
+        return;
+    };
+    let sysroot = normalize_clang_path(&sysroot);
+    args.push("-isysroot".to_string());
+    args.push(sysroot);
+}
+
 fn discover_platform_fallback_include_dirs() -> Vec<PathBuf> {
     match env::consts::OS {
         "windows" => discover_windows_fallback_include_dirs(),
+        "macos" => discover_macos_fallback_include_dirs(),
         "linux" => discover_linux_fallback_include_dirs(),
         _ => Vec::new(),
     }
+}
+
+fn discover_macos_fallback_include_dirs() -> Vec<PathBuf> {
+    let mut includes = Vec::new();
+
+    if let Some(resource_dir) = discover_command_output_dir(&["clang++", "-print-resource-dir"]) {
+        includes.push(resource_dir.join("include"));
+    }
+
+    if let Some(developer_dir) = discover_command_output_dir(&["xcode-select", "-p"]) {
+        includes.extend(macos_developer_include_candidates(&developer_dir));
+    }
+
+    if let Some(sdk_path) = discover_macos_sdk_path() {
+        includes.extend(macos_sdk_include_candidates(&sdk_path));
+    }
+
+    if let Some(toolchain_bin) = discover_command_output_dir(&["xcrun", "--find", "clang++"]) {
+        includes.extend(macos_toolchain_bin_include_candidates(&toolchain_bin));
+    }
+
+    includes
+        .into_iter()
+        .filter(|path| path.exists())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+fn macos_developer_include_candidates(developer_dir: &Path) -> Vec<PathBuf> {
+    vec![
+        developer_dir.join("Toolchains/XcodeDefault.xctoolchain/usr/include/c++/v1"),
+        developer_dir.join("Toolchains/XcodeDefault.xctoolchain/usr/include"),
+    ]
+}
+
+fn macos_sdk_include_candidates(sdk_path: &Path) -> Vec<PathBuf> {
+    vec![
+        sdk_path.join("usr/include/c++/v1"),
+        sdk_path.join("usr/include"),
+    ]
+}
+
+fn macos_toolchain_bin_include_candidates(clangxx_path: &Path) -> Vec<PathBuf> {
+    let Some(toolchain_dir) = clangxx_path
+        .parent()
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+    else {
+        return Vec::new();
+    };
+
+    vec![
+        toolchain_dir.join("usr/include/c++/v1"),
+        toolchain_dir.join("usr/include"),
+    ]
+}
+
+fn discover_macos_sdk_path() -> Option<PathBuf> {
+    env::var_os("SDKROOT")
+        .map(PathBuf::from)
+        .filter(|path| path.exists())
+        .or_else(|| discover_command_output_dir(&["xcrun", "--show-sdk-path"]))
 }
 
 fn discover_windows_fallback_include_dirs() -> Vec<PathBuf> {
@@ -162,14 +244,14 @@ fn discover_windows_fallback_include_dirs() -> Vec<PathBuf> {
 fn discover_linux_fallback_include_dirs() -> Vec<PathBuf> {
     let mut includes = Vec::new();
 
-    if let Some(resource_dir) =
-        discover_command_output_dir(&["clang", "-print-resource-dir"]).map(|dir| dir.join("include"))
+    if let Some(resource_dir) = discover_command_output_dir(&["clang", "-print-resource-dir"])
+        .map(|dir| dir.join("include"))
     {
         includes.push(resource_dir);
     }
 
-    if let Some(resource_dir) =
-        discover_command_output_dir(&["clang++", "-print-resource-dir"]).map(|dir| dir.join("include"))
+    if let Some(resource_dir) = discover_command_output_dir(&["clang++", "-print-resource-dir"])
+        .map(|dir| dir.join("include"))
     {
         includes.push(resource_dir);
     }
@@ -230,11 +312,7 @@ fn discover_command_output_dir(command_with_args: &[&str]) -> Option<PathBuf> {
     }
 
     let path = PathBuf::from(value);
-    if path.exists() {
-        Some(path)
-    } else {
-        None
-    }
+    if path.exists() { Some(path) } else { None }
 }
 
 fn latest_versioned_include_dir(root: &Path) -> Option<PathBuf> {

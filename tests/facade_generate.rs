@@ -317,8 +317,6 @@ naming:
     assert!(go_facade.contains("func (a *Api) GetValue() int {"));
 }
 
-
-
 #[test]
 fn exposes_object_out_params_as_direct_wrapper_pointer_arguments() {
     let root = temp_output_dir("model-method");
@@ -392,12 +390,18 @@ naming:
     assert!(go_facade.contains("return int(C.cgowrap_Api_Clear(a.ptr))"));
     assert!(go_facade.contains("func (a *Api) GetThing(id int, out *ThingModel) bool {"));
     assert!(go_facade.contains("requireThingModelHandle(out)"));
-    assert!(go_facade.contains("C.cgowrap_Api_GetThing(a.ptr, C.int(id), requireThingModelHandle(out))"));
+    assert!(
+        go_facade
+            .contains("C.cgowrap_Api_GetThing(a.ptr, C.int(id), requireThingModelHandle(out))")
+    );
     assert!(go_facade.contains("func (a *Api) GetThingByKey(key string, out *ThingModel) bool {"));
     assert!(go_facade.contains("cArg0 := C.CString(key)"));
     assert!(go_facade.contains("defer C.free(unsafe.Pointer(cArg0))"));
     assert!(go_facade.contains("optionalThingModelHandle(out)"));
-    assert!(go_facade.contains("C.cgowrap_Api_GetThingByKey(a.ptr, cArg0, optionalThingModelHandle(out))"));
+    assert!(
+        go_facade
+            .contains("C.cgowrap_Api_GetThingByKey(a.ptr, cArg0, optionalThingModelHandle(out))")
+    );
     assert!(!go_facade.contains("mapThingModelFromHandle"));
 }
 
@@ -644,6 +648,77 @@ naming:
 }
 
 #[test]
+fn exposes_model_view_returns_as_wrapper_snapshots_in_go_facade() {
+    let root = temp_output_dir("model-view-return");
+    let include_dir = root.join("include");
+    fs::create_dir_all(&include_dir).unwrap();
+
+    fs::write(
+        include_dir.join("ThingModel.hpp"),
+        r#"
+        class ThingModel {
+        public:
+            ThingModel() = default;
+            ~ThingModel() = default;
+            int GetValue() const;
+            void SetValue(int value);
+        };
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        include_dir.join("Api.hpp"),
+        r#"
+        #include "ThingModel.hpp"
+
+        class Api {
+        public:
+            Api() = default;
+            ~Api() = default;
+            ThingModel* GetThingPtr();
+            ThingModel& GetThingRef();
+        };
+        "#,
+    )
+    .unwrap();
+
+    let config_path = root.join("cppgo-wrap.yaml");
+    fs::write(
+        &config_path,
+        r#"
+version: 1
+input:
+  headers:
+    - include/ThingModel.hpp
+    - include/Api.hpp
+output:
+  dir: out
+naming:
+  prefix: cgowrap
+  style: preserve
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(&config_path).unwrap();
+    generator::generate_all(&config, true).unwrap();
+
+    let raw_source = fs::read_to_string(root.join("out/api_wrapper.cpp")).unwrap();
+    let go_facade = fs::read_to_string(root.join("out/api_wrapper.go")).unwrap();
+
+    assert!(raw_source.contains("auto result = reinterpret_cast<Api*>(self)->GetThingPtr();"));
+    assert!(
+        raw_source.contains("return reinterpret_cast<ThingModelHandle*>(new ThingModel(*result));")
+    );
+    assert!(raw_source.contains(
+        "return reinterpret_cast<ThingModelHandle*>(new ThingModel(reinterpret_cast<Api*>(self)->GetThingRef()));"
+    ));
+    assert!(go_facade.contains("func (a *Api) GetThingPtr() *ThingModel {"));
+    assert!(go_facade.contains("func (a *Api) GetThingRef() *ThingModel {"));
+    assert!(go_facade.contains("return &ThingModel{ptr: raw}"));
+}
+
+#[test]
 fn supports_object_reference_params_even_outside_last_position() {
     let root = temp_output_dir("model-not-last");
     let include_dir = root.join("include");
@@ -843,9 +918,10 @@ naming:
 
     assert!(raw_source.contains("extern void go_sil_SetHACallback_cb0"));
     assert!(raw_source.contains("SICHACALLBACK sil_SetHACallback_cb0_trampoline"));
-    assert!(raw_source.contains(
-        "sil_SetHACallback(use_cb0 ? sil_SetHACallback_cb0_trampoline : nullptr);"
-    ));
+    assert!(
+        raw_source
+            .contains("sil_SetHACallback(use_cb0 ? sil_SetHACallback_cb0_trampoline : nullptr);")
+    );
 
     assert!(go_facade.contains("import \"sync\""));
     assert!(go_facade.contains(
