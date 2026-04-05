@@ -20,7 +20,13 @@ fn checked_in_real_sil_model_config_uses_dir_only_input_shape() {
     let config = Config::load("configs/sil-real-model.yaml").unwrap();
 
     assert!(config.input.headers.is_empty());
-    assert!(config.input.dir.as_ref().is_some_and(|path| path.is_absolute()));
+    assert!(
+        config
+            .input
+            .dir
+            .as_ref()
+            .is_some_and(|path| path.is_absolute())
+    );
 }
 
 #[test]
