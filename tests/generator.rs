@@ -1,6 +1,6 @@
 use cgo_gen::{
     config::Config,
-    generator::{render_go_structs, render_header, render_source},
+    generator::{self, render_go_structs, render_header, render_source},
     ir, parser,
 };
 use std::{env, fs};
@@ -62,7 +62,8 @@ output:
     )
     .unwrap();
 
-    let config = Config::load(root.join("config.yaml")).unwrap();
+    let config =
+        generator::prepare_config(&Config::load(root.join("config.yaml")).unwrap()).unwrap();
     let parsed = parser::parse(&config).unwrap();
     let ir = ir::normalize(&config, &parsed).unwrap();
 
@@ -103,7 +104,8 @@ output:
     )
     .unwrap();
 
-    let config = Config::load(root.join("config.yaml")).unwrap();
+    let config =
+        generator::prepare_config(&Config::load(root.join("config.yaml")).unwrap()).unwrap();
     let parsed = parser::parse(&config).unwrap();
     let ir = ir::normalize(&config, &parsed).unwrap();
     let header = render_header(&config, &ir);
@@ -226,7 +228,10 @@ output:
 
 #[test]
 fn struct_fields_generate_synthetic_accessors() {
-    let root = env::temp_dir().join(format!("c_go_struct_field_accessors_{}", std::process::id()));
+    let root = env::temp_dir().join(format!(
+        "c_go_struct_field_accessors_{}",
+        std::process::id()
+    ));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(root.join("include")).unwrap();
     fs::write(
@@ -264,12 +269,14 @@ output:
 
     assert!(header.contains("int cgowrap_Counter_GetValue(const CounterHandle* self);"));
     assert!(header.contains("void cgowrap_Counter_SetValue(CounterHandle* self, int value);"));
-    assert!(header.contains(
-        "unsigned int cgowrap_Counter_GetTotalCount(const CounterHandle* self);"
-    ));
-    assert!(header.contains(
-        "void cgowrap_Counter_SetTotalCount(CounterHandle* self, unsigned int value);"
-    ));
+    assert!(
+        header.contains("unsigned int cgowrap_Counter_GetTotalCount(const CounterHandle* self);")
+    );
+    assert!(
+        header.contains(
+            "void cgowrap_Counter_SetTotalCount(CounterHandle* self, unsigned int value);"
+        )
+    );
     assert!(header.contains("int cgowrap_Counter_GetReadOnly(const CounterHandle* self);"));
     assert!(!header.contains("cgowrap_Counter_SetReadOnly"));
 
@@ -280,10 +287,26 @@ output:
 
     assert_eq!(go.len(), 1);
     assert!(go[0].contents.contains("type Counter struct {"));
-    assert!(go[0].contents.contains("func (c *Counter) GetValue() int {"));
-    assert!(go[0].contents.contains("func (c *Counter) SetValue(value int) {"));
-    assert!(go[0].contents.contains("func (c *Counter) GetTotalCount() uint32 {"));
-    assert!(go[0].contents.contains("func (c *Counter) SetTotalCount(value uint32) {"));
+    assert!(
+        go[0]
+            .contents
+            .contains("func (c *Counter) GetValue() int {")
+    );
+    assert!(
+        go[0]
+            .contents
+            .contains("func (c *Counter) SetValue(value int) {")
+    );
+    assert!(
+        go[0]
+            .contents
+            .contains("func (c *Counter) GetTotalCount() uint32 {")
+    );
+    assert!(
+        go[0]
+            .contents
+            .contains("func (c *Counter) SetTotalCount(value uint32) {")
+    );
     assert!(!go[0].contents.contains("SetReadOnly("));
 }
 
@@ -340,4 +363,121 @@ output:
     assert!(source.contains(
         "return reinterpret_cast<MTimeHandle*>(new MTime(reinterpret_cast<const Api*>(self)->GetCreateTime()));"
     ));
+}
+
+#[test]
+fn renders_model_view_pointer_return_as_owned_handle_copy() {
+    let root = env::temp_dir().join(format!("c_go_model_view_return_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join("include")).unwrap();
+    fs::write(
+        root.join("include/Api.hpp"),
+        r#"
+        struct Child {
+            int value;
+        };
+
+        class Api {
+        public:
+            Child* GetChildPtr() { return &child_; }
+            Child& GetChildRef() { return child_; }
+        private:
+            Child child_;
+        };
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("config.yaml"),
+        r#"
+version: 1
+input:
+  headers:
+    - include/Api.hpp
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(root.join("config.yaml")).unwrap();
+    let parsed = parser::parse(&config).unwrap();
+    let ir = ir::normalize(&config, &parsed).unwrap();
+    let source = render_source(&config, &ir);
+
+    let ptr_getter = ir
+        .functions
+        .iter()
+        .find(|function| function.cpp_name == "Api::GetChildPtr")
+        .unwrap();
+    let ref_getter = ir
+        .functions
+        .iter()
+        .find(|function| function.cpp_name == "Api::GetChildRef")
+        .unwrap();
+    assert_eq!(ptr_getter.returns.kind, "model_view");
+    assert_eq!(ref_getter.returns.kind, "model_view");
+    assert!(source.contains("auto result = reinterpret_cast<Api*>(self)->GetChildPtr();"));
+    assert!(source.contains("return reinterpret_cast<ChildHandle*>(new Child(*result));"));
+    assert!(source.contains(
+        "return reinterpret_cast<ChildHandle*>(new Child(reinterpret_cast<Api*>(self)->GetChildRef()));"
+    ));
+}
+
+#[test]
+fn renders_model_value_field_accessors_as_snapshot_get_and_explicit_set() {
+    let root = env::temp_dir().join(format!("c_go_model_value_field_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join("include")).unwrap();
+    fs::write(
+        root.join("include/Models.hpp"),
+        r#"
+        struct Child {
+            int value;
+        };
+
+        struct Parent {
+            Child child;
+        };
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("config.yaml"),
+        r#"
+version: 1
+input:
+  headers:
+    - include/Models.hpp
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(root.join("config.yaml")).unwrap();
+    let parsed = parser::parse(&config).unwrap();
+    let ir = ir::normalize(&config, &parsed).unwrap();
+    let header = render_header(&config, &ir);
+    let source = render_source(&config, &ir);
+    let go = render_go_structs(&config, &ir).unwrap();
+    let go_text = go
+        .iter()
+        .map(|file| file.contents.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(header.contains("ChildHandle* cgowrap_Parent_GetChild(const ParentHandle* self);"));
+    assert!(
+        header.contains("void cgowrap_Parent_SetChild(ParentHandle* self, ChildHandle* value);")
+    );
+    assert!(source.contains(
+        "return reinterpret_cast<ChildHandle*>(new Child(reinterpret_cast<const Parent*>(self)->child));"
+    ));
+    assert!(
+        source
+            .contains("reinterpret_cast<Parent*>(self)->child = *reinterpret_cast<Child*>(value);")
+    );
+    assert!(go_text.contains("func (p *Parent) GetChild() *Child {"));
+    assert!(go_text.contains("func (p *Parent) SetChild(value *Child) {"));
 }

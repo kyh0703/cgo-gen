@@ -105,33 +105,33 @@ pub struct CppEnumVariant {
 
 impl ParsedApi {
     pub fn filter_to_header(&self, header: &Path) -> Self {
-        let mut filtered = Self::default();
-        filtered.headers = vec![header.display().to_string()];
-        filtered.functions = self
-            .functions
-            .iter()
-            .filter(|function| same_path(&function.source_header, header))
-            .cloned()
-            .collect();
-        filtered.classes = self
-            .classes
-            .iter()
-            .filter(|class| same_path(&class.source_header, header))
-            .cloned()
-            .collect();
-        filtered.enums = self
-            .enums
-            .iter()
-            .filter(|item| same_path(&item.source_header, header))
-            .cloned()
-            .collect();
-        filtered.callbacks = self
-            .callbacks
-            .iter()
-            .filter(|item| same_path(&item.source_header, header))
-            .cloned()
-            .collect();
-        filtered
+        Self {
+            headers: vec![header.display().to_string()],
+            functions: self
+                .functions
+                .iter()
+                .filter(|function| same_path(&function.source_header, header))
+                .cloned()
+                .collect(),
+            classes: self
+                .classes
+                .iter()
+                .filter(|class| same_path(&class.source_header, header))
+                .cloned()
+                .collect(),
+            enums: self
+                .enums
+                .iter()
+                .filter(|item| same_path(&item.source_header, header))
+                .cloned()
+                .collect(),
+            callbacks: self
+                .callbacks
+                .iter()
+                .filter(|item| same_path(&item.source_header, header))
+                .cloned()
+                .collect(),
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -320,7 +320,8 @@ fn collect_entity(
             let Some(name) = cursor_spelling(cursor) else {
                 return Ok(());
             };
-            if let Some(callback) = parse_callback_typedef(cursor, namespace.to_vec(), name.clone())?
+            if let Some(callback) =
+                parse_callback_typedef(cursor, namespace.to_vec(), name.clone())?
             {
                 api.callbacks.push(callback);
                 return Ok(());
@@ -399,7 +400,9 @@ fn parse_class(
                     fields.push(CppField {
                         name,
                         ty: canonicalize_type_name(&cursor_type_spelling(child)),
-                        canonical_ty: canonicalize_type_name(&cursor_canonical_type_spelling(child)),
+                        canonical_ty: canonicalize_type_name(&cursor_canonical_type_spelling(
+                            child,
+                        )),
                         is_function_pointer: cursor_is_function_pointer(child),
                     });
                 }
@@ -478,9 +481,11 @@ fn parse_callback_typedef(
         return Ok(None);
     }
 
-    let source_header = normalized_cursor_file_path(cursor)
-        .ok_or_else(|| anyhow!("failed to determine source header for callback typedef `{name}`"))?;
-    let return_type = canonicalize_type_name(&unsafe { type_spelling(clang_getResultType(function_type)) });
+    let source_header = normalized_cursor_file_path(cursor).ok_or_else(|| {
+        anyhow!("failed to determine source header for callback typedef `{name}`")
+    })?;
+    let return_type =
+        canonicalize_type_name(&unsafe { type_spelling(clang_getResultType(function_type)) });
     let return_canonical_type = canonicalize_type_name(&unsafe {
         type_spelling(clang_getCanonicalType(clang_getResultType(function_type)))
     });
