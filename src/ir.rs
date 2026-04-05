@@ -404,7 +404,7 @@ fn normalize_struct_fields(
         else {
             continue;
         };
-        if field_ty.kind != "primitive" {
+        if field_ty.kind != "primitive" && field_ty.kind != "model_value" {
             continue;
         }
 
@@ -643,7 +643,7 @@ fn normalize_method(
         owner_cpp_type: Some(qualified),
         is_const: Some(method.is_const),
         field_accessor: None,
-        returns: normalize_type_with_canonical(
+        returns: normalize_return_type_with_canonical(
             config,
             &method.return_type,
             &method.return_canonical_type,
@@ -695,7 +695,7 @@ fn normalize_function(
         owner_cpp_type: None,
         is_const: None,
         field_accessor: None,
-        returns: normalize_type_with_canonical(
+        returns: normalize_return_type_with_canonical(
             config,
             &function.return_type,
             &function.return_canonical_type,
@@ -755,6 +755,19 @@ fn normalize_param(
         name: param.name.clone(),
         ty: normalize_type_with_canonical(config, &param.ty, &param.canonical_ty, callback_names)?,
     })
+}
+
+fn normalize_return_type_with_canonical(
+    config: &Config,
+    cpp_type: &str,
+    canonical_type: &str,
+    callback_names: &BTreeSet<String>,
+) -> Result<IrType> {
+    let mut ty = normalize_type_with_canonical(config, cpp_type, canonical_type, callback_names)?;
+    if matches!(ty.kind.as_str(), "model_reference" | "model_pointer") {
+        ty.kind = "model_view".to_string();
+    }
+    Ok(ty)
 }
 
 fn function_pointer_reason(
@@ -820,13 +833,11 @@ fn is_raw_unsafe_by_value_return_type(
     canonical: &str,
     callback_names: &BTreeSet<String>,
 ) -> bool {
-    if normalize_type_with_canonical(&Config::default(), display, canonical, callback_names)
-        .is_ok()
+    if normalize_type_with_canonical(&Config::default(), display, canonical, callback_names).is_ok()
     {
         return false;
     }
-    if normalize_type(display, callback_names).is_ok()
-    {
+    if normalize_type(display, callback_names).is_ok() {
         return false;
     }
     if !canonical.trim().is_empty()
@@ -895,11 +906,9 @@ fn normalize_type_with_canonical(
         if matches!(
             ty.kind.as_str(),
             "model_reference" | "model_pointer" | "model_value"
-        )
-            && canonical_trimmed != trimmed
+        ) && canonical_trimmed != trimmed
             && let Ok(mut canonical_ty) = normalize_type(canonical_trimmed, callback_names)
-        {
-            if matches!(
+            && matches!(
                 canonical_ty.kind.as_str(),
                 "extern_struct_reference"
                     | "extern_struct_pointer"
@@ -908,10 +917,10 @@ fn normalize_type_with_canonical(
                     | "pointer"
                     | "string"
                     | "c_string"
-            ) {
-                canonical_ty.cpp_type = trimmed.to_string();
-                return Ok(canonical_ty);
-            }
+            )
+        {
+            canonical_ty.cpp_type = trimmed.to_string();
+            return Ok(canonical_ty);
         }
         return Ok(ty);
     }
@@ -956,14 +965,15 @@ fn normalize_type(cpp_type: &str, callback_names: &BTreeSet<String>) -> Result<I
     // on pointer targets (e.g. "const char*" is handled separately above).
     if let Some(stripped) = trimmed.strip_prefix("const ") {
         let stripped = stripped.trim();
-        if !stripped.ends_with('*') && !stripped.ends_with('&') {
-            if let Ok(ty) = normalize_type(stripped, callback_names) {
-                return Ok(IrType {
-                    cpp_type: trimmed.to_string(),
-                    c_type: ty.c_type.clone(),
-                    ..ty
-                });
-            }
+        if !stripped.ends_with('*')
+            && !stripped.ends_with('&')
+            && let Ok(ty) = normalize_type(stripped, callback_names)
+        {
+            return Ok(IrType {
+                cpp_type: trimmed.to_string(),
+                c_type: ty.c_type.clone(),
+                ..ty
+            });
         }
     }
 
@@ -1282,6 +1292,10 @@ fn type_signature_token(ty: &IrType) -> String {
             "model_ptr_{}",
             sanitize_symbol_token(&base_model_cpp_type(&ty.cpp_type))
         ),
+        "model_view" => format!(
+            "model_view_{}",
+            sanitize_symbol_token(&base_model_cpp_type(&ty.cpp_type))
+        ),
         "model_value" => format!(
             "model_value_{}",
             sanitize_symbol_token(&base_model_cpp_type(&ty.cpp_type))
@@ -1449,5 +1463,20 @@ mod tests {
             "MTime",
             &callback_names
         ));
+    }
+
+    #[test]
+    fn normalizes_model_pointer_returns_as_model_view() {
+        let callback_names = BTreeSet::new();
+        let ty = normalize_return_type_with_canonical(
+            &Config::default(),
+            "ThingModel*",
+            "ThingModel*",
+            &callback_names,
+        )
+        .unwrap();
+
+        assert_eq!(ty.kind, "model_view");
+        assert_eq!(ty.c_type, "ThingModelHandle*");
     }
 }

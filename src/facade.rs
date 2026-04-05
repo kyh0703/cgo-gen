@@ -461,9 +461,9 @@ fn render_general_api_method(
             " {} {{\n",
             go_pointer_return_type(&function.returns).unwrap()
         )),
-        "model_pointer" => out.push_str(&format!(
+        _ if is_model_wrapper_return(&function.returns) => out.push_str(&format!(
             " *{} {{\n",
-            go_model_pointer_return_type(config, &function.returns)
+            go_model_return_type(config, &function.returns)
         )),
         _ => out.push_str(&format!(
             " {} {{\n",
@@ -479,7 +479,8 @@ fn render_general_api_method(
         "string" | "c_string" => {
             out.push_str("        return \"\", errors.New(\"facade receiver is nil\")\n")
         }
-        "pointer" | "model_pointer" => out.push_str("        return nil\n"),
+        "pointer" => out.push_str("        return nil\n"),
+        _ if is_model_wrapper_return(&function.returns) => out.push_str("        return nil\n"),
         _ => out.push_str(&format!(
             "        return {}\n",
             zero_value_for_go_type(go_type_for_ir(&function.returns).unwrap())
@@ -538,8 +539,8 @@ fn render_general_api_method(
             }
             out.push_str(&format!("    return ({})(unsafe.Pointer(raw))\n", go_type));
         }
-        "model_pointer" => {
-            let go_name = go_model_pointer_return_type(config, &function.returns);
+        _ if is_model_wrapper_return(&function.returns) => {
+            let go_name = go_model_return_type(config, &function.returns);
             out.push_str(&format!("    raw := {}\n", call));
             for line in prep.post_call_lines {
                 out.push_str("    ");
@@ -638,8 +639,8 @@ fn render_free_function(config: &Config, function: &IrFunction) -> String {
             ));
             out
         }
-        "model_pointer" => {
-            let go_name_str = go_model_pointer_return_type(config, &function.returns);
+        _ if is_model_wrapper_return(&function.returns) => {
+            let go_name_str = go_model_return_type(config, &function.returns);
             let mut out = format!("func {}({}) *{} {{\n", go_name, params, go_name_str);
             out.push_str(&indented_lines(&prep.setup_lines));
             out.push_str(&indented_lines(&prep.defer_lines));
@@ -701,9 +702,9 @@ fn render_callback_method(
             " {} {{\n",
             go_pointer_return_type(&function.returns).unwrap()
         )),
-        "model_pointer" => out.push_str(&format!(
+        _ if is_model_wrapper_return(&function.returns) => out.push_str(&format!(
             " *{} {{\n",
-            go_model_pointer_return_type(config, &function.returns)
+            go_model_return_type(config, &function.returns)
         )),
         _ => out.push_str(&format!(
             " {} {{\n",
@@ -719,7 +720,8 @@ fn render_callback_method(
         "string" | "c_string" => {
             out.push_str("        return \"\", errors.New(\"facade receiver is nil\")\n")
         }
-        "pointer" | "model_pointer" => out.push_str("        return nil\n"),
+        "pointer" => out.push_str("        return nil\n"),
+        _ if is_model_wrapper_return(&function.returns) => out.push_str("        return nil\n"),
         _ => out.push_str(&format!(
             "        return {}\n",
             zero_value_for_go_type(go_type_for_ir(&function.returns).unwrap())
@@ -748,8 +750,8 @@ fn render_callback_method(
             out.push_str(&format!("    raw := {}\n", call));
             out.push_str(&format!("    return ({})(unsafe.Pointer(raw))\n", go_type));
         }
-        "model_pointer" => {
-            let go_name = go_model_pointer_return_type(config, &function.returns);
+        _ if is_model_wrapper_return(&function.returns) => {
+            let go_name = go_model_return_type(config, &function.returns);
             out.push_str(&format!("    raw := {}\n", call));
             out.push_str(&format!(
                 "    if raw == nil {{\n        return nil\n    }}\n    return &{}{{ptr: raw}}\n",
@@ -783,9 +785,9 @@ fn render_callback_free_function(config: &Config, function: &IrFunction) -> Stri
             " {} {{\n",
             go_pointer_return_type(&function.returns).unwrap()
         )),
-        "model_pointer" => out.push_str(&format!(
+        _ if is_model_wrapper_return(&function.returns) => out.push_str(&format!(
             " *{} {{\n",
-            go_model_pointer_return_type(config, &function.returns)
+            go_model_return_type(config, &function.returns)
         )),
         _ => out.push_str(&format!(
             " {} {{\n",
@@ -814,8 +816,8 @@ fn render_callback_free_function(config: &Config, function: &IrFunction) -> Stri
             out.push_str(&format!("    raw := {}\n", call));
             out.push_str(&format!("    return ({})(unsafe.Pointer(raw))\n", go_type));
         }
-        "model_pointer" => {
-            let go_name_str = go_model_pointer_return_type(config, &function.returns);
+        _ if is_model_wrapper_return(&function.returns) => {
+            let go_name_str = go_model_return_type(config, &function.returns);
             out.push_str(&format!("    raw := {}\n", call));
             out.push_str(&format!(
                 "    if raw == nil {{\n        return nil\n    }}\n    return &{}{{ptr: raw}}\n",
@@ -870,7 +872,7 @@ fn render_callback_call_prep(
             "extern_struct_pointer" => {
                 render_extern_struct_arg(&mut prep, &param.ty, &param.name, index, false)
             }
-            "model_reference" | "model_pointer" => {
+            "model_reference" | "model_pointer" | "model_value" => {
                 render_model_arg(config, &mut prep, &param.ty, &param.name, index)
             }
             _ => prep.args.push(render_c_arg(&param.ty, &param.name)),
@@ -915,7 +917,7 @@ fn render_call_prep(config: &Config, params: &[&crate::ir::IrParam]) -> Rendered
             "extern_struct_pointer" => {
                 render_extern_struct_arg(&mut prep, &param.ty, &param.name, index, false)
             }
-            "model_reference" | "model_pointer" => {
+            "model_reference" | "model_pointer" | "model_value" => {
                 render_model_arg(config, &mut prep, &param.ty, &param.name, index)
             }
             _ => prep.args.push(render_c_arg(&param.ty, &param.name)),
@@ -1021,10 +1023,10 @@ fn render_model_arg(
     let handle = ty.handle.as_deref().unwrap_or("void");
     let c_name = format!("cArg{index}");
     prep.setup_lines.push(format!("var {c_name} *C.{handle}"));
-    if ty.kind == "model_reference" {
+    if ty.kind != "model_pointer" {
         prep.setup_lines.push(format!("if {name} == nil {{"));
         prep.setup_lines
-            .push("    panic(\"reference facade/model argument cannot be nil\")".to_string());
+            .push("    panic(\"required facade/model argument cannot be nil\")".to_string());
         prep.setup_lines.push("}".to_string());
     }
     prep.setup_lines.push(format!("if {name} != nil {{"));
@@ -1131,7 +1133,7 @@ fn go_param_type(config: &Config, ty: &IrType) -> Option<String> {
         }
         "extern_struct_pointer" | "extern_struct_reference" => extern_struct_go_type(ty),
         "callback" => Some(leaf_cpp_name(&ty.cpp_type)),
-        "model_reference" | "model_pointer" => config
+        "model_reference" | "model_pointer" | "model_value" => config
             .known_model_projection(&ty.cpp_type)
             .map(|projection| format!("*{}", projection.go_name))
             .or_else(|| {
@@ -1149,7 +1151,7 @@ fn go_return_supported(ty: &IrType) -> bool {
         || matches!(ty.kind.as_str(), "string" | "c_string")
         || (ty.kind == "primitive" && go_type_for_ir(ty).is_some())
         || (ty.kind == "pointer" && go_pointer_return_type(ty).is_some())
-        || ty.kind == "model_pointer"
+        || is_model_wrapper_return(ty)
 }
 
 fn go_pointer_return_type(ty: &IrType) -> Option<String> {
@@ -1162,11 +1164,18 @@ fn go_pointer_return_type(ty: &IrType) -> Option<String> {
         .map(|go_type| format!("*{go_type}"))
 }
 
-fn go_model_pointer_return_type(config: &Config, ty: &IrType) -> String {
+fn go_model_return_type(config: &Config, ty: &IrType) -> String {
     config
         .known_model_projection(&ty.cpp_type)
         .map(|projection| projection.go_name.clone())
         .unwrap_or_else(|| leaf_cpp_name(&base_model_cpp_type(&ty.cpp_type)))
+}
+
+fn is_model_wrapper_return(ty: &IrType) -> bool {
+    matches!(
+        ty.kind.as_str(),
+        "model_pointer" | "model_view" | "model_value"
+    )
 }
 
 fn zero_value_for_go_type(go_type: &str) -> &'static str {
@@ -1334,6 +1343,12 @@ fn go_overload_token(ty: &IrType) -> String {
             )))
         ),
         "model_pointer" => model_pointer_overload_token(ty),
+        "model_value" => format!(
+            "{}Value",
+            go_export_name(&flatten_qualified_cpp_name(&base_model_cpp_type(
+                &ty.cpp_type
+            )))
+        ),
         _ => go_export_name(&sanitize_go_token(&ty.cpp_type)),
     }
 }
@@ -1509,10 +1524,7 @@ fn extern_struct_go_type(ty: &IrType) -> Option<String> {
     Some(format!("*C.struct_{}", sanitize_go_token(tag)))
 }
 
-fn ir_uses_struct_timeval(
-    functions: &[&IrFunction],
-    classes: &[AnalyzedFacadeClass<'_>],
-) -> bool {
+fn ir_uses_struct_timeval(functions: &[&IrFunction], classes: &[AnalyzedFacadeClass<'_>]) -> bool {
     functions
         .iter()
         .flat_map(|function| {
@@ -1641,7 +1653,7 @@ pub fn collect_known_model_projections(
     config: &Config,
     ir: &IrModule,
 ) -> Result<Vec<KnownModelProjection>> {
-    Ok(build_all_model_projections(ir)?
+    Ok(build_all_model_projections(config, ir)?
         .into_iter()
         .map(|projection| KnownModelProjection {
             cpp_type: projection.cpp_type,
@@ -1665,7 +1677,7 @@ pub fn collect_known_model_projections(
         .collect())
 }
 
-fn build_all_model_projections(ir: &IrModule) -> Result<Vec<ModelProjection>> {
+fn build_all_model_projections(config: &Config, ir: &IrModule) -> Result<Vec<ModelProjection>> {
     let constructors = ir
         .functions
         .iter()
@@ -1707,6 +1719,7 @@ fn build_all_model_projections(ir: &IrModule) -> Result<Vec<ModelProjection>> {
     let mut projections = Vec::new();
     for (owner, class_methods) in methods_by_owner {
         if let Some(projection) = build_model_projection(
+            config,
             &owner,
             &class_methods,
             constructors.get(&owner),
@@ -1719,6 +1732,7 @@ fn build_all_model_projections(ir: &IrModule) -> Result<Vec<ModelProjection>> {
 }
 
 fn build_model_projection(
+    config: &Config,
     owner: &str,
     class_methods: &[&IrFunction],
     constructor_symbol: Option<&String>,
@@ -1744,7 +1758,7 @@ fn build_model_projection(
             continue;
         }
 
-        let Some(getter_ty) = go_type_for_ir(&function.returns) else {
+        let Some(getter_ty) = go_model_field_type(config, &function.returns) else {
             continue;
         };
         let Some(setter_param) = setter.params.get(1) else {
@@ -1753,7 +1767,7 @@ fn build_model_projection(
                 setter.cpp_name
             );
         };
-        let Some(setter_ty) = go_type_for_ir(&setter_param.ty) else {
+        let Some(setter_ty) = go_model_field_type(config, &setter_param.ty) else {
             continue;
         };
 
@@ -1789,6 +1803,13 @@ fn build_model_projection(
         destructor_symbol: destructor_symbol.clone(),
         fields,
     }))
+}
+
+fn go_model_field_type(config: &Config, ty: &IrType) -> Option<String> {
+    match ty.kind.as_str() {
+        "model_value" => Some(format!("*{}", go_model_return_type(config, ty))),
+        _ => go_type_for_ir(ty).map(str::to_string),
+    }
 }
 
 fn getter_suffix(function: &IrFunction) -> Option<&str> {
@@ -2149,13 +2170,13 @@ mod tests {
     }
 
     #[test]
-    fn model_pointer_return_is_supported() {
-        let ty = model_type("model_pointer", "ThingModel");
+    fn model_view_return_is_supported() {
+        let ty = model_type("model_view", "ThingModel");
         assert!(go_return_supported(&ty));
     }
 
     #[test]
-    fn model_pointer_return_renders_wrap_pattern() {
+    fn model_view_return_renders_wrap_pattern() {
         let config = test_config_with_known_model();
         let self_param = IrParam {
             name: "self".to_string(),
@@ -2207,7 +2228,7 @@ mod tests {
             owner_cpp_type: Some("Api".to_string()),
             is_const: Some(false),
             field_accessor: None,
-            returns: model_type("model_pointer", "ThingModel"),
+            returns: model_type("model_view", "ThingModel"),
             params: vec![self_param],
         };
 
@@ -2236,10 +2257,10 @@ mod tests {
     }
 
     #[test]
-    fn model_pointer_return_uses_leaf_name_for_unknown_model() {
+    fn model_view_return_uses_leaf_name_for_unknown_model() {
         let config = test_config_with_known_model();
-        let ty = model_type("model_pointer", "UnknownClass");
-        let go_name = go_model_pointer_return_type(&config, &ty);
+        let ty = model_type("model_view", "UnknownClass");
+        let go_name = go_model_return_type(&config, &ty);
         assert_eq!(go_name, "UnknownClass");
     }
 }
