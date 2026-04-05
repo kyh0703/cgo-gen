@@ -238,7 +238,10 @@ naming:
     generator::generate_all(&config, true).unwrap();
 
     let go_path = root.join("gen/thing_wrapper.go");
-    assert!(go_path.exists(), "supported headers should emit unified Go files");
+    assert!(
+        go_path.exists(),
+        "supported headers should emit unified Go files"
+    );
     let go = fs::read_to_string(go_path).unwrap();
     assert!(go.contains("type Thing struct {"));
 }
