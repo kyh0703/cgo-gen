@@ -149,28 +149,37 @@ fn render_go_facade_file(
         || functions.iter().any(|function| {
             matches!(
                 function.returns.kind,
-                IrTypeKind::String | IrTypeKind::CString
+                IrTypeKind::String | IrTypeKind::CString | IrTypeKind::FixedByteArray
             )
         })
         || classes.iter().any(|class| {
             class.methods.iter().any(|function| {
                 matches!(
                     function.returns.kind,
-                    IrTypeKind::String | IrTypeKind::CString
+                    IrTypeKind::String | IrTypeKind::CString | IrTypeKind::FixedByteArray
                 )
             })
         });
     let requires_unsafe = functions.iter().any(|function| {
         has_string_params(function.params.iter())
             || has_pointer_params(function.params.iter())
-            || function.returns.kind == IrTypeKind::Pointer
+            || has_byte_array_params(function.params.iter())
+            || matches!(
+                function.returns.kind,
+                IrTypeKind::Pointer | IrTypeKind::FixedByteArray
+            )
     }) || classes.iter().any(|class| {
         has_string_params(class.constructor.params.iter())
             || has_pointer_params(class.constructor.params.iter())
+            || has_byte_array_params(class.constructor.params.iter())
             || class.methods.iter().any(|function| {
                 has_string_params(function.params.iter().skip(1))
                     || has_pointer_params(function.params.iter().skip(1))
-                    || function.returns.kind == IrTypeKind::Pointer
+                    || has_byte_array_params(function.params.iter().skip(1))
+                    || matches!(
+                        function.returns.kind,
+                        IrTypeKind::Pointer | IrTypeKind::FixedByteArray
+                    )
             })
     });
     let requires_sync = !callback_usages.is_empty();
@@ -467,6 +476,7 @@ fn render_general_api_method(
     match function.returns.kind {
         IrTypeKind::Void => out.push_str(" {\n"),
         IrTypeKind::String | IrTypeKind::CString => out.push_str(" (string, error) {\n"),
+        IrTypeKind::FixedByteArray => out.push_str(" ([]byte, error) {\n"),
         IrTypeKind::Pointer => out.push_str(&format!(
             " {} {{\n",
             go_pointer_return_type(&function.returns).unwrap()
@@ -488,6 +498,9 @@ fn render_general_api_method(
         IrTypeKind::Void => out.push_str("        return\n"),
         IrTypeKind::String | IrTypeKind::CString => {
             out.push_str("        return \"\", errors.New(\"facade receiver is nil\")\n")
+        }
+        IrTypeKind::FixedByteArray => {
+            out.push_str("        return nil, errors.New(\"facade receiver is nil\")\n")
         }
         IrTypeKind::Pointer => out.push_str("        return nil\n"),
         _ if is_model_wrapper_return(&function.returns) => out.push_str("        return nil\n"),
@@ -538,6 +551,19 @@ fn render_general_api_method(
             out.push_str(
                 "    if raw == nil {\n        return \"\", errors.New(\"wrapper returned nil string\")\n    }\n    return C.GoString(raw), nil\n",
             );
+        }
+        IrTypeKind::FixedByteArray => {
+            let n = ir_norm::byte_array_length(&function.returns.cpp_type).unwrap_or(0);
+            out.push_str(&format!("    raw := {}\n", call));
+            for line in prep.post_call_lines {
+                out.push_str("    ");
+                out.push_str(&line);
+                out.push('\n');
+            }
+            out.push_str(&format!(
+                "    if raw == nil {{\n        return nil, errors.New(\"wrapper returned nil byte array\")\n    }}\n    defer C.{prefix}_byte_array_free(raw)\n    return C.GoBytes(unsafe.Pointer(raw), C.int({n})), nil\n",
+                prefix = config.naming.prefix
+            ));
         }
         IrTypeKind::Pointer => {
             let go_type = go_pointer_return_type(&function.returns).unwrap();
@@ -636,6 +662,19 @@ fn render_free_function(config: &PipelineContext, function: &IrFunction) -> Stri
             );
             out
         }
+        IrTypeKind::FixedByteArray => {
+            let n = ir_norm::byte_array_length(&function.returns.cpp_type).unwrap_or(0);
+            let mut out = format!("func {}({}) ([]byte, error) {{\n", go_name, params);
+            out.push_str(&indented_lines(&prep.setup_lines));
+            out.push_str(&indented_lines(&prep.defer_lines));
+            out.push_str(&format!("    raw := {}\n", call));
+            out.push_str(&indented_lines(&prep.post_call_lines));
+            out.push_str(&format!(
+                "    if raw == nil {{\n        return nil, errors.New(\"wrapper returned nil byte array\")\n    }}\n    defer C.{prefix}_byte_array_free(raw)\n    return C.GoBytes(unsafe.Pointer(raw), C.int({n})), nil\n}}\n",
+                prefix = config.naming.prefix
+            ));
+            out
+        }
         IrTypeKind::Pointer => {
             let go_type = go_pointer_return_type(&function.returns).unwrap();
             let mut out = format!("func {}({}) {} {{\n", go_name, params, go_type);
@@ -708,6 +747,7 @@ fn render_callback_method(
     match function.returns.kind {
         IrTypeKind::Void => out.push_str(" {\n"),
         IrTypeKind::String | IrTypeKind::CString => out.push_str(" (string, error) {\n"),
+        IrTypeKind::FixedByteArray => out.push_str(" ([]byte, error) {\n"),
         IrTypeKind::Pointer => out.push_str(&format!(
             " {} {{\n",
             go_pointer_return_type(&function.returns).unwrap()
@@ -729,6 +769,9 @@ fn render_callback_method(
         IrTypeKind::Void => out.push_str("        return\n"),
         IrTypeKind::String | IrTypeKind::CString => {
             out.push_str("        return \"\", errors.New(\"facade receiver is nil\")\n")
+        }
+        IrTypeKind::FixedByteArray => {
+            out.push_str("        return nil, errors.New(\"facade receiver is nil\")\n")
         }
         IrTypeKind::Pointer => out.push_str("        return nil\n"),
         _ if is_model_wrapper_return(&function.returns) => out.push_str("        return nil\n"),
@@ -754,6 +797,14 @@ fn render_callback_method(
             out.push_str(
                 "    if raw == nil {\n        return \"\", errors.New(\"wrapper returned nil string\")\n    }\n    return C.GoString(raw), nil\n",
             );
+        }
+        IrTypeKind::FixedByteArray => {
+            let n = ir_norm::byte_array_length(&function.returns.cpp_type).unwrap_or(0);
+            out.push_str(&format!("    raw := {}\n", call));
+            out.push_str(&format!(
+                "    if raw == nil {{\n        return nil, errors.New(\"wrapper returned nil byte array\")\n    }}\n    defer C.{prefix}_byte_array_free(raw)\n    return C.GoBytes(unsafe.Pointer(raw), C.int({n})), nil\n",
+                prefix = config.naming.prefix
+            ));
         }
         IrTypeKind::Pointer => {
             let go_type = go_pointer_return_type(&function.returns).unwrap();
@@ -791,6 +842,7 @@ fn render_callback_free_function(config: &PipelineContext, function: &IrFunction
     match function.returns.kind {
         IrTypeKind::Void => out.push_str(" {\n"),
         IrTypeKind::String | IrTypeKind::CString => out.push_str(" (string, error) {\n"),
+        IrTypeKind::FixedByteArray => out.push_str(" ([]byte, error) {\n"),
         IrTypeKind::Pointer => out.push_str(&format!(
             " {} {{\n",
             go_pointer_return_type(&function.returns).unwrap()
@@ -820,6 +872,14 @@ fn render_callback_free_function(config: &PipelineContext, function: &IrFunction
             out.push_str(
                 "    if raw == nil {\n        return \"\", errors.New(\"wrapper returned nil string\")\n    }\n    return C.GoString(raw), nil\n",
             );
+        }
+        IrTypeKind::FixedByteArray => {
+            let n = ir_norm::byte_array_length(&function.returns.cpp_type).unwrap_or(0);
+            out.push_str(&format!("    raw := {}\n", call));
+            out.push_str(&format!(
+                "    if raw == nil {{\n        return nil, errors.New(\"wrapper returned nil byte array\")\n    }}\n    defer C.{prefix}_byte_array_free(raw)\n    return C.GoBytes(unsafe.Pointer(raw), C.int({n})), nil\n",
+                prefix = config.naming.prefix
+            ));
         }
         IrTypeKind::Pointer => {
             let go_type = go_pointer_return_type(&function.returns).unwrap();
@@ -874,6 +934,14 @@ fn render_callback_call_prep(
                     .push(format!("defer C.free(unsafe.Pointer({c_name}))"));
                 prep.args.push(c_name);
             }
+            IrTypeKind::FixedByteArray => {
+                let c_name = format!("cArg{index}");
+                prep.setup_lines.push(format!(
+                    "{c_name} := (*C.uint8_t)(unsafe.Pointer(&{}[0]))",
+                    param.name
+                ));
+                prep.args.push(c_name);
+            }
             IrTypeKind::Reference => render_reference_arg(&mut prep, &param.ty, &param.name, index),
             IrTypeKind::Pointer => render_pointer_arg(&mut prep, &param.ty, &param.name, index),
             IrTypeKind::ExternStructReference => {
@@ -917,6 +985,14 @@ fn render_call_prep(config: &PipelineContext, params: &[&ir_norm::IrParam]) -> R
                     .push(format!("{c_name} := C.CString({})", param.name));
                 prep.defer_lines
                     .push(format!("defer C.free(unsafe.Pointer({c_name}))"));
+                prep.args.push(c_name);
+            }
+            IrTypeKind::FixedByteArray => {
+                let c_name = format!("cArg{index}");
+                prep.setup_lines.push(format!(
+                    "{c_name} := (*C.uint8_t)(unsafe.Pointer(&{}[0]))",
+                    param.name
+                ));
                 prep.args.push(c_name);
             }
             IrTypeKind::Reference => render_reference_arg(&mut prep, &param.ty, &param.name, index),
@@ -1019,6 +1095,10 @@ fn has_pointer_params<'a>(mut params: impl Iterator<Item = &'a ir_norm::IrParam>
                 | IrTypeKind::ExternStructReference
         )
     })
+}
+
+fn has_byte_array_params<'a>(mut params: impl Iterator<Item = &'a ir_norm::IrParam>) -> bool {
+    params.any(|param| param.ty.kind == IrTypeKind::FixedByteArray)
 }
 
 fn render_model_arg(
@@ -1135,6 +1215,7 @@ fn go_param_supported(config: &PipelineContext, ty: &IrType) -> bool {
 fn go_param_type(config: &PipelineContext, ty: &IrType) -> Option<String> {
     match ty.kind {
         IrTypeKind::String | IrTypeKind::CString => Some("string".to_string()),
+        IrTypeKind::FixedByteArray => Some("[]byte".to_string()),
         IrTypeKind::Primitive => go_type_for_ir(ty).map(str::to_string),
         IrTypeKind::Reference => go_type_for_reference(ty).map(|go_type| format!("*{go_type}")),
         IrTypeKind::Pointer => {
@@ -1162,7 +1243,10 @@ fn go_param_type(config: &PipelineContext, ty: &IrType) -> Option<String> {
 
 fn go_return_supported(_config: &PipelineContext, ty: &IrType) -> bool {
     ty.kind == IrTypeKind::Void
-        || matches!(ty.kind, IrTypeKind::String | IrTypeKind::CString)
+        || matches!(
+            ty.kind,
+            IrTypeKind::String | IrTypeKind::CString | IrTypeKind::FixedByteArray
+        )
         || (ty.kind == IrTypeKind::Primitive && go_type_for_ir(ty).is_some())
         || (ty.kind == IrTypeKind::Pointer && go_pointer_return_type(ty).is_some())
         || matches!(ty.kind, IrTypeKind::ModelPointer | IrTypeKind::ModelView)

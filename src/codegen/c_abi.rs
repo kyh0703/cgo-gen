@@ -297,6 +297,17 @@ pub fn render_header(ctx: &PipelineContext, ir: &IrModule) -> String {
         ));
     }
 
+    if ir
+        .functions
+        .iter()
+        .any(|function| function.returns.kind == IrTypeKind::FixedByteArray)
+    {
+        out.push_str(&format!(
+            "void {}_byte_array_free(uint8_t* value);\n\n",
+            ctx.naming.prefix
+        ));
+    }
+
     out.push_str("#ifdef __cplusplus\n}\n#endif\n\n");
     out.push_str(&format!("#endif /* {guard} */\n"));
     out
@@ -336,6 +347,14 @@ pub fn render_source(ctx: &PipelineContext, ir: &IrModule) -> String {
         .any(|function| function.returns.kind == IrTypeKind::String)
     {
         out.push_str(&render_string_free(&ctx));
+    }
+
+    if ir
+        .functions
+        .iter()
+        .any(|function| function.returns.kind == IrTypeKind::FixedByteArray)
+    {
+        out.push_str(&render_byte_array_free(&ctx));
     }
 
     out
@@ -468,6 +487,9 @@ fn render_callable_body(function: &IrFunction, target: &str, arg_start: usize) -
             "    std::string result = {}({});\n    char* buffer = static_cast<char*>(std::malloc(result.size() + 1));\n    if (buffer == nullptr) {{\n        return nullptr;\n    }}\n    std::memcpy(buffer, result.c_str(), result.size() + 1);\n    return buffer;\n",
             target, args
         ),
+        IrTypeKind::FixedByteArray => format!(
+            "    auto _tmp = {target}({args});\n    uint8_t* _r = static_cast<uint8_t*>(std::malloc(sizeof(_tmp)));\n    if (_r == nullptr) {{\n        return nullptr;\n    }}\n    std::memcpy(_r, &_tmp, sizeof(_tmp));\n    return _r;\n"
+        ),
         IrTypeKind::ModelView => render_model_view_return(function, target, &args),
         IrTypeKind::ModelValue => format!(
             "    return reinterpret_cast<{}>(new {}({}({})));\n",
@@ -486,11 +508,13 @@ fn render_callable_body(function: &IrFunction, target: &str, arg_start: usize) -
 
 fn render_field_getter_body(function: &IrFunction, receiver: &str, field_name: &str) -> String {
     match function.returns.kind {
+        IrTypeKind::FixedByteArray => format!(
+            "    uint8_t* _r = static_cast<uint8_t*>(std::malloc(sizeof({receiver}->{field_name})));\n    if (_r == nullptr) {{\n        return nullptr;\n    }}\n    std::memcpy(_r, {receiver}->{field_name}, sizeof({receiver}->{field_name}));\n    return _r;\n"
+        ),
         IrTypeKind::ModelValue => format!(
-            "    return reinterpret_cast<{}>(new decltype({receiver}->{})({receiver}->{}));\n",
+            "    return reinterpret_cast<{}>(new {}({receiver}->{field_name}));\n",
             function.returns.c_type,
-            field_name,
-            field_name
+            base_model_cpp_type(&function.returns.cpp_type),
         ),
         _ => format!("    return {receiver}->{};\n", field_name),
     }
@@ -511,10 +535,12 @@ fn render_field_setter_body(function: &IrFunction, receiver: &str, field_name: &
                 field_name, field_name, copy_len, field_name, copy_len
             )
         }
+        IrTypeKind::FixedByteArray => format!(
+            "    if (value == nullptr) {{\n        return;\n    }}\n    std::memcpy({receiver}->{field_name}, value, sizeof({receiver}->{field_name}));\n"
+        ),
         IrTypeKind::ModelValue => format!(
-            "    {receiver}->{} = *reinterpret_cast<decltype({receiver}->{})* >(value);\n",
-            field_name,
-            field_name
+            "    {receiver}->{field_name} = *reinterpret_cast<{}*>(value);\n",
+            base_model_cpp_type(&value_param.ty.cpp_type)
         ),
         _ => format!("    {receiver}->{} = value;\n", field_name),
     }
@@ -570,6 +596,7 @@ fn render_cpp_arg(ty: IrType, name: &str) -> String {
             "reinterpret_cast<{}*>({name})",
             base_model_cpp_type(&ty.cpp_type)
         ),
+        IrTypeKind::FixedByteArray => name.to_string(),
         _ => name.to_string(),
     }
 }
@@ -809,6 +836,13 @@ fn ir_uses_struct_timeval(ir: &IrModule) -> bool {
 fn render_string_free(ctx: &PipelineContext) -> String {
     format!(
         "void {}_string_free(char* value) {{\n    std::free(value);\n}}\n",
+        ctx.naming.prefix
+    )
+}
+
+fn render_byte_array_free(ctx: &PipelineContext) -> String {
+    format!(
+        "void {}_byte_array_free(uint8_t* value) {{\n    std::free(value);\n}}\n",
         ctx.naming.prefix
     )
 }
