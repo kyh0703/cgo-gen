@@ -582,20 +582,20 @@ naming:
             .contains("bool cgowrap_Api_GetThing(ApiHandle* self, int id, ThingModelHandle* out);")
     );
     assert!(raw_source.contains("cgowrap_Api_GetThing"));
-    assert!(!raw_header.contains("SaveUnknown"));
-    assert!(!raw_source.contains("SaveUnknown"));
-    assert!(ir.support.skipped_declarations.iter().any(|item| {
+    assert!(raw_header.contains(
+        "bool cgowrap_Api_SaveUnknown(ApiHandle* self, UnknownThingHandle* value);"
+    ));
+    assert!(raw_source.contains("cgowrap_Api_SaveUnknown"));
+    assert!(raw_source.contains("*reinterpret_cast<UnknownThing*>(value)"));
+    assert!(!ir.support.skipped_declarations.iter().any(|item| {
         item.cpp_name == "Api::SaveUnknown"
-            && item.reason.contains("UnknownThing")
-            && item.reason.contains("by-value")
     }));
     assert!(ir_yaml.contains("cpp_name: Api::SaveUnknown"));
     assert!(ir_yaml.contains("cpp_name: Api::BuildUnknown"));
-    assert!(ir_yaml.contains("raw-unsafe by-value"));
     assert!(go_facade.contains("func (a *Api) Count() int {"));
     assert!(go_facade.contains("func (a *Api) GetThing(id int, out *ThingModel) bool {"));
-    assert!(!go_facade.contains("SaveUnknown("));
-    assert!(!go_facade.contains("BuildUnknown("));
+    assert!(go_facade.contains("func (a *Api) SaveUnknown(value *UnknownThing) bool {"));
+    assert!(go_facade.contains("func (a *Api) BuildUnknown() *UnknownThing {"));
 }
 
 #[test]
