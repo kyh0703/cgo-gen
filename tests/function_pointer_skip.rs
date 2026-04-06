@@ -1,6 +1,6 @@
 use std::{env, fs, path::PathBuf};
 
-use cgo_gen::{config::Config, ir, parser};
+use cgo_gen::{config::Config, ir, parser, pipeline::context::PipelineContext};
 
 fn temp_dir(label: &str) -> PathBuf {
     let mut path = env::temp_dir();
@@ -50,8 +50,9 @@ naming:
     .unwrap();
 
     let config = Config::load(&config_path).unwrap();
-    let parsed = parser::parse(&config).unwrap();
-    let ir = ir::normalize(&config, &parsed).unwrap();
+    let ctx = PipelineContext::new(config);
+    let parsed = parser::parse(&ctx).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
 
     assert!(ir.functions.iter().any(|item| item.name == "cgowrap_add"));
     assert!(
@@ -119,8 +120,9 @@ naming:
     .unwrap();
 
     let config = Config::load(&config_path).unwrap();
-    let parsed = parser::parse(&config).unwrap();
-    let ir = ir::normalize(&config, &parsed).unwrap();
+    let ctx = PipelineContext::new(config);
+    let parsed = parser::parse(&ctx).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
 
     assert!(
         ir.functions

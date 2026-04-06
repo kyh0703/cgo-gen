@@ -3,6 +3,7 @@ use cgo_gen::{
     domain::kind::IrTypeKind,
     generator::{render_go_structs, render_header, render_source},
     ir, parser,
+    pipeline::context::PipelineContext,
 };
 
 fn write_fixture(name: &str, header: &str) -> std::path::PathBuf {
@@ -40,8 +41,9 @@ fn normalizes_timeval_pointer_and_reference_params() {
     );
 
     let config = Config::load(root.join("config.yaml")).unwrap();
-    let parsed = parser::parse(&config).unwrap();
-    let ir = ir::normalize(&config, &parsed).unwrap();
+    let ctx = PipelineContext::new(config);
+    let parsed = parser::parse(&ctx).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
 
     let by_ptr = ir
         .functions
@@ -86,15 +88,16 @@ fn renders_go_facade_and_cpp_wrapper_for_timeval_params() {
     );
 
     let config = Config::load(root.join("config.yaml")).unwrap();
-    let parsed = parser::parse(&config).unwrap();
-    let ir = ir::normalize(&config, &parsed).unwrap();
+    let ctx = PipelineContext::new(config);
+    let parsed = parser::parse(&ctx).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
 
-    let header = render_header(&config, &ir);
+    let header = render_header(&ctx, &ir);
     assert!(header.contains("#include <sys/time.h>"));
     assert!(header.contains("bool cgowrap_TakeByPtr(struct timeval* value);"));
     assert!(header.contains("bool cgowrap_TakeByRef(struct timeval* value);"));
 
-    let go = render_go_structs(&config, &ir).unwrap();
+    let go = render_go_structs(&ctx, &ir).unwrap();
     assert_eq!(go.len(), 1);
     assert!(go[0].contents.contains("#include <sys/time.h>"));
     assert!(
@@ -114,7 +117,7 @@ fn renders_go_facade_and_cpp_wrapper_for_timeval_params() {
     );
     assert!(go[0].contents.contains("panic(\"value reference is nil\")"));
 
-    let source = render_source(&config, &ir);
+    let source = render_source(&ctx, &ir);
     assert!(source.contains("return TakeByPtr(value);"));
     assert!(source.contains("return TakeByRef(*value);"));
 }

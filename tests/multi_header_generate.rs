@@ -1,6 +1,6 @@
 use std::{env, fs, path::PathBuf};
 
-use cgo_gen::{config::Config, generator};
+use cgo_gen::{config::Config, generator, pipeline::context::PipelineContext};
 
 fn temp_dir(label: &str) -> PathBuf {
     let mut path = env::temp_dir();
@@ -59,7 +59,8 @@ naming:
     .unwrap();
 
     let config = Config::load(&config_path).unwrap();
-    generator::generate_all(&config, true).unwrap();
+    let ctx = PipelineContext::new(config.clone());
+    generator::generate_all(&ctx, true).unwrap();
 
     let output_dir = root.join("gen");
     let alpha_header = output_dir.join("alpha_thing_wrapper.h");
@@ -148,7 +149,8 @@ naming:
     .unwrap();
 
     let config = Config::load(&config_path).unwrap();
-    generator::generate_all(&config, true).unwrap();
+    let ctx = PipelineContext::new(config.clone());
+    generator::generate_all(&ctx, true).unwrap();
 
     let output_dir = root.join("gen");
     let model_go = fs::read_to_string(output_dir.join("model_thing_wrapper.go")).unwrap();
@@ -192,7 +194,8 @@ naming:
     .unwrap();
 
     let config = Config::load(&config_path).unwrap();
-    generator::generate_all(&config, true).unwrap();
+    let ctx = PipelineContext::new(config.clone());
+    generator::generate_all(&ctx, true).unwrap();
 
     let output_dir = root.join("gen");
     let go_models = fs::read_to_string(output_dir.join("model_types_wrapper.go")).unwrap();
@@ -235,7 +238,8 @@ naming:
     .unwrap();
 
     let config = Config::load(&config_path).unwrap();
-    generator::generate_all(&config, true).unwrap();
+    let ctx = PipelineContext::new(config.clone());
+    generator::generate_all(&ctx, true).unwrap();
 
     let go_path = root.join("gen/thing_wrapper.go");
     assert!(

@@ -1,6 +1,6 @@
 use std::{env, fs, path::PathBuf};
 
-use cgo_gen::{config::Config, generator, ir, parser};
+use cgo_gen::{config::Config, generator, ir, parser, pipeline::context::PipelineContext};
 
 fn temp_output_dir(label: &str) -> PathBuf {
     let mut path = env::temp_dir();
@@ -35,9 +35,10 @@ fn checked_in_real_sil_model_config_generates_go_wrapper_when_sources_exist() {
     let header = config.input.dir.as_ref().unwrap().join("IsAAMaster.h");
     assert!(header.exists());
 
-    let prepared = generator::prepare_config(&config).unwrap();
-    let mut scoped = prepared.scoped_to_header(header);
-    scoped.output.dir = temp_output_dir("generate");
+    let prepared = generator::prepare_config(&PipelineContext::new(config)).unwrap();
+    let scoped = prepared
+        .scoped_to_header(header)
+        .with_output_dir(temp_output_dir("generate"));
 
     let parsed = parser::parse(&scoped).unwrap();
     let ir = ir::normalize(&scoped, &parsed).unwrap();

@@ -10,80 +10,8 @@ use crate::{
         CppCallbackTypedef, CppClass, CppConstructor, CppEnum, CppField, CppFunction, CppMethod,
         CppParam, ParsedApi,
     },
-    pipeline::context::PipelineInput,
+    pipeline::context::PipelineContext,
 };
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum IrFunctionKind {
-    Constructor,
-    Destructor,
-    Method,
-    Function,
-}
-
-impl IrFunctionKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Constructor => "constructor",
-            Self::Destructor => "destructor",
-            Self::Method => "method",
-            Self::Function => "function",
-        }
-    }
-}
-
-impl PartialEq<&str> for IrFunctionKind {
-    fn eq(&self, other: &&str) -> bool {
-        self.as_str() == *other
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum IrTypeKind {
-    Void,
-    Primitive,
-    Opaque,
-    String,
-    CString,
-    Pointer,
-    Reference,
-    ExternStructPointer,
-    ExternStructReference,
-    ModelReference,
-    ModelPointer,
-    ModelView,
-    ModelValue,
-    Callback,
-}
-
-impl IrTypeKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Void => "void",
-            Self::Primitive => "primitive",
-            Self::Opaque => "opaque",
-            Self::String => "string",
-            Self::CString => "c_string",
-            Self::Pointer => "pointer",
-            Self::Reference => "reference",
-            Self::ExternStructPointer => "extern_struct_pointer",
-            Self::ExternStructReference => "extern_struct_reference",
-            Self::ModelReference => "model_reference",
-            Self::ModelPointer => "model_pointer",
-            Self::ModelView => "model_view",
-            Self::ModelValue => "model_value",
-            Self::Callback => "callback",
-        }
-    }
-}
-
-impl PartialEq<&str> for IrTypeKind {
-    fn eq(&self, other: &&str) -> bool {
-        self.as_str() == *other
-    }
-}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct IrModule {
@@ -177,8 +105,7 @@ pub struct SkippedDeclaration {
     pub reason: String,
 }
 
-pub fn normalize<T: PipelineInput + ?Sized>(input: &T, api: &ParsedApi) -> Result<IrModule> {
-    let ctx = input.to_pipeline_context();
+pub fn normalize(ctx: &PipelineContext, api: &ParsedApi) -> Result<IrModule> {
     let config = &ctx.config;
     let module = config.naming.prefix.clone();
     let mut opaque_types = Vec::new();
@@ -494,7 +421,10 @@ fn normalize_struct_fields(
         else {
             continue;
         };
-        if field_ty.kind != IrTypeKind::Primitive && field_ty.kind != IrTypeKind::ModelValue {
+        if field_ty.kind != IrTypeKind::Primitive
+            && field_ty.kind != IrTypeKind::ModelValue
+            && field_ty.kind != IrTypeKind::CString
+        {
             continue;
         }
 
@@ -862,7 +792,8 @@ fn normalize_return_type_with_canonical(
     if matches!(
         ty.kind,
         IrTypeKind::ModelReference | IrTypeKind::ModelPointer
-    ) {
+    ) && !is_abstract_model_type(&ty.cpp_type, abstract_types)
+    {
         ty.kind = IrTypeKind::ModelView;
     }
     Ok(ty)
@@ -964,9 +895,11 @@ fn is_raw_unsafe_by_value_param_type(
     let display = display.trim();
     let canonical = canonical.trim();
 
-    if normalize_type_with_canonical(&Config::default(), display, canonical, callback_names).is_ok()
+    if let Ok(ty) =
+        normalize_type_with_canonical(&Config::default(), display, canonical, callback_names)
     {
-        return ty.kind == IrTypeKind::ModelValue;
+        let _ = ty;
+        return false;
     }
 
     [display, canonical]
@@ -1611,7 +1544,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(ty.kind, "model_pointer");
+        assert_eq!(ty.kind, IrTypeKind::ModelPointer);
         assert_eq!(ty.c_type, "DBHandlerHandle*");
     }
 
@@ -1620,7 +1553,7 @@ mod tests {
         let callback_names = BTreeSet::new();
         let ty = normalize_type("char[33]", &callback_names).unwrap();
 
-        assert_eq!(ty.kind, "c_string");
+        assert_eq!(ty.kind, IrTypeKind::CString);
         assert_eq!(ty.cpp_type, "char[33]");
         assert_eq!(ty.c_type, "const char*");
         assert_eq!(ty.handle, None);

@@ -1,17 +1,18 @@
 use cgo_gen::{
     config::Config,
     generator::{render_header, render_source},
-    ir, parser,
+    ir, parser, pipeline::context::PipelineContext,
 };
 
 #[test]
 fn disambiguates_overloaded_free_functions_with_signature_suffixes() {
     let config = Config::load("tests/fixtures/overload/free_function.yaml").unwrap();
-    let parsed = parser::parse(&config).unwrap();
+    let ctx = PipelineContext::new(config.clone());
+    let parsed = parser::parse(&ctx).unwrap();
 
     assert_eq!(parsed.functions.len(), 2);
 
-    let ir = ir::normalize(&config, &parsed).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
     assert!(
         ir.functions
             .iter()
@@ -23,8 +24,8 @@ fn disambiguates_overloaded_free_functions_with_signature_suffixes() {
             .any(|item| item.name == "cgowrap_clash_add__double_double")
     );
 
-    let header = render_header(&config, &ir);
-    let source = render_source(&config, &ir);
+    let header = render_header(&ctx, &ir);
+    let source = render_source(&ctx, &ir);
     assert!(header.contains("int cgowrap_clash_add__int_int(int lhs, int rhs);"));
     assert!(header.contains("double cgowrap_clash_add__double_double(double lhs, double rhs);"));
     assert!(source.contains("int cgowrap_clash_add__int_int(int lhs, int rhs)"));
@@ -34,12 +35,13 @@ fn disambiguates_overloaded_free_functions_with_signature_suffixes() {
 #[test]
 fn disambiguates_overloaded_methods_with_signature_suffixes() {
     let config = Config::load("tests/fixtures/overload/method.yaml").unwrap();
-    let parsed = parser::parse(&config).unwrap();
+    let ctx = PipelineContext::new(config.clone());
+    let parsed = parser::parse(&ctx).unwrap();
 
     assert_eq!(parsed.classes.len(), 1);
     assert_eq!(parsed.classes[0].methods.len(), 2);
 
-    let ir = ir::normalize(&config, &parsed).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
     assert!(
         ir.functions
             .iter()
@@ -51,8 +53,8 @@ fn disambiguates_overloaded_methods_with_signature_suffixes() {
             .any(|item| item.name == "cgowrap_clash_widget_set__double_mut")
     );
 
-    let header = render_header(&config, &ir);
-    let source = render_source(&config, &ir);
+    let header = render_header(&ctx, &ir);
+    let source = render_source(&ctx, &ir);
     assert!(
         header
             .contains("int cgowrap_clash_widget_set__int_mut(clashWidgetHandle* self, int value);")
@@ -94,8 +96,9 @@ output:
     .unwrap();
 
     let config = Config::load(root.join("config.yaml")).unwrap();
-    let parsed = parser::parse(&config).unwrap();
-    let ir = ir::normalize(&config, &parsed).unwrap();
+    let ctx = PipelineContext::new(config);
+    let parsed = parser::parse(&ctx).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
 
     assert!(
         ir.functions
