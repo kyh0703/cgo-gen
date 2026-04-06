@@ -270,6 +270,93 @@ output:
 }
 
 #[test]
+fn generated_wrapper_compiles_for_char_array_field_accessors() {
+    let root = temp_output_dir("char_array_fields");
+    fs::create_dir_all(root.join("include")).unwrap();
+    fs::write(
+        root.join("include/Agent.hpp"),
+        r#"
+        struct Agent {
+            char login_id[33];
+            char pbx_login_id[11];
+        };
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("config.yaml"),
+        r#"
+version: 1
+input:
+  headers:
+    - include/Agent.hpp
+output:
+  dir: out
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(root.join("config.yaml")).unwrap();
+    let parsed = parser::parse(&config).unwrap();
+    let ir = ir::normalize(&config, &parsed).unwrap();
+    generator::generate(&config, &ir, true).unwrap();
+
+    let header = fs::read_to_string(config.output_dir().join(&config.output.header)).unwrap();
+    let go_wrapper = fs::read_to_string(config.output_dir().join(config.go_filename(""))).unwrap();
+
+    assert!(!header.contains("char[33]Handle"));
+    assert!(!header.contains("char[11]Handle"));
+    assert!(header.contains("const char* cgowrap_Agent_GetLoginId(const AgentHandle* self);"));
+    assert!(header.contains("void cgowrap_Agent_SetLoginId(AgentHandle* self, const char* value);"));
+    assert!(go_wrapper.contains("func (a *Agent) GetLoginId() (string, error) {"));
+    assert!(go_wrapper.contains("func (a *Agent) SetLoginId(value string) {"));
+
+    let smoke_cpp = config.output.dir.join("smoke.cpp");
+    fs::write(
+        &smoke_cpp,
+        format!(
+            r#"
+        #include "{}"
+        #include <cstring>
+        int main() {{
+            AgentHandle* agent = cgowrap_Agent_new();
+            if (agent == nullptr) return 10;
+            cgowrap_Agent_SetLoginId(agent, "agent-1001");
+            cgowrap_Agent_SetPbxLoginId(agent, "101");
+            if (std::strcmp(cgowrap_Agent_GetLoginId(agent), "agent-1001") != 0) return 11;
+            if (std::strcmp(cgowrap_Agent_GetPbxLoginId(agent), "101") != 0) return 12;
+            cgowrap_Agent_delete(agent);
+            return 0;
+        }}
+        "#,
+            config.output.header
+        ),
+    )
+    .unwrap();
+
+    let binary = config.output.dir.join("smoke");
+    let compiler = pick_clangxx();
+    let status = Command::new(&compiler)
+        .current_dir(&root)
+        .arg("-std=c++17")
+        .arg(config.output_dir().join(&config.output.source))
+        .arg(&smoke_cpp)
+        .arg("-I")
+        .arg(config.output_dir())
+        .arg("-I")
+        .arg(root.join("include"))
+        .arg("-o")
+        .arg(&binary)
+        .status()
+        .unwrap();
+
+    assert!(status.success(), "generated wrapper did not compile/link");
+
+    let status = Command::new(&binary).status().unwrap();
+    assert!(status.success(), "generated smoke binary failed: {status}");
+}
+
+#[test]
 fn generated_wrapper_compiles_for_model_view_snapshot_copy_semantics() {
     let root = temp_output_dir("model_view_snapshot");
     fs::create_dir_all(root.join("include")).unwrap();
