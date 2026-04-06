@@ -493,8 +493,8 @@ naming:
 }
 
 #[test]
-fn skips_raw_unsafe_by_value_internal_types_without_aborting_supported_facade_output() {
-    let root = temp_output_dir("unknown-model-by-value-skip");
+fn supports_by_value_internal_types_without_aborting_supported_facade_output() {
+    let root = temp_output_dir("unknown-model-by-value-support");
     let include_dir = root.join("include");
     fs::create_dir_all(&include_dir).unwrap();
 
