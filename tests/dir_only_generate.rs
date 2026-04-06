@@ -1,6 +1,6 @@
 use std::{env, fs, path::PathBuf};
 
-use cgo_gen::{config::Config, generator};
+use cgo_gen::{config::Config, generator, pipeline::context::PipelineContext};
 
 fn temp_dir(label: &str) -> PathBuf {
     let mut path = env::temp_dir();
@@ -60,7 +60,8 @@ output:
     .unwrap();
 
     let config = Config::load(root.join("config.yaml")).unwrap();
-    generator::generate_all(&config, true).unwrap();
+    let ctx = PipelineContext::new(config.clone());
+    generator::generate_all(&ctx, true).unwrap();
 
     let output_dir = root.join("gen");
 
@@ -101,7 +102,8 @@ output:
     .unwrap();
 
     let config = Config::load(root.join("config.yaml")).unwrap();
-    generator::generate_all(&config, true).unwrap();
+    let ctx = PipelineContext::new(config.clone());
+    generator::generate_all(&ctx, true).unwrap();
 
     assert!(root.join("gen/test").is_dir());
     assert!(root.join("gen/test/thing_wrapper.go").exists());
@@ -155,7 +157,8 @@ output:
     .unwrap();
 
     let config = Config::load(root.join("config.yaml")).unwrap();
-    generator::generate_all(&config, true).unwrap();
+    let ctx = PipelineContext::new(config.clone());
+    generator::generate_all(&ctx, true).unwrap();
 
     let output_dir = root.join("gen");
     assert!(output_dir.join("api_wrapper.h").exists());

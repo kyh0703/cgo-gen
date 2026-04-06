@@ -22,9 +22,10 @@ fn checked_in_simple_go_struct_example_uses_handle_backed_model_and_reference_cu
     let example_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/simple-go-struct");
     let mut config = Config::load(example_dir.join("config.yaml")).unwrap();
     config.output.dir = temp_output_dir("generate");
+    let ctx = PipelineContext::new(config.clone());
 
     assert_eq!(config.input.headers.len(), 2);
-    generator::generate_all(&config, true).unwrap();
+    generator::generate_all(&ctx, true).unwrap();
 
     let go_model = fs::read_to_string(config.output.dir.join("thing_model_wrapper.go")).unwrap();
     let go_facade = fs::read_to_string(config.output.dir.join("thing_api_wrapper.go")).unwrap();
@@ -48,10 +49,10 @@ fn checked_in_simple_go_struct_example_uses_handle_backed_model_and_reference_cu
     assert!(main_go.contains("api.SelectThing(1, item)"));
     assert!(main_go.contains("api.NextThing(&pos, item)"));
 
-    let mut with_module = PipelineContext::from_config_path(example_dir.join("config.yaml"))
+    let with_module = PipelineContext::from_config_path(example_dir.join("config.yaml"))
         .unwrap()
-        .with_go_module(Some("example.com/demo/pkg".to_string()));
-    with_module.output.dir = temp_output_dir("generate_with_module");
+        .with_go_module(Some("example.com/demo/pkg".to_string()))
+        .with_output_dir(temp_output_dir("generate_with_module"));
     generator::generate_all(&with_module, true).unwrap();
 
     let build_flags = fs::read_to_string(with_module.output.dir.join("build_flags.go")).unwrap();

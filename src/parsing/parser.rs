@@ -12,8 +12,8 @@ use clang_sys::*;
 use serde::Serialize;
 
 use crate::{
-    compiler,
-    pipeline::context::{PipelineContext, PipelineInput},
+    parsing::compiler,
+    pipeline::context::PipelineContext,
 };
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -145,8 +145,7 @@ impl ParsedApi {
     }
 }
 
-pub fn parse<T: PipelineInput + ?Sized>(input: &T) -> Result<ParsedApi> {
-    let ctx = input.to_pipeline_context();
+pub fn parse(ctx: &PipelineContext) -> Result<ParsedApi> {
     let mut api = ParsedApi::default();
     let filter = ParseFilter::from_context(&ctx);
     let translation_units = compiler::collect_translation_units(&ctx.config)?;
