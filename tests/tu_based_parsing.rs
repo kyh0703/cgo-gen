@@ -1,6 +1,6 @@
 use std::{env, fs, path::PathBuf};
 
-use cgo_gen::{compiler, config::Config, parser};
+use cgo_gen::{compiler, config::Config, parser, pipeline::context::PipelineContext};
 
 fn temp_fixture_dir(label: &str) -> PathBuf {
     let mut path = env::temp_dir();
@@ -304,8 +304,8 @@ output:
     .unwrap();
 
     let config = Config::load(fixture.join("config.yaml")).unwrap();
-    let scoped = config.scoped_to_header(fixture.join("include/entry.hpp"));
-    let units = compiler::collect_translation_units(&scoped).unwrap();
+    let scoped = PipelineContext::new(config).scoped_to_header(fixture.join("include/entry.hpp"));
+    let units = compiler::collect_translation_units(&scoped.config).unwrap();
     let parsed = parser::parse(&scoped).unwrap();
 
     assert_eq!(units.len(), 1);
