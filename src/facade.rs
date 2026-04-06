@@ -1026,7 +1026,7 @@ fn render_model_arg(
     if ty.kind != "model_pointer" {
         prep.setup_lines.push(format!("if {name} == nil {{"));
         prep.setup_lines
-            .push("    panic(\"required facade/model argument cannot be nil\")".to_string());
+            .push("    panic(\"reference facade/model argument cannot be nil\")".to_string());
         prep.setup_lines.push("}".to_string());
     }
     prep.setup_lines.push(format!("if {name} != nil {{"));
