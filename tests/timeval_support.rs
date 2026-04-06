@@ -1,5 +1,6 @@
 use cgo_gen::{
     config::Config,
+    domain::kind::IrTypeKind,
     generator::{render_go_structs, render_header, render_source},
     ir, parser,
 };
@@ -47,7 +48,7 @@ fn normalizes_timeval_pointer_and_reference_params() {
         .iter()
         .find(|function| function.cpp_name == "TakeByPtr")
         .unwrap();
-    assert_eq!(by_ptr.params[0].ty.kind, "extern_struct_pointer");
+    assert_eq!(by_ptr.params[0].ty.kind, IrTypeKind::ExternStructPointer);
     assert_eq!(by_ptr.params[0].ty.c_type, "struct timeval*");
     assert_eq!(by_ptr.params[0].ty.handle, None);
 
@@ -56,7 +57,7 @@ fn normalizes_timeval_pointer_and_reference_params() {
         .iter()
         .find(|function| function.cpp_name == "TakeByRef")
         .unwrap();
-    assert_eq!(by_ref.params[0].ty.kind, "extern_struct_reference");
+    assert_eq!(by_ref.params[0].ty.kind, IrTypeKind::ExternStructReference);
     assert_eq!(by_ref.params[0].ty.c_type, "struct timeval*");
     assert_eq!(by_ref.params[0].ty.handle, None);
 
@@ -65,7 +66,7 @@ fn normalizes_timeval_pointer_and_reference_params() {
         .iter()
         .find(|function| function.cpp_name == "TakeAlias")
         .unwrap();
-    assert_eq!(alias.params[0].ty.kind, "extern_struct_pointer");
+    assert_eq!(alias.params[0].ty.kind, IrTypeKind::ExternStructPointer);
     assert_eq!(alias.params[0].ty.cpp_type, "timeval*");
     assert_eq!(alias.params[0].ty.c_type, "struct timeval*");
     assert_eq!(alias.params[0].ty.handle, None);
