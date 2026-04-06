@@ -11,7 +11,10 @@ use anyhow::{Result, anyhow, bail};
 use clang_sys::*;
 use serde::Serialize;
 
-use crate::{compiler, config::Config};
+use crate::{
+    compiler,
+    pipeline::context::{PipelineContext, PipelineInput},
+};
 
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct ParsedApi {
@@ -142,10 +145,11 @@ impl ParsedApi {
     }
 }
 
-pub fn parse(config: &Config) -> Result<ParsedApi> {
+pub fn parse<T: PipelineInput + ?Sized>(input: &T) -> Result<ParsedApi> {
+    let ctx = input.to_pipeline_context();
     let mut api = ParsedApi::default();
-    let filter = ParseFilter::from_config(config);
-    let translation_units = compiler::collect_translation_units(config)?;
+    let filter = ParseFilter::from_context(&ctx);
+    let translation_units = compiler::collect_translation_units(&ctx.config)?;
     let mut discovered_headers = BTreeSet::new();
     unsafe {
         let index = clang_createIndex(0, 0);
@@ -155,7 +159,7 @@ pub fn parse(config: &Config) -> Result<ParsedApi> {
 
         for translation_unit_path in &translation_units {
             compiler::ensure_header_exists(translation_unit_path)?;
-            let args = compiler::collect_clang_args(config, translation_unit_path)?;
+            let args = compiler::collect_clang_args(&ctx.config, translation_unit_path)?;
             let c_header = CString::new(translation_unit_path.to_string_lossy().to_string())?;
             let c_args = args
                 .iter()
@@ -192,7 +196,7 @@ pub fn parse(config: &Config) -> Result<ParsedApi> {
 
             let diagnostics = collect_diagnostics(translation_unit);
             if !diagnostics.is_empty() {
-                if config.input.allow_diagnostics {
+                if ctx.input.allow_diagnostics {
                     clang_disposeTranslationUnit(translation_unit);
                     continue;
                 }
@@ -210,9 +214,8 @@ pub fn parse(config: &Config) -> Result<ParsedApi> {
         clang_disposeIndex(index);
     }
 
-    api.headers = if !config.input.headers.is_empty() {
-        config
-            .input
+    api.headers = if !ctx.input.headers.is_empty() {
+        ctx.input
             .headers
             .iter()
             .map(|path| path.display().to_string())
@@ -263,11 +266,11 @@ struct ParseFilter {
 }
 
 impl ParseFilter {
-    fn from_config(config: &Config) -> Self {
+    fn from_context(ctx: &PipelineContext) -> Self {
         Self {
-            main_file_only: config.input.dir.is_none(),
-            owned_dir: config.input.dir.clone(),
-            target_header: config.target_header.clone(),
+            main_file_only: ctx.input.dir.is_none(),
+            owned_dir: ctx.input.dir.clone(),
+            target_header: ctx.target_header.clone(),
         }
     }
 }
