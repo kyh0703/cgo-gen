@@ -425,6 +425,7 @@ fn normalize_struct_fields(
         if field_ty.kind != IrTypeKind::Primitive
             && field_ty.kind != IrTypeKind::ModelValue
             && field_ty.kind != IrTypeKind::CString
+            && field_ty.kind != IrTypeKind::FixedByteArray
         {
             continue;
         }
@@ -953,6 +954,7 @@ fn normalize_type_with_canonical(
                     | IrTypeKind::Pointer
                     | IrTypeKind::String
                     | IrTypeKind::CString
+                    | IrTypeKind::FixedByteArray
             )
         {
             canonical_ty.cpp_type = trimmed.to_string();
@@ -1018,6 +1020,15 @@ fn normalize_type(cpp_type: &str, callback_names: &BTreeSet<String>) -> Result<I
             kind: IrTypeKind::CString,
             cpp_type: trimmed.to_string(),
             c_type: "const char*".to_string(),
+            handle: None,
+        });
+    }
+
+    if is_unsigned_char_array_type(trimmed) {
+        return Ok(IrType {
+            kind: IrTypeKind::FixedByteArray,
+            cpp_type: trimmed.to_string(),
+            c_type: "uint8_t*".to_string(),
             handle: None,
         });
     }
@@ -1296,6 +1307,10 @@ fn type_signature_token(ty: &IrType) -> String {
                 "mut_c_str".to_string()
             }
         }
+        IrTypeKind::FixedByteArray => {
+            let n = byte_array_length(&ty.cpp_type).unwrap_or(0);
+            format!("byte_array_{n}")
+        }
         IrTypeKind::String => "string".to_string(),
         IrTypeKind::Pointer => format!(
             "ptr_{}",
@@ -1445,6 +1460,27 @@ fn is_char_array_type(value: &str) -> bool {
     !length.is_empty() && length.chars().all(|ch| ch.is_ascii_digit())
 }
 
+fn is_unsigned_char_array_type(value: &str) -> bool {
+    let trimmed = value.trim();
+    if let Some(inner) = trimmed.strip_prefix("const ") {
+        return is_unsigned_char_array_type(inner);
+    }
+    let Some(prefix) = trimmed.strip_prefix("unsigned char[") else {
+        return false;
+    };
+    let Some(length) = prefix.strip_suffix(']') else {
+        return false;
+    };
+    !length.is_empty() && length.chars().all(|ch| ch.is_ascii_digit())
+}
+
+pub fn byte_array_length(cpp_type: &str) -> Option<usize> {
+    let trimmed = cpp_type.trim().trim_start_matches("const ").trim();
+    let prefix = trimmed.strip_prefix("unsigned char[")?;
+    let len = prefix.strip_suffix(']')?;
+    len.parse().ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1564,6 +1600,51 @@ mod tests {
     fn array_types_are_not_promoted_to_model_handles() {
         assert_eq!(raw_safe_model_handle_name("char[33]"), None);
         assert_eq!(raw_safe_model_handle_name("uint32[8]"), None);
+    }
+
+    #[test]
+    fn normalizes_unsigned_char_array_as_fixed_byte_array() {
+        let callback_names = BTreeSet::new();
+        let ty = normalize_type("unsigned char[16]", &callback_names).unwrap();
+        assert_eq!(ty.kind, IrTypeKind::FixedByteArray);
+        assert_eq!(ty.cpp_type, "unsigned char[16]");
+        assert_eq!(ty.c_type, "uint8_t*");
+        assert_eq!(ty.handle, None);
+    }
+
+    #[test]
+    fn normalizes_const_unsigned_char_array_as_fixed_byte_array() {
+        let callback_names = BTreeSet::new();
+        let ty = normalize_type("const unsigned char[32]", &callback_names).unwrap();
+        assert_eq!(ty.kind, IrTypeKind::FixedByteArray);
+        assert_eq!(ty.cpp_type, "const unsigned char[32]");
+        assert_eq!(ty.c_type, "uint8_t*");
+        assert_eq!(ty.handle, None);
+    }
+
+    #[test]
+    fn normalizes_uuid_t_alias_via_canonical_as_fixed_byte_array() {
+        let callback_names = BTreeSet::new();
+        let ty = normalize_type_with_canonical(
+            &Config::default(),
+            "uuid_t",
+            "unsigned char[16]",
+            &callback_names,
+        )
+        .unwrap();
+        assert_eq!(ty.kind, IrTypeKind::FixedByteArray);
+        assert_eq!(ty.cpp_type, "uuid_t");
+        assert_eq!(ty.c_type, "uint8_t*");
+    }
+
+    #[test]
+    fn byte_array_length_extracts_size() {
+        assert_eq!(byte_array_length("unsigned char[16]"), Some(16));
+        assert_eq!(byte_array_length("const unsigned char[32]"), Some(32));
+        assert_eq!(byte_array_length("unsigned char[1]"), Some(1));
+        assert_eq!(byte_array_length("char[16]"), None);
+        assert_eq!(byte_array_length("unsigned char*"), None);
+        assert_eq!(byte_array_length("unsigned char"), None);
     }
 
     #[test]

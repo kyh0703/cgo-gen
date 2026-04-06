@@ -11,6 +11,8 @@ pub enum IrTypeKind {
     Primitive,
     #[serde(rename = "c_string")]
     CString,
+    #[serde(rename = "fixed_byte_array")]
+    FixedByteArray,
     #[serde(rename = "string")]
     String,
     #[serde(rename = "pointer")]
