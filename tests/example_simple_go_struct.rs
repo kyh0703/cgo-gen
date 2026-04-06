@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use cgo_gen::{config::Config, generator};
+use cgo_gen::{config::Config, generator, pipeline::context::PipelineContext};
 
 fn temp_output_dir(label: &str) -> PathBuf {
     let mut path = env::temp_dir();
@@ -48,8 +48,8 @@ fn checked_in_simple_go_struct_example_uses_handle_backed_model_and_reference_cu
     assert!(main_go.contains("api.SelectThing(1, item)"));
     assert!(main_go.contains("api.NextThing(&pos, item)"));
 
-    let mut with_module = config
-        .clone()
+    let mut with_module = PipelineContext::from_config_path(example_dir.join("config.yaml"))
+        .unwrap()
         .with_go_module(Some("example.com/demo/pkg".to_string()));
     with_module.output.dir = temp_output_dir("generate_with_module");
     generator::generate_all(&with_module, true).unwrap();
