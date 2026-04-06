@@ -5,10 +5,12 @@ use serde::Serialize;
 
 use crate::{
     config::Config,
+    domain::kind::{FieldAccessKind, IrFunctionKind, IrTypeKind},
     parser::{
         CppCallbackTypedef, CppClass, CppConstructor, CppEnum, CppField, CppFunction, CppMethod,
         CppParam, ParsedApi,
     },
+    pipeline::context::PipelineInput,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -32,7 +34,7 @@ pub struct OpaqueType {
 #[derive(Debug, Clone, Serialize)]
 pub struct IrFunction {
     pub name: String,
-    pub kind: String,
+    pub kind: IrFunctionKind,
     pub cpp_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub method_of: Option<String>,
@@ -49,7 +51,7 @@ pub struct IrFunction {
 #[derive(Debug, Clone, Serialize)]
 pub struct IrFieldAccessor {
     pub field_name: String,
-    pub access: String,
+    pub access: FieldAccessKind,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -60,7 +62,7 @@ pub struct IrParam {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct IrType {
-    pub kind: String,
+    pub kind: IrTypeKind,
     pub cpp_type: String,
     pub c_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -103,7 +105,9 @@ pub struct SkippedDeclaration {
     pub reason: String,
 }
 
-pub fn normalize(config: &Config, api: &ParsedApi) -> Result<IrModule> {
+pub fn normalize<T: PipelineInput + ?Sized>(input: &T, api: &ParsedApi) -> Result<IrModule> {
+    let ctx = input.to_pipeline_context();
+    let config = &ctx.config;
     let module = config.naming.prefix.clone();
     let mut opaque_types = Vec::new();
     let mut functions = Vec::new();
@@ -193,8 +197,8 @@ fn collect_referenced_opaque_types(opaque_types: &mut Vec<OpaqueType>, functions
                 continue;
             }
             if !matches!(
-                ty.kind.as_str(),
-                "model_reference" | "model_pointer" | "model_value"
+                ty.kind,
+                IrTypeKind::ModelReference | IrTypeKind::ModelPointer | IrTypeKind::ModelValue
             ) {
                 continue;
             }
@@ -290,14 +294,14 @@ fn normalize_class(
     } else if class.constructors.is_empty() {
         functions.push(IrFunction {
             name: symbol_name(config, &class.namespace, &class.name, "new"),
-            kind: "constructor".to_string(),
+            kind: IrFunctionKind::Constructor,
             cpp_name: qualified.clone(),
             method_of: Some(handle_name.to_string()),
             owner_cpp_type: Some(qualified.clone()),
             is_const: None,
             field_accessor: None,
             returns: IrType {
-                kind: "opaque".to_string(),
+                kind: IrTypeKind::Opaque,
                 cpp_type: qualified.clone(),
                 c_type: format!("{handle_name}*"),
                 handle: Some(handle_name.to_string()),
@@ -327,7 +331,7 @@ fn normalize_class(
 
     functions.push(IrFunction {
         name: symbol_name(config, &class.namespace, &class.name, "delete"),
-        kind: "destructor".to_string(),
+        kind: IrFunctionKind::Destructor,
         cpp_name: if class.has_destructor {
             format!("~{}", qualified)
         } else {
@@ -341,7 +345,7 @@ fn normalize_class(
         params: vec![IrParam {
             name: "self".to_string(),
             ty: IrType {
-                kind: "opaque".to_string(),
+                kind: IrTypeKind::Opaque,
                 cpp_type: format!("{}*", qualified),
                 c_type: format!("{handle_name}*"),
                 handle: Some(handle_name.to_string()),
@@ -404,7 +408,7 @@ fn normalize_struct_fields(
         else {
             continue;
         };
-        if field_ty.kind != "primitive" && field_ty.kind != "model_value" {
+        if field_ty.kind != IrTypeKind::Primitive && field_ty.kind != IrTypeKind::ModelValue {
             continue;
         }
 
@@ -449,20 +453,20 @@ fn make_struct_field_getter(
     let method_name = format!("Get{}", struct_field_accessor_suffix(&field.name));
     IrFunction {
         name: symbol_name(config, namespace, owner_name, &method_name),
-        kind: "method".to_string(),
+        kind: IrFunctionKind::Method,
         cpp_name: format!("{qualified}::{method_name}"),
         method_of: Some(handle_name.to_string()),
         owner_cpp_type: Some(qualified.to_string()),
         is_const: Some(true),
         field_accessor: Some(IrFieldAccessor {
             field_name: field.name.clone(),
-            access: "get".to_string(),
+            access: FieldAccessKind::Get,
         }),
         returns,
         params: vec![IrParam {
             name: "self".to_string(),
             ty: IrType {
-                kind: "opaque".to_string(),
+                kind: IrTypeKind::Opaque,
                 cpp_type: format!("const {}*", qualified),
                 c_type: format!("const {handle_name}*"),
                 handle: Some(handle_name.to_string()),
@@ -483,21 +487,21 @@ fn make_struct_field_setter(
     let method_name = format!("Set{}", struct_field_accessor_suffix(&field.name));
     IrFunction {
         name: symbol_name(config, namespace, owner_name, &method_name),
-        kind: "method".to_string(),
+        kind: IrFunctionKind::Method,
         cpp_name: format!("{qualified}::{method_name}"),
         method_of: Some(handle_name.to_string()),
         owner_cpp_type: Some(qualified.to_string()),
         is_const: Some(false),
         field_accessor: Some(IrFieldAccessor {
             field_name: field.name.clone(),
-            access: "set".to_string(),
+            access: FieldAccessKind::Set,
         }),
         returns: primitive_type("void"),
         params: vec![
             IrParam {
                 name: "self".to_string(),
                 ty: IrType {
-                    kind: "opaque".to_string(),
+                    kind: IrTypeKind::Opaque,
                     cpp_type: format!("{}*", qualified),
                     c_type: format!("{handle_name}*"),
                     handle: Some(handle_name.to_string()),
@@ -553,14 +557,14 @@ fn normalize_constructor(
     }
     Ok(Some(IrFunction {
         name: symbol_name(config, &class.namespace, &class.name, "new"),
-        kind: "constructor".to_string(),
+        kind: IrFunctionKind::Constructor,
         cpp_name: qualified.clone(),
         method_of: Some(handle_name.to_string()),
         owner_cpp_type: Some(qualified.clone()),
         is_const: None,
         field_accessor: None,
         returns: IrType {
-            kind: "opaque".to_string(),
+            kind: IrTypeKind::Opaque,
             cpp_type: qualified.clone(),
             c_type: format!("{handle_name}*"),
             handle: Some(handle_name.to_string()),
@@ -614,7 +618,7 @@ fn normalize_method(
     params.push(IrParam {
         name: "self".to_string(),
         ty: IrType {
-            kind: "opaque".to_string(),
+            kind: IrTypeKind::Opaque,
             cpp_type: if method.is_const {
                 format!("const {}*", qualified)
             } else {
@@ -637,7 +641,7 @@ fn normalize_method(
     );
     Ok(Some(IrFunction {
         name: symbol_name(config, &class.namespace, &class.name, &method.name),
-        kind: "method".to_string(),
+        kind: IrFunctionKind::Method,
         cpp_name,
         method_of: Some(handle_name.to_string()),
         owner_cpp_type: Some(qualified),
@@ -689,7 +693,7 @@ fn normalize_function(
     }
     Ok(Some(IrFunction {
         name: symbol_name(config, &function.namespace, "", &function.name),
-        kind: "function".to_string(),
+        kind: IrFunctionKind::Function,
         cpp_name,
         method_of: None,
         owner_cpp_type: None,
@@ -764,8 +768,11 @@ fn normalize_return_type_with_canonical(
     callback_names: &BTreeSet<String>,
 ) -> Result<IrType> {
     let mut ty = normalize_type_with_canonical(config, cpp_type, canonical_type, callback_names)?;
-    if matches!(ty.kind.as_str(), "model_reference" | "model_pointer") {
-        ty.kind = "model_view".to_string();
+    if matches!(
+        ty.kind,
+        IrTypeKind::ModelReference | IrTypeKind::ModelPointer
+    ) {
+        ty.kind = IrTypeKind::ModelView;
     }
     Ok(ty)
 }
@@ -864,7 +871,7 @@ fn is_raw_unsafe_by_value_param_type(
     if let Ok(ty) =
         normalize_type_with_canonical(&Config::default(), display, canonical, callback_names)
     {
-        return ty.kind == "model_value";
+        return ty.kind == IrTypeKind::ModelValue;
     }
 
     [display, canonical]
@@ -904,19 +911,19 @@ fn normalize_type_with_canonical(
     let canonical_trimmed = canonical_type.trim();
     if let Ok(ty) = normalize_type(trimmed, callback_names) {
         if matches!(
-            ty.kind.as_str(),
-            "model_reference" | "model_pointer" | "model_value"
+            ty.kind,
+            IrTypeKind::ModelReference | IrTypeKind::ModelPointer | IrTypeKind::ModelValue
         ) && canonical_trimmed != trimmed
             && let Ok(mut canonical_ty) = normalize_type(canonical_trimmed, callback_names)
             && matches!(
-                canonical_ty.kind.as_str(),
-                "extern_struct_reference"
-                    | "extern_struct_pointer"
-                    | "primitive"
-                    | "reference"
-                    | "pointer"
-                    | "string"
-                    | "c_string"
+                canonical_ty.kind,
+                IrTypeKind::ExternStructReference
+                    | IrTypeKind::ExternStructPointer
+                    | IrTypeKind::Primitive
+                    | IrTypeKind::Reference
+                    | IrTypeKind::Pointer
+                    | IrTypeKind::String
+                    | IrTypeKind::CString
             )
         {
             canonical_ty.cpp_type = trimmed.to_string();
@@ -953,7 +960,7 @@ fn normalize_type(cpp_type: &str, callback_names: &BTreeSet<String>) -> Result<I
     let trimmed = cpp_type.trim();
     if callback_names.contains(trimmed) {
         return Ok(IrType {
-            kind: "callback".to_string(),
+            kind: IrTypeKind::Callback,
             cpp_type: trimmed.to_string(),
             c_type: trimmed.to_string(),
             handle: None,
@@ -993,32 +1000,32 @@ fn normalize_type(cpp_type: &str, callback_names: &BTreeSet<String>) -> Result<I
         "int32" => Ok(alias_primitive_type(trimmed, "int32_t")),
         "int64" => Ok(alias_primitive_type(trimmed, "int64_t")),
         "const char *" | "const char*" => Ok(IrType {
-            kind: "c_string".to_string(),
+            kind: IrTypeKind::CString,
             cpp_type: trimmed.to_string(),
             c_type: "const char*".to_string(),
             handle: None,
         }),
         "char *" | "char*" => Ok(IrType {
-            kind: "c_string".to_string(),
+            kind: IrTypeKind::CString,
             cpp_type: trimmed.to_string(),
             c_type: "char*".to_string(),
             handle: None,
         }),
         "NPCSTR" | "NPSTRC" | "NPCSTRC" => Ok(IrType {
-            kind: "c_string".to_string(),
+            kind: IrTypeKind::CString,
             cpp_type: trimmed.to_string(),
             c_type: "const char*".to_string(),
             handle: None,
         }),
         "NPSTR" => Ok(IrType {
-            kind: "c_string".to_string(),
+            kind: IrTypeKind::CString,
             cpp_type: trimmed.to_string(),
             c_type: "char*".to_string(),
             handle: None,
         }),
         "std::string" | "const std::string &" | "const std::string&" | "std::string_view" => {
             Ok(IrType {
-                kind: "string".to_string(),
+                kind: IrTypeKind::String,
                 cpp_type: trimmed.to_string(),
                 c_type: "char*".to_string(),
                 handle: None,
@@ -1029,7 +1036,7 @@ fn normalize_type(cpp_type: &str, callback_names: &BTreeSet<String>) -> Result<I
         {
             let base = trimmed.trim_end_matches('*').trim();
             Ok(IrType {
-                kind: "pointer".to_string(),
+                kind: IrTypeKind::Pointer,
                 cpp_type: trimmed.to_string(),
                 c_type: format!("{}*", canonical_primitive_c_type(base)),
                 handle: None,
@@ -1040,7 +1047,7 @@ fn normalize_type(cpp_type: &str, callback_names: &BTreeSet<String>) -> Result<I
         {
             let base = trimmed.trim_end_matches('&').trim();
             Ok(IrType {
-                kind: "reference".to_string(),
+                kind: IrTypeKind::Reference,
                 cpp_type: trimmed.to_string(),
                 c_type: format!("{}*", canonical_primitive_c_type(base)),
                 handle: None,
@@ -1049,7 +1056,7 @@ fn normalize_type(cpp_type: &str, callback_names: &BTreeSet<String>) -> Result<I
         _ if trimmed.ends_with('&') && extern_c_struct_base_type(trimmed).is_some() => {
             let base = extern_c_struct_base_type(trimmed).unwrap();
             Ok(IrType {
-                kind: "extern_struct_reference".to_string(),
+                kind: IrTypeKind::ExternStructReference,
                 cpp_type: trimmed.to_string(),
                 c_type: format!("{base}*"),
                 handle: None,
@@ -1058,25 +1065,7 @@ fn normalize_type(cpp_type: &str, callback_names: &BTreeSet<String>) -> Result<I
         _ if trimmed.ends_with('*') && extern_c_struct_base_type(trimmed).is_some() => {
             let base = extern_c_struct_base_type(trimmed).unwrap();
             Ok(IrType {
-                kind: "extern_struct_pointer".to_string(),
-                cpp_type: trimmed.to_string(),
-                c_type: format!("{base}*"),
-                handle: None,
-            })
-        }
-        _ if trimmed.ends_with('&') && extern_c_struct_base_type(trimmed).is_some() => {
-            let base = extern_c_struct_base_type(trimmed).unwrap();
-            Ok(IrType {
-                kind: "extern_struct_reference".to_string(),
-                cpp_type: trimmed.to_string(),
-                c_type: format!("{base}*"),
-                handle: None,
-            })
-        }
-        _ if trimmed.ends_with('*') && extern_c_struct_base_type(trimmed).is_some() => {
-            let base = extern_c_struct_base_type(trimmed).unwrap();
-            Ok(IrType {
-                kind: "extern_struct_pointer".to_string(),
+                kind: IrTypeKind::ExternStructPointer,
                 cpp_type: trimmed.to_string(),
                 c_type: format!("{base}*"),
                 handle: None,
@@ -1085,7 +1074,7 @@ fn normalize_type(cpp_type: &str, callback_names: &BTreeSet<String>) -> Result<I
         _ if trimmed.ends_with('&') && raw_safe_model_handle_name(trimmed).is_some() => {
             let handle_name = raw_safe_model_handle_name(trimmed).unwrap();
             Ok(IrType {
-                kind: "model_reference".to_string(),
+                kind: IrTypeKind::ModelReference,
                 cpp_type: trimmed.to_string(),
                 c_type: format!("{handle_name}*"),
                 handle: Some(handle_name),
@@ -1094,7 +1083,7 @@ fn normalize_type(cpp_type: &str, callback_names: &BTreeSet<String>) -> Result<I
         _ if trimmed.ends_with('*') && raw_safe_model_handle_name(trimmed).is_some() => {
             let handle_name = raw_safe_model_handle_name(trimmed).unwrap();
             Ok(IrType {
-                kind: "model_pointer".to_string(),
+                kind: IrTypeKind::ModelPointer,
                 cpp_type: trimmed.to_string(),
                 c_type: format!("{handle_name}*"),
                 handle: Some(handle_name),
@@ -1103,7 +1092,7 @@ fn normalize_type(cpp_type: &str, callback_names: &BTreeSet<String>) -> Result<I
         _ if raw_safe_model_handle_name(trimmed).is_some() => {
             let handle_name = raw_safe_model_handle_name(trimmed).unwrap();
             Ok(IrType {
-                kind: "model_value".to_string(),
+                kind: IrTypeKind::ModelValue,
                 cpp_type: trimmed.to_string(),
                 c_type: format!("{handle_name}*"),
                 handle: Some(handle_name),
@@ -1115,7 +1104,11 @@ fn normalize_type(cpp_type: &str, callback_names: &BTreeSet<String>) -> Result<I
 
 fn primitive_type(name: &str) -> IrType {
     IrType {
-        kind: if name == "void" { "void" } else { "primitive" }.to_string(),
+        kind: if name == "void" {
+            IrTypeKind::Void
+        } else {
+            IrTypeKind::Primitive
+        },
         cpp_type: name.to_string(),
         c_type: name.to_string(),
         handle: None,
@@ -1124,7 +1117,7 @@ fn primitive_type(name: &str) -> IrType {
 
 fn alias_primitive_type(cpp_name: &str, c_name: &str) -> IrType {
     IrType {
-        kind: "primitive".to_string(),
+        kind: IrTypeKind::Primitive,
         cpp_type: cpp_name.to_string(),
         c_type: c_name.to_string(),
         handle: None,
@@ -1221,8 +1214,10 @@ fn symbol_name(config: &Config, namespace: &[String], owner: &str, tail: &str) -
 
 fn overload_suffix(function: &IrFunction) -> String {
     let params = if function.method_of.is_some()
-        && matches!(function.kind.as_str(), "method" | "destructor")
-    {
+        && matches!(
+            function.kind,
+            IrFunctionKind::Method | IrFunctionKind::Destructor
+        ) {
         &function.params[1..]
     } else {
         &function.params[..]
@@ -1237,7 +1232,7 @@ fn overload_suffix(function: &IrFunction) -> String {
             .collect::<Vec<_>>()
     };
 
-    if function.kind == "method" {
+    if function.kind == IrFunctionKind::Method {
         parts.push(
             if function.is_const == Some(true) {
                 "const"
@@ -1252,9 +1247,9 @@ fn overload_suffix(function: &IrFunction) -> String {
 }
 
 fn type_signature_token(ty: &IrType) -> String {
-    match ty.kind.as_str() {
-        "primitive" | "void" => sanitize_symbol_token(&ty.cpp_type),
-        "c_string" => {
+    match ty.kind {
+        IrTypeKind::Primitive | IrTypeKind::Void => sanitize_symbol_token(&ty.cpp_type),
+        IrTypeKind::CString => {
             if ty.cpp_type.contains("const")
                 || matches!(ty.cpp_type.as_str(), "NPCSTR" | "NPSTRC" | "NPCSTRC")
             {
@@ -1263,45 +1258,44 @@ fn type_signature_token(ty: &IrType) -> String {
                 "mut_c_str".to_string()
             }
         }
-        "string" => "string".to_string(),
-        "pointer" => format!(
+        IrTypeKind::String => "string".to_string(),
+        IrTypeKind::Pointer => format!(
             "ptr_{}",
             sanitize_symbol_token(ty.cpp_type.trim_end_matches('*'))
         ),
-        "reference" => format!(
+        IrTypeKind::Reference => format!(
             "ref_{}",
             sanitize_symbol_token(ty.cpp_type.trim_end_matches('&'))
         ),
-        "extern_struct_pointer" => format!(
+        IrTypeKind::ExternStructPointer => format!(
             "extern_ptr_{}",
             sanitize_symbol_token(&base_model_cpp_type(&ty.c_type))
         ),
-        "extern_struct_reference" => format!(
+        IrTypeKind::ExternStructReference => format!(
             "extern_ref_{}",
             sanitize_symbol_token(&base_model_cpp_type(&ty.c_type))
         ),
-        "opaque" => format!(
+        IrTypeKind::Opaque => format!(
             "opaque_{}",
             sanitize_symbol_token(&base_model_cpp_type(&ty.cpp_type))
         ),
-        "model_reference" => format!(
+        IrTypeKind::ModelReference => format!(
             "model_ref_{}",
             sanitize_symbol_token(&base_model_cpp_type(&ty.cpp_type))
         ),
-        "model_pointer" => format!(
+        IrTypeKind::ModelPointer => format!(
             "model_ptr_{}",
             sanitize_symbol_token(&base_model_cpp_type(&ty.cpp_type))
         ),
-        "model_view" => format!(
+        IrTypeKind::ModelView => format!(
             "model_view_{}",
             sanitize_symbol_token(&base_model_cpp_type(&ty.cpp_type))
         ),
-        "model_value" => format!(
+        IrTypeKind::ModelValue => format!(
             "model_value_{}",
             sanitize_symbol_token(&base_model_cpp_type(&ty.cpp_type))
         ),
-        "callback" => format!("callback_{}", sanitize_symbol_token(&ty.cpp_type)),
-        _ => sanitize_symbol_token(&ty.cpp_type),
+        IrTypeKind::Callback => format!("callback_{}", sanitize_symbol_token(&ty.cpp_type)),
     }
 }
 
@@ -1402,12 +1396,12 @@ mod tests {
         let callback_names = BTreeSet::new();
 
         let pointer = normalize_type("struct timeval*", &callback_names).unwrap();
-        assert_eq!(pointer.kind, "extern_struct_pointer");
+        assert_eq!(pointer.kind, IrTypeKind::ExternStructPointer);
         assert_eq!(pointer.c_type, "struct timeval*");
         assert_eq!(pointer.handle, None);
 
         let reference = normalize_type("struct timeval&", &callback_names).unwrap();
-        assert_eq!(reference.kind, "extern_struct_reference");
+        assert_eq!(reference.kind, IrTypeKind::ExternStructReference);
         assert_eq!(reference.c_type, "struct timeval*");
         assert_eq!(reference.handle, None);
     }
@@ -1423,7 +1417,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(ty.kind, "extern_struct_pointer");
+        assert_eq!(ty.kind, IrTypeKind::ExternStructPointer);
         assert_eq!(ty.cpp_type, "timeval*");
         assert_eq!(ty.c_type, "struct timeval*");
         assert_eq!(ty.handle, None);
@@ -1436,7 +1430,7 @@ mod tests {
             normalize_type_with_canonical(&Config::default(), "MTime", "MTime*", &callback_names)
                 .unwrap();
 
-        assert_eq!(result.kind, "model_value");
+        assert_eq!(result.kind, IrTypeKind::ModelValue);
         assert_eq!(result.c_type, "MTimeHandle*");
     }
 
@@ -1451,7 +1445,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(result.kind, "model_value");
+        assert_eq!(result.kind, IrTypeKind::ModelValue);
         assert_eq!(result.c_type, "TD_IE_CALLHandle*");
     }
 
@@ -1476,7 +1470,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(ty.kind, "model_view");
+        assert_eq!(ty.kind, IrTypeKind::ModelView);
         assert_eq!(ty.c_type, "ThingModelHandle*");
     }
 }
