@@ -13,6 +13,78 @@ use crate::{
     pipeline::context::PipelineInput,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IrFunctionKind {
+    Constructor,
+    Destructor,
+    Method,
+    Function,
+}
+
+impl IrFunctionKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Constructor => "constructor",
+            Self::Destructor => "destructor",
+            Self::Method => "method",
+            Self::Function => "function",
+        }
+    }
+}
+
+impl PartialEq<&str> for IrFunctionKind {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IrTypeKind {
+    Void,
+    Primitive,
+    Opaque,
+    String,
+    CString,
+    Pointer,
+    Reference,
+    ExternStructPointer,
+    ExternStructReference,
+    ModelReference,
+    ModelPointer,
+    ModelView,
+    ModelValue,
+    Callback,
+}
+
+impl IrTypeKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Void => "void",
+            Self::Primitive => "primitive",
+            Self::Opaque => "opaque",
+            Self::String => "string",
+            Self::CString => "c_string",
+            Self::Pointer => "pointer",
+            Self::Reference => "reference",
+            Self::ExternStructPointer => "extern_struct_pointer",
+            Self::ExternStructReference => "extern_struct_reference",
+            Self::ModelReference => "model_reference",
+            Self::ModelPointer => "model_pointer",
+            Self::ModelView => "model_view",
+            Self::ModelValue => "model_value",
+            Self::Callback => "callback",
+        }
+    }
+}
+
+impl PartialEq<&str> for IrTypeKind {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct IrModule {
     pub version: u32,
@@ -115,6 +187,12 @@ pub fn normalize<T: PipelineInput + ?Sized>(input: &T, api: &ParsedApi) -> Resul
     let mut callbacks = Vec::new();
     let mut skipped_declarations = Vec::new();
     let callback_names = callback_name_set(api);
+    let abstract_types = api
+        .classes
+        .iter()
+        .filter(|class| class.is_abstract)
+        .map(|class| cpp_qualified(&class.namespace, &class.name))
+        .collect::<BTreeSet<_>>();
 
     for class in &api.classes {
         let handle_name = format!("{}Handle", flatten_cpp_name(&class.namespace, &class.name));
@@ -126,14 +204,20 @@ pub fn normalize<T: PipelineInput + ?Sized>(input: &T, api: &ParsedApi) -> Resul
             config,
             class,
             &handle_name,
+            &abstract_types,
             &callback_names,
             &mut skipped_declarations,
         )?);
     }
 
     for function in &api.functions {
-        if let Some(function) =
-            normalize_function(config, function, &callback_names, &mut skipped_declarations)?
+        if let Some(function) = normalize_function(
+            config,
+            function,
+            &abstract_types,
+            &callback_names,
+            &mut skipped_declarations,
+        )?
         {
             functions.push(function);
         }
@@ -279,6 +363,7 @@ fn normalize_class(
     config: &Config,
     class: &CppClass,
     handle_name: &str,
+    abstract_types: &BTreeSet<String>,
     callback_names: &BTreeSet<String>,
     skipped_declarations: &mut Vec<SkippedDeclaration>,
 ) -> Result<Vec<IrFunction>> {
@@ -354,15 +439,16 @@ fn normalize_class(
     });
 
     for method in &class.methods {
-        if let Some(function) = normalize_method(
-            config,
-            class,
-            handle_name,
-            method,
-            callback_names,
-            skipped_declarations,
-        )? {
-            functions.push(function);
+            if let Some(function) = normalize_method(
+                config,
+                class,
+                handle_name,
+                method,
+                abstract_types,
+                callback_names,
+                skipped_declarations,
+            )? {
+                functions.push(function);
         }
     }
 
@@ -582,6 +668,7 @@ fn normalize_method(
     class: &CppClass,
     handle_name: &str,
     method: &CppMethod,
+    abstract_types: &BTreeSet<String>,
     callback_names: &BTreeSet<String>,
     skipped_declarations: &mut Vec<SkippedDeclaration>,
 ) -> Result<Option<IrFunction>> {
@@ -651,6 +738,7 @@ fn normalize_method(
             config,
             &method.return_type,
             &method.return_canonical_type,
+            abstract_types,
             callback_names,
         )?,
         params,
@@ -660,6 +748,7 @@ fn normalize_method(
 fn normalize_function(
     config: &Config,
     function: &CppFunction,
+    abstract_types: &BTreeSet<String>,
     callback_names: &BTreeSet<String>,
     skipped_declarations: &mut Vec<SkippedDeclaration>,
 ) -> Result<Option<IrFunction>> {
@@ -703,6 +792,7 @@ fn normalize_function(
             config,
             &function.return_type,
             &function.return_canonical_type,
+            abstract_types,
             callback_names,
         )?,
         params: function
@@ -765,6 +855,7 @@ fn normalize_return_type_with_canonical(
     config: &Config,
     cpp_type: &str,
     canonical_type: &str,
+    abstract_types: &BTreeSet<String>,
     callback_names: &BTreeSet<String>,
 ) -> Result<IrType> {
     let mut ty = normalize_type_with_canonical(config, cpp_type, canonical_type, callback_names)?;
@@ -775,6 +866,11 @@ fn normalize_return_type_with_canonical(
         ty.kind = IrTypeKind::ModelView;
     }
     Ok(ty)
+}
+
+fn is_abstract_model_type(cpp_type: &str, abstract_types: &BTreeSet<String>) -> bool {
+    let base = base_model_cpp_type(cpp_type);
+    !base.is_empty() && abstract_types.contains(&base)
 }
 
 fn function_pointer_reason(
@@ -868,8 +964,7 @@ fn is_raw_unsafe_by_value_param_type(
     let display = display.trim();
     let canonical = canonical.trim();
 
-    if let Ok(ty) =
-        normalize_type_with_canonical(&Config::default(), display, canonical, callback_names)
+    if normalize_type_with_canonical(&Config::default(), display, canonical, callback_names).is_ok()
     {
         return ty.kind == IrTypeKind::ModelValue;
     }
@@ -982,6 +1077,15 @@ fn normalize_type(cpp_type: &str, callback_names: &BTreeSet<String>) -> Result<I
                 ..ty
             });
         }
+    }
+
+    if is_char_array_type(trimmed) {
+        return Ok(IrType {
+            kind: IrTypeKind::CString,
+            cpp_type: trimmed.to_string(),
+            c_type: "const char*".to_string(),
+            handle: None,
+        });
     }
 
     match trimmed {
@@ -1380,12 +1484,31 @@ fn raw_safe_model_handle_name(cpp_type: &str) -> Option<String> {
         || base.contains('<')
         || base.starts_with("std::")
         || base.starts_with("struct ")
+        || base.contains('[')
+        || base.contains(']')
+        || base.contains('(')
+        || base.contains(')')
         || is_supported_primitive(&base)
     {
         return None;
     }
 
     Some(format!("{}Handle", flatten_qualified_cpp_name(&base)))
+}
+
+fn is_char_array_type(value: &str) -> bool {
+    let trimmed = value.trim();
+    if let Some(inner) = trimmed.strip_prefix("const ") {
+        return is_char_array_type(inner);
+    }
+
+    let Some(prefix) = trimmed.strip_prefix("char[") else {
+        return false;
+    };
+    let Some(length) = prefix.strip_suffix(']') else {
+        return false;
+    };
+    !length.is_empty() && length.chars().all(|ch| ch.is_ascii_digit())
 }
 
 #[cfg(test)]
@@ -1450,9 +1573,9 @@ mod tests {
     }
 
     #[test]
-    fn by_value_model_params_remain_raw_unsafe() {
+    fn by_value_model_params_are_supported() {
         let callback_names = BTreeSet::new();
-        assert!(is_raw_unsafe_by_value_param_type(
+        assert!(!is_raw_unsafe_by_value_param_type(
             "MTime",
             "MTime",
             &callback_names
@@ -1466,11 +1589,73 @@ mod tests {
             &Config::default(),
             "ThingModel*",
             "ThingModel*",
+            &BTreeSet::new(),
             &callback_names,
         )
         .unwrap();
 
         assert_eq!(ty.kind, IrTypeKind::ModelView);
         assert_eq!(ty.c_type, "ThingModelHandle*");
+    }
+
+    #[test]
+    fn keeps_abstract_model_pointer_returns_as_model_pointer() {
+        let callback_names = BTreeSet::new();
+        let abstract_types = BTreeSet::from([String::from("DBHandler")]);
+        let ty = normalize_return_type_with_canonical(
+            &Config::default(),
+            "DBHandler*",
+            "DBHandler*",
+            &abstract_types,
+            &callback_names,
+        )
+        .unwrap();
+
+        assert_eq!(ty.kind, "model_pointer");
+        assert_eq!(ty.c_type, "DBHandlerHandle*");
+    }
+
+    #[test]
+    fn normalizes_char_array_as_c_string() {
+        let callback_names = BTreeSet::new();
+        let ty = normalize_type("char[33]", &callback_names).unwrap();
+
+        assert_eq!(ty.kind, "c_string");
+        assert_eq!(ty.cpp_type, "char[33]");
+        assert_eq!(ty.c_type, "const char*");
+        assert_eq!(ty.handle, None);
+    }
+
+    #[test]
+    fn array_types_are_not_promoted_to_model_handles() {
+        assert_eq!(raw_safe_model_handle_name("char[33]"), None);
+        assert_eq!(raw_safe_model_handle_name("uint32[8]"), None);
+    }
+
+    #[test]
+    fn serializes_kind_enums_with_legacy_string_values() {
+        let ty = IrType {
+            kind: IrTypeKind::ModelValue,
+            cpp_type: "ThingModel".to_string(),
+            c_type: "ThingModelHandle*".to_string(),
+            handle: Some("ThingModelHandle".to_string()),
+        };
+        let function = IrFunction {
+            name: "cgowrap_ThingModel_new".to_string(),
+            kind: IrFunctionKind::Constructor,
+            cpp_name: "ThingModel".to_string(),
+            method_of: None,
+            owner_cpp_type: Some("ThingModel".to_string()),
+            is_const: None,
+            field_accessor: None,
+            returns: ty.clone(),
+            params: vec![],
+        };
+
+        let serialized_ty = serde_yaml::to_string(&ty).unwrap();
+        let serialized_function = serde_yaml::to_string(&function).unwrap();
+
+        assert!(serialized_ty.contains("kind: model_value"));
+        assert!(serialized_function.contains("kind: constructor"));
     }
 }
