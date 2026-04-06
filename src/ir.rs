@@ -476,7 +476,10 @@ fn normalize_struct_fields(
         else {
             continue;
         };
-        if field_ty.kind != "primitive" && field_ty.kind != "model_value" {
+        if field_ty.kind != "primitive"
+            && field_ty.kind != "model_value"
+            && field_ty.kind != "c_string"
+        {
             continue;
         }
 
@@ -936,10 +939,9 @@ fn is_raw_unsafe_by_value_param_type(
     let display = display.trim();
     let canonical = canonical.trim();
 
-    if let Ok(ty) =
-        normalize_type_with_canonical(&Config::default(), display, canonical, callback_names)
+    if normalize_type_with_canonical(&Config::default(), display, canonical, callback_names).is_ok()
     {
-        return ty.kind == IrTypeKind::ModelValue;
+        return false;
     }
 
     [display, canonical]
@@ -1050,6 +1052,15 @@ fn normalize_type(cpp_type: &str, callback_names: &BTreeSet<String>) -> Result<I
                 ..ty
             });
         }
+    }
+
+    if is_char_array_type(trimmed) {
+        return Ok(IrType {
+            kind: IrTypeKind::CString,
+            cpp_type: trimmed.to_string(),
+            c_type: "const char*".to_string(),
+            handle: None,
+        });
     }
 
     match trimmed {
@@ -1466,12 +1477,31 @@ fn raw_safe_model_handle_name(cpp_type: &str) -> Option<String> {
         || base.contains('<')
         || base.starts_with("std::")
         || base.starts_with("struct ")
+        || base.contains('[')
+        || base.contains(']')
+        || base.contains('(')
+        || base.contains(')')
         || is_supported_primitive(&base)
     {
         return None;
     }
 
     Some(format!("{}Handle", flatten_qualified_cpp_name(&base)))
+}
+
+fn is_char_array_type(value: &str) -> bool {
+    let trimmed = value.trim();
+    if let Some(inner) = trimmed.strip_prefix("const ") {
+        return is_char_array_type(inner);
+    }
+
+    let Some(prefix) = trimmed.strip_prefix("char[") else {
+        return false;
+    };
+    let Some(length) = prefix.strip_suffix(']') else {
+        return false;
+    };
+    !length.is_empty() && length.chars().all(|ch| ch.is_ascii_digit())
 }
 
 #[cfg(test)]
@@ -1536,9 +1566,9 @@ mod tests {
     }
 
     #[test]
-    fn by_value_model_params_remain_raw_unsafe() {
+    fn by_value_model_params_are_supported() {
         let callback_names = BTreeSet::new();
-        assert!(is_raw_unsafe_by_value_param_type(
+        assert!(!is_raw_unsafe_by_value_param_type(
             "MTime",
             "MTime",
             &callback_names
@@ -1558,6 +1588,23 @@ mod tests {
 
         assert_eq!(ty.kind, "model_view");
         assert_eq!(ty.c_type, "ThingModelHandle*");
+    }
+
+    #[test]
+    fn normalizes_char_array_as_c_string() {
+        let callback_names = BTreeSet::new();
+        let ty = normalize_type("char[33]", &callback_names).unwrap();
+
+        assert_eq!(ty.kind, "c_string");
+        assert_eq!(ty.cpp_type, "char[33]");
+        assert_eq!(ty.c_type, "const char*");
+        assert_eq!(ty.handle, None);
+    }
+
+    #[test]
+    fn array_types_are_not_promoted_to_model_handles() {
+        assert_eq!(raw_safe_model_handle_name("char[33]"), None);
+        assert_eq!(raw_safe_model_handle_name("uint32[8]"), None);
     }
 
     #[test]
