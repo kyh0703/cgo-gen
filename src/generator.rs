@@ -10,7 +10,7 @@ use crate::{
     analysis::model_analysis,
     domain::kind::{FieldAccessKind, IrFunctionKind, IrTypeKind},
     facade,
-    ir::{IrCallback, IrFunction, IrModule, IrParam, IrType},
+    ir::{IrCallback, IrFunction, IrFunctionKind, IrModule, IrParam, IrType, IrTypeKind},
     parser,
     pipeline::context::{PipelineContext, PipelineInput},
 };
@@ -582,6 +582,13 @@ fn primitive_alias_cast_target(ty: &IrType) -> Option<&str> {
     } else {
         None
     }
+}
+
+fn char_array_length(cpp_type: &str) -> Option<usize> {
+    let trimmed = cpp_type.trim().trim_start_matches("const ").trim();
+    let prefix = trimmed.strip_prefix("char[")?;
+    let len = prefix.strip_suffix(']')?;
+    len.parse().ok()
 }
 
 fn generator_supported_primitive(name: &str) -> bool {
