@@ -1780,7 +1780,7 @@ fn build_model_projection(
             go_type: getter_ty.to_string(),
             getter_symbol: function.name.clone(),
             setter_symbol: setter.name.clone(),
-            return_kind: function.returns.kind.clone(),
+            return_kind: function.returns.kind.as_str().to_string(),
         });
     }
 
@@ -1861,7 +1861,7 @@ mod tests {
     use super::*;
     use crate::{
         config::{KnownModelField, KnownModelProjection},
-        ir::IrParam,
+        ir::{IrFunctionKind, IrParam, IrTypeKind},
     };
 
     fn test_config_with_known_model() -> Config {
@@ -1887,16 +1887,16 @@ mod tests {
 
     fn primitive_type(cpp_type: &str, c_type: &str) -> IrType {
         IrType {
-            kind: "primitive".to_string(),
+            kind: IrTypeKind::Primitive,
             cpp_type: cpp_type.to_string(),
             c_type: c_type.to_string(),
             handle: None,
         }
     }
 
-    fn model_type(kind: &str, cpp_type: &str) -> IrType {
+    fn model_type(kind: IrTypeKind, cpp_type: &str) -> IrType {
         IrType {
-            kind: kind.to_string(),
+            kind,
             cpp_type: cpp_type.to_string(),
             c_type: format!("{cpp_type}Handle*"),
             handle: Some(format!("{cpp_type}Handle")),
@@ -1905,7 +1905,7 @@ mod tests {
 
     fn reference_type(cpp_type: &str, c_type: &str) -> IrType {
         IrType {
-            kind: "reference".to_string(),
+            kind: IrTypeKind::Reference,
             cpp_type: cpp_type.to_string(),
             c_type: c_type.to_string(),
             handle: None,
@@ -1917,7 +1917,7 @@ mod tests {
         let config = test_config_with_known_model();
         let function = IrFunction {
             name: "cgowrap_Api_GetThing".to_string(),
-            kind: "method".to_string(),
+            kind: IrFunctionKind::Method,
             cpp_name: "Api::GetThing".to_string(),
             method_of: Some("Api".to_string()),
             owner_cpp_type: Some("Api".to_string()),
@@ -1928,7 +1928,7 @@ mod tests {
                 IrParam {
                     name: "self".to_string(),
                     ty: IrType {
-                        kind: "opaque".to_string(),
+                        kind: IrTypeKind::Opaque,
                         cpp_type: "Api".to_string(),
                         c_type: "ApiHandle*".to_string(),
                         handle: Some("ApiHandle".to_string()),
@@ -1936,7 +1936,7 @@ mod tests {
                 },
                 IrParam {
                     name: "out".to_string(),
-                    ty: model_type("model_reference", "ThingModel"),
+                    ty: model_type(IrTypeKind::ModelReference, "ThingModel"),
                 },
                 IrParam {
                     name: "id".to_string(),
@@ -1953,7 +1953,7 @@ mod tests {
         let config = test_config_with_known_model();
         let function = IrFunction {
             name: "cgowrap_Api_GetThing".to_string(),
-            kind: "method".to_string(),
+            kind: IrFunctionKind::Method,
             cpp_name: "Api::GetThing".to_string(),
             method_of: Some("Api".to_string()),
             owner_cpp_type: Some("Api".to_string()),
@@ -1964,7 +1964,7 @@ mod tests {
                 IrParam {
                     name: "self".to_string(),
                     ty: IrType {
-                        kind: "opaque".to_string(),
+                        kind: IrTypeKind::Opaque,
                         cpp_type: "Api".to_string(),
                         c_type: "ApiHandle*".to_string(),
                         handle: Some("ApiHandle".to_string()),
@@ -1972,7 +1972,7 @@ mod tests {
                 },
                 IrParam {
                     name: "value".to_string(),
-                    ty: model_type("model_reference", "UnknownThing"),
+                    ty: model_type(IrTypeKind::ModelReference, "UnknownThing"),
                 },
             ],
         };
@@ -1985,7 +1985,7 @@ mod tests {
         let config = test_config_with_known_model();
         let function = IrFunction {
             name: "cgowrap_Api_NextThing".to_string(),
-            kind: "method".to_string(),
+            kind: IrFunctionKind::Method,
             cpp_name: "Api::NextThing".to_string(),
             method_of: Some("Api".to_string()),
             owner_cpp_type: Some("Api".to_string()),
@@ -1996,7 +1996,7 @@ mod tests {
                 IrParam {
                     name: "self".to_string(),
                     ty: IrType {
-                        kind: "opaque".to_string(),
+                        kind: IrTypeKind::Opaque,
                         cpp_type: "Api".to_string(),
                         c_type: "ApiHandle*".to_string(),
                         handle: Some("ApiHandle".to_string()),
@@ -2008,7 +2008,7 @@ mod tests {
                 },
                 IrParam {
                     name: "out".to_string(),
-                    ty: model_type("model_reference", "ThingModel"),
+                    ty: model_type(IrTypeKind::ModelReference, "ThingModel"),
                 },
             ],
         };
@@ -2023,16 +2023,16 @@ mod tests {
     #[test]
     fn overload_tokens_distinguish_model_ref_and_ptr() {
         assert_eq!(
-            go_overload_token(&model_type("model_reference", "ThingModel")),
+            go_overload_token(&model_type(IrTypeKind::ModelReference, "ThingModel")),
             "ThingModelRef"
         );
         assert_eq!(
-            go_overload_token(&model_type("model_pointer", "ThingModel")),
+            go_overload_token(&model_type(IrTypeKind::ModelPointer, "ThingModel")),
             "ThingModelPtr"
         );
         assert_eq!(
             go_overload_token(&IrType {
-                kind: "model_pointer".to_string(),
+                kind: IrTypeKind::ModelPointer,
                 cpp_type: "ThingModel**".to_string(),
                 c_type: "ThingModelHandle**".to_string(),
                 handle: Some("ThingModelHandle".to_string()),
@@ -2053,7 +2053,7 @@ mod tests {
         );
         assert_eq!(
             go_overload_token(&IrType {
-                kind: "c_string".to_string(),
+                kind: IrTypeKind::CString,
                 cpp_type: "NPCSTR".to_string(),
                 c_type: "const char*".to_string(),
                 handle: None,
@@ -2062,7 +2062,7 @@ mod tests {
         );
         assert_eq!(
             go_overload_token(&IrType {
-                kind: "string".to_string(),
+                kind: IrTypeKind::String,
                 cpp_type: "NPSTR".to_string(),
                 c_type: "char*".to_string(),
                 handle: None,
@@ -2087,7 +2087,7 @@ mod tests {
         let self_param = IrParam {
             name: "self".to_string(),
             ty: IrType {
-                kind: "opaque".to_string(),
+                kind: IrTypeKind::Opaque,
                 cpp_type: "myApi".to_string(),
                 c_type: "myApiHandle*".to_string(),
                 handle: Some(handle_name.clone()),
@@ -2104,14 +2104,14 @@ mod tests {
             functions: vec![
                 IrFunction {
                     name: "cgowrap_myApi_new".to_string(),
-                    kind: "constructor".to_string(),
+                    kind: IrFunctionKind::Constructor,
                     cpp_name: "myApi".to_string(),
                     method_of: None,
                     owner_cpp_type: Some("myApi".to_string()),
                     is_const: None,
                     field_accessor: None,
                     returns: IrType {
-                        kind: "opaque".to_string(),
+                        kind: IrTypeKind::Opaque,
                         cpp_type: "myApi".to_string(),
                         c_type: "myApiHandle*".to_string(),
                         handle: Some(handle_name.clone()),
@@ -2120,14 +2120,14 @@ mod tests {
                 },
                 IrFunction {
                     name: "cgowrap_myApi_delete".to_string(),
-                    kind: "destructor".to_string(),
+                    kind: IrFunctionKind::Destructor,
                     cpp_name: "myApi".to_string(),
                     method_of: None,
                     owner_cpp_type: Some("myApi".to_string()),
                     is_const: None,
                     field_accessor: None,
                     returns: IrType {
-                        kind: "void".to_string(),
+                        kind: IrTypeKind::Void,
                         cpp_type: "void".to_string(),
                         c_type: "void".to_string(),
                         handle: None,
@@ -2136,7 +2136,7 @@ mod tests {
                 },
                 IrFunction {
                     name: "cgowrap_myApi_IsReady".to_string(),
-                    kind: "method".to_string(),
+                    kind: IrFunctionKind::Method,
                     cpp_name: "myApi::IsReady".to_string(),
                     method_of: Some("myApi".to_string()),
                     owner_cpp_type: Some("myApi".to_string()),
@@ -2171,7 +2171,7 @@ mod tests {
 
     #[test]
     fn model_view_return_is_supported() {
-        let ty = model_type("model_view", "ThingModel");
+        let ty = model_type(IrTypeKind::ModelView, "ThingModel");
         assert!(go_return_supported(&ty));
     }
 
@@ -2181,28 +2181,28 @@ mod tests {
         let self_param = IrParam {
             name: "self".to_string(),
             ty: IrType {
-                kind: "opaque".to_string(),
+                kind: IrTypeKind::Opaque,
                 cpp_type: "Api".to_string(),
                 c_type: "ApiHandle*".to_string(),
                 handle: Some("ApiHandle".to_string()),
             },
         };
         let void_type = IrType {
-            kind: "void".to_string(),
+            kind: IrTypeKind::Void,
             cpp_type: "void".to_string(),
             c_type: "void".to_string(),
             handle: None,
         };
         let constructor = IrFunction {
             name: "cgowrap_Api_new".to_string(),
-            kind: "constructor".to_string(),
+            kind: IrFunctionKind::Constructor,
             cpp_name: "Api".to_string(),
             method_of: None,
             owner_cpp_type: Some("Api".to_string()),
             is_const: None,
             field_accessor: None,
             returns: IrType {
-                kind: "opaque".to_string(),
+                kind: IrTypeKind::Opaque,
                 cpp_type: "Api*".to_string(),
                 c_type: "ApiHandle*".to_string(),
                 handle: Some("ApiHandle".to_string()),
@@ -2211,7 +2211,7 @@ mod tests {
         };
         let destructor = IrFunction {
             name: "cgowrap_Api_delete".to_string(),
-            kind: "destructor".to_string(),
+            kind: IrFunctionKind::Destructor,
             cpp_name: "Api".to_string(),
             method_of: None,
             owner_cpp_type: Some("Api".to_string()),
@@ -2222,13 +2222,13 @@ mod tests {
         };
         let function = IrFunction {
             name: "cgowrap_Api_GetThing".to_string(),
-            kind: "method".to_string(),
+            kind: IrFunctionKind::Method,
             cpp_name: "Api::GetThing".to_string(),
             method_of: Some("Api".to_string()),
             owner_cpp_type: Some("Api".to_string()),
             is_const: Some(false),
             field_accessor: None,
-            returns: model_type("model_view", "ThingModel"),
+            returns: model_type(IrTypeKind::ModelView, "ThingModel"),
             params: vec![self_param],
         };
 
@@ -2259,7 +2259,7 @@ mod tests {
     #[test]
     fn model_view_return_uses_leaf_name_for_unknown_model() {
         let config = test_config_with_known_model();
-        let ty = model_type("model_view", "UnknownClass");
+        let ty = model_type(IrTypeKind::ModelView, "UnknownClass");
         let go_name = go_model_return_type(&config, &ty);
         assert_eq!(go_name, "UnknownClass");
     }
