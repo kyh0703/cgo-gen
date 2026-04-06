@@ -489,6 +489,12 @@ fn render_field_setter_body(function: &IrFunction, receiver: &str, field_name: &
         return format!("    {receiver}->{} = value;\n", field_name);
     };
     match value_param.ty.kind.as_str() {
+        "c_string" if char_array_length(&value_param.ty.cpp_type).is_some() => {
+            let len = char_array_length(&value_param.ty.cpp_type).unwrap();
+            format!(
+                "    if (value == nullptr) {{\n        {receiver}->{field_name}[0] = '\\0';\n        return;\n    }}\n    std::strncpy({receiver}->{field_name}, value, {len} - 1);\n    {receiver}->{field_name}[{len} - 1] = '\\0';\n"
+            )
+        }
         "model_value" => format!(
             "    {receiver}->{} = *reinterpret_cast<{}*>(value);\n",
             field_name,
@@ -536,6 +542,10 @@ fn render_cpp_arg(ty: IrType, name: &str) -> String {
             .map(|cpp_type| format!("reinterpret_cast<{}*>({name})", cpp_type))
             .unwrap_or_else(|| name.to_string()),
         "extern_struct_reference" => format!("*{name}"),
+        "model_value" => format!(
+            "*reinterpret_cast<{}*>({name})",
+            base_model_cpp_type(&ty.cpp_type)
+        ),
         "model_reference" => format!(
             "*reinterpret_cast<{}*>({name})",
             base_model_cpp_type(&ty.cpp_type)
@@ -560,6 +570,13 @@ fn primitive_alias_cast_target(ty: &IrType) -> Option<&str> {
     } else {
         None
     }
+}
+
+fn char_array_length(cpp_type: &str) -> Option<usize> {
+    let trimmed = cpp_type.trim().trim_start_matches("const ").trim();
+    let prefix = trimmed.strip_prefix("char[")?;
+    let len = prefix.strip_suffix(']')?;
+    len.parse().ok()
 }
 
 fn generator_supported_primitive(name: &str) -> bool {
