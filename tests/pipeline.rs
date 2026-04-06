@@ -1,6 +1,6 @@
 use std::{env, fs};
 
-use cgo_gen::{config::Config, generator, ir, parser};
+use cgo_gen::{config::Config, domain::kind::IrTypeKind, generator, ir, parser};
 
 fn temp_output_dir(label: &str) -> std::path::PathBuf {
     let mut path = env::temp_dir();
@@ -29,11 +29,9 @@ fn parses_fixture_and_builds_ir() {
             .iter()
             .any(|item| item.name == "cgowrap_foo_add")
     );
-    assert!(
-        ir.functions
-            .iter()
-            .any(|item| item.name == "cgowrap_foo_bar_name" && item.returns.kind == "string")
-    );
+    assert!(ir.functions.iter().any(|item| {
+        item.name == "cgowrap_foo_bar_name" && item.returns.kind == IrTypeKind::String
+    }));
 }
 
 #[test]
