@@ -16,36 +16,6 @@ pub struct Config {
     pub output: OutputConfig,
     #[serde(default)]
     pub naming: NamingConfig,
-    #[serde(skip)]
-    pub known_model_types: Vec<String>,
-    #[serde(skip)]
-    pub known_model_projections: Vec<KnownModelProjection>,
-    #[serde(skip)]
-    pub target_header: Option<PathBuf>,
-    #[serde(skip)]
-    pub raw_clang_args: Vec<String>,
-    #[serde(skip)]
-    pub go_module: Option<String>,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct KnownModelProjection {
-    pub cpp_type: String,
-    pub handle_name: String,
-    pub go_name: String,
-    pub output_header: String,
-    pub constructor_symbol: String,
-    pub destructor_symbol: Option<String>,
-    pub fields: Vec<KnownModelField>,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct KnownModelField {
-    pub go_name: String,
-    pub go_type: String,
-    pub getter_symbol: String,
-    pub setter_symbol: String,
-    pub return_kind: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -337,16 +307,21 @@ fn collect_translation_units_from_dir(dir: &Path, output: &mut Vec<PathBuf>) -> 
     Ok(())
 }
 impl Config {
-    pub fn load(path: impl AsRef<Path>) -> Result<Self> {
+    pub fn load_with_raw_clang_args(path: impl AsRef<Path>) -> Result<(Self, Vec<String>)> {
         let path = path.as_ref();
         let raw = fs::read_to_string(path)
             .with_context(|| format!("failed to read config file: {}", path.display()))?;
+        let raw_clang_args = raw_clang_args_from_yaml(&raw)
+            .with_context(|| format!("failed to parse raw clang args: {}", path.display()))?;
         let mut config: Self = serde_yaml::from_str(&raw)
             .with_context(|| format!("failed to parse YAML config: {}", path.display()))?;
-        config.raw_clang_args = config.input.clang_args.clone();
         config.resolve_relative_paths(path)?;
         config.validate()?;
-        Ok(config)
+        Ok((config, raw_clang_args))
+    }
+
+    pub fn load(path: impl AsRef<Path>) -> Result<Self> {
+        Ok(Self::load_with_raw_clang_args(path)?.0)
     }
 
     pub fn compile_commands_path(&self) -> Option<PathBuf> {
@@ -367,15 +342,14 @@ impl Config {
             && self.output.ir == default_ir_name()
     }
 
-    pub fn scoped_to_header(&self, header: PathBuf) -> Self {
+    pub fn scoped_to_header(&self, header: &Path) -> Self {
         let mut scoped = self.clone();
-        scoped.target_header = Some(header.clone());
         if scoped.input.dir.is_none() {
-            scoped.input.headers = vec![header];
+            scoped.input.headers = vec![header.to_path_buf()];
         } else {
             scoped.input.headers.clear();
         }
-        scoped.apply_output_defaults();
+        scoped.apply_output_defaults_for_header(header);
         scoped
     }
 
@@ -461,87 +435,44 @@ impl Config {
         self.output.dir.clone()
     }
 
-    pub fn raw_clang_args(&self) -> &[String] {
-        &self.raw_clang_args
-    }
-
     pub fn generated_header_include(&self, header: &str) -> String {
         header.to_string()
     }
 
     fn apply_output_defaults(&mut self) {
+        if self.input.headers.len() == 1 {
+            self.apply_output_defaults_for_header(&self.input.headers[0].clone());
+        }
+    }
+
+    fn apply_output_defaults_for_header(&mut self, header: &Path) {
         if !self.uses_default_output_names() {
             return;
         }
-
-        let Some(basename) = self.infer_output_basename() else {
+        let Some(stem) = header.file_stem().and_then(|s| s.to_str()) else {
             return;
         };
+        let basename = format!("{}_wrapper", to_snake_case(stem));
         self.output.header = format!("{basename}.h");
         self.output.source = format!("{basename}.cpp");
         self.output.ir = format!("{basename}.ir.yaml");
     }
-
-    fn infer_output_basename(&self) -> Option<String> {
-        let header = if let Some(header) = self.target_header.as_ref() {
-            header
-        } else {
-            if self.input.headers.len() != 1 {
-                return None;
-            }
-            self.input.headers.first()?
-        };
-        let stem = header.file_stem()?.to_str()?;
-        Some(format!("{}_wrapper", to_snake_case(stem)))
-    }
-
-    pub fn with_known_model_types(mut self, known_model_types: Vec<String>) -> Self {
-        self.known_model_types = known_model_types;
-        self
-    }
-
-    pub fn with_known_model_projections(
-        mut self,
-        known_model_projections: Vec<KnownModelProjection>,
-    ) -> Self {
-        self.known_model_projections = known_model_projections;
-        self
-    }
-
-    pub fn with_go_module(mut self, go_module: Option<String>) -> Self {
-        self.go_module = go_module;
-        self
-    }
-
-    pub fn known_model_projection(&self, cpp_type: &str) -> Option<&KnownModelProjection> {
-        let base = base_cpp_type_name(cpp_type);
-        self.known_model_projections.iter().find(|projection| {
-            let normalized = base_cpp_type_name(&projection.cpp_type);
-            normalized == base
-                || normalized.rsplit("::").next().unwrap_or(&normalized) == base
-                || base.rsplit("::").next().unwrap_or(&base) == normalized
-        })
-    }
-
-    pub fn is_known_model_type(&self, cpp_type: &str) -> bool {
-        let base = base_cpp_type_name(cpp_type);
-        self.known_model_types.iter().any(|candidate| {
-            let normalized = base_cpp_type_name(candidate);
-            normalized == base
-                || normalized.rsplit("::").next().unwrap_or(&normalized) == base
-                || base.rsplit("::").next().unwrap_or(&base) == normalized
-        })
-    }
 }
 
-fn base_cpp_type_name(value: &str) -> String {
-    value
-        .trim()
-        .trim_start_matches("const ")
-        .trim_end_matches('&')
-        .trim_end_matches('*')
-        .trim()
-        .to_string()
+#[derive(Debug, Deserialize, Default)]
+struct RuntimeInputConfig {
+    #[serde(default)]
+    clang_args: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct RuntimeConfig {
+    #[serde(default)]
+    input: RuntimeInputConfig,
+}
+
+fn raw_clang_args_from_yaml(raw: &str) -> Result<Vec<String>> {
+    Ok(serde_yaml::from_str::<RuntimeConfig>(raw)?.input.clang_args)
 }
 
 fn to_snake_case(value: &str) -> String {

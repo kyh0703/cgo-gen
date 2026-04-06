@@ -1,7 +1,9 @@
 use cgo_gen::{
     config::Config,
+    domain::kind::IrTypeKind,
     generator::{self, render_go_structs, render_header, render_source},
     ir, parser,
+    pipeline::context::PipelineContext,
 };
 use std::{env, fs};
 
@@ -205,7 +207,7 @@ output:
         std::env::set_var("SDK_INCLUDE", root.join("sdk/include"));
     }
 
-    let config = Config::load(root.join("config.yaml"))
+    let config = PipelineContext::from_config_path(root.join("config.yaml"))
         .unwrap()
         .with_go_module(Some("example.com/demo/pkg".to_string()));
     let parsed = parser::parse(&config).unwrap();
@@ -357,7 +359,7 @@ output:
         .iter()
         .find(|function| function.cpp_name == "Api::GetCreateTime")
         .unwrap();
-    assert_eq!(getter.returns.kind, "model_value");
+    assert_eq!(getter.returns.kind, IrTypeKind::ModelValue);
     assert_eq!(getter.returns.c_type, "MTimeHandle*");
     assert!(header.contains("MTimeHandle* cgowrap_Api_GetCreateTime(const ApiHandle* self);"));
     assert!(source.contains(
@@ -415,8 +417,8 @@ output:
         .iter()
         .find(|function| function.cpp_name == "Api::GetChildRef")
         .unwrap();
-    assert_eq!(ptr_getter.returns.kind, "model_view");
-    assert_eq!(ref_getter.returns.kind, "model_view");
+    assert_eq!(ptr_getter.returns.kind, IrTypeKind::ModelView);
+    assert_eq!(ref_getter.returns.kind, IrTypeKind::ModelView);
     assert!(source.contains("auto result = reinterpret_cast<Api*>(self)->GetChildPtr();"));
     assert!(source.contains("return reinterpret_cast<ChildHandle*>(new Child(*result));"));
     assert!(source.contains(

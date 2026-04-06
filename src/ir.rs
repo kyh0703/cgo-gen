@@ -5,10 +5,12 @@ use serde::Serialize;
 
 use crate::{
     config::Config,
+    domain::kind::{FieldAccessKind, IrFunctionKind, IrTypeKind},
     parser::{
         CppCallbackTypedef, CppClass, CppConstructor, CppEnum, CppField, CppFunction, CppMethod,
         CppParam, ParsedApi,
     },
+    pipeline::context::PipelineInput,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -121,7 +123,7 @@ pub struct IrFunction {
 #[derive(Debug, Clone, Serialize)]
 pub struct IrFieldAccessor {
     pub field_name: String,
-    pub access: String,
+    pub access: FieldAccessKind,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -175,7 +177,9 @@ pub struct SkippedDeclaration {
     pub reason: String,
 }
 
-pub fn normalize(config: &Config, api: &ParsedApi) -> Result<IrModule> {
+pub fn normalize<T: PipelineInput + ?Sized>(input: &T, api: &ParsedApi) -> Result<IrModule> {
+    let ctx = input.to_pipeline_context();
+    let config = &ctx.config;
     let module = config.naming.prefix.clone();
     let mut opaque_types = Vec::new();
     let mut functions = Vec::new();
@@ -490,10 +494,7 @@ fn normalize_struct_fields(
         else {
             continue;
         };
-        if field_ty.kind != "primitive"
-            && field_ty.kind != "model_value"
-            && field_ty.kind != "c_string"
-        {
+        if field_ty.kind != IrTypeKind::Primitive && field_ty.kind != IrTypeKind::ModelValue {
             continue;
         }
 
@@ -545,7 +546,7 @@ fn make_struct_field_getter(
         is_const: Some(true),
         field_accessor: Some(IrFieldAccessor {
             field_name: field.name.clone(),
-            access: "get".to_string(),
+            access: FieldAccessKind::Get,
         }),
         returns,
         params: vec![IrParam {
@@ -579,7 +580,7 @@ fn make_struct_field_setter(
         is_const: Some(false),
         field_accessor: Some(IrFieldAccessor {
             field_name: field.name.clone(),
-            access: "set".to_string(),
+            access: FieldAccessKind::Set,
         }),
         returns: primitive_type("void"),
         params: vec![
@@ -858,9 +859,10 @@ fn normalize_return_type_with_canonical(
     callback_names: &BTreeSet<String>,
 ) -> Result<IrType> {
     let mut ty = normalize_type_with_canonical(config, cpp_type, canonical_type, callback_names)?;
-    if matches!(ty.kind, IrTypeKind::ModelReference | IrTypeKind::ModelPointer)
-        && !is_abstract_model_type(&ty.cpp_type, abstract_types)
-    {
+    if matches!(
+        ty.kind,
+        IrTypeKind::ModelReference | IrTypeKind::ModelPointer
+    ) {
         ty.kind = IrTypeKind::ModelView;
     }
     Ok(ty)
@@ -964,7 +966,7 @@ fn is_raw_unsafe_by_value_param_type(
 
     if normalize_type_with_canonical(&Config::default(), display, canonical, callback_names).is_ok()
     {
-        return false;
+        return ty.kind == IrTypeKind::ModelValue;
     }
 
     [display, canonical]
@@ -1152,24 +1154,6 @@ fn normalize_type(cpp_type: &str, callback_names: &BTreeSet<String>) -> Result<I
                 kind: IrTypeKind::Reference,
                 cpp_type: trimmed.to_string(),
                 c_type: format!("{}*", canonical_primitive_c_type(base)),
-                handle: None,
-            })
-        }
-        _ if trimmed.ends_with('&') && extern_c_struct_base_type(trimmed).is_some() => {
-            let base = extern_c_struct_base_type(trimmed).unwrap();
-            Ok(IrType {
-                kind: IrTypeKind::ExternStructReference,
-                cpp_type: trimmed.to_string(),
-                c_type: format!("{base}*"),
-                handle: None,
-            })
-        }
-        _ if trimmed.ends_with('*') && extern_c_struct_base_type(trimmed).is_some() => {
-            let base = extern_c_struct_base_type(trimmed).unwrap();
-            Ok(IrType {
-                kind: IrTypeKind::ExternStructPointer,
-                cpp_type: trimmed.to_string(),
-                c_type: format!("{base}*"),
                 handle: None,
             })
         }
@@ -1535,12 +1519,12 @@ mod tests {
         let callback_names = BTreeSet::new();
 
         let pointer = normalize_type("struct timeval*", &callback_names).unwrap();
-        assert_eq!(pointer.kind, "extern_struct_pointer");
+        assert_eq!(pointer.kind, IrTypeKind::ExternStructPointer);
         assert_eq!(pointer.c_type, "struct timeval*");
         assert_eq!(pointer.handle, None);
 
         let reference = normalize_type("struct timeval&", &callback_names).unwrap();
-        assert_eq!(reference.kind, "extern_struct_reference");
+        assert_eq!(reference.kind, IrTypeKind::ExternStructReference);
         assert_eq!(reference.c_type, "struct timeval*");
         assert_eq!(reference.handle, None);
     }
@@ -1556,7 +1540,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(ty.kind, "extern_struct_pointer");
+        assert_eq!(ty.kind, IrTypeKind::ExternStructPointer);
         assert_eq!(ty.cpp_type, "timeval*");
         assert_eq!(ty.c_type, "struct timeval*");
         assert_eq!(ty.handle, None);
@@ -1569,7 +1553,7 @@ mod tests {
             normalize_type_with_canonical(&Config::default(), "MTime", "MTime*", &callback_names)
                 .unwrap();
 
-        assert_eq!(result.kind, "model_value");
+        assert_eq!(result.kind, IrTypeKind::ModelValue);
         assert_eq!(result.c_type, "MTimeHandle*");
     }
 
@@ -1584,7 +1568,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(result.kind, "model_value");
+        assert_eq!(result.kind, IrTypeKind::ModelValue);
         assert_eq!(result.c_type, "TD_IE_CALLHandle*");
     }
 
@@ -1610,7 +1594,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(ty.kind, "model_view");
+        assert_eq!(ty.kind, IrTypeKind::ModelView);
         assert_eq!(ty.c_type, "ThingModelHandle*");
     }
 
