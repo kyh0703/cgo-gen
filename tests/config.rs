@@ -274,14 +274,10 @@ output:
     .unwrap();
 
     let config = Config::load(&config_path).unwrap();
-    let scoped = config.scoped_to_header(config.input.dir.as_ref().unwrap().join("model.hpp"));
+    let scoped = config.scoped_to_header(&config.input.dir.as_ref().unwrap().join("model.hpp"));
 
     assert_eq!(scoped.input.dir, config.input.dir);
     assert!(scoped.input.headers.is_empty());
-    assert_eq!(
-        scoped.target_header,
-        Some(config.input.dir.as_ref().unwrap().join("model.hpp"))
-    );
     assert_eq!(scoped.output.header, "model_wrapper.h");
     assert_eq!(scoped.output.source, "model_wrapper.cpp");
     assert_eq!(scoped.output.ir, "model_wrapper.ir.yaml");
@@ -304,8 +300,8 @@ fn sil_wrapper_example_scopes_per_header_output_names() {
     let config = Config::load("configs/sil-wrapper.example.yaml").unwrap();
 
     let dir = config.input.dir.as_ref().unwrap();
-    let master = config.scoped_to_header(dir.join("IsAAMaster.h"));
-    let user = config.scoped_to_header(dir.join("IsAAUser.h"));
+    let master = config.scoped_to_header(&dir.join("IsAAMaster.h"));
+    let user = config.scoped_to_header(&dir.join("IsAAUser.h"));
 
     assert_eq!(master.output.header, "is_aa_master_wrapper.h");
     assert_eq!(master.output.source, "is_aa_master_wrapper.cpp");
@@ -349,7 +345,7 @@ output:
     )
     .unwrap();
 
-    let config = Config::load(&config_path).unwrap();
+    let (config, raw_clang_args) = Config::load_with_raw_clang_args(&config_path).unwrap();
 
     assert_eq!(
         config.input.clang_args,
@@ -360,7 +356,7 @@ output:
         ]
     );
     assert_eq!(
-        config.raw_clang_args(),
+        raw_clang_args.as_slice(),
         &[
             "-Ideps/inc".to_string(),
             "-isystem".to_string(),
@@ -571,11 +567,11 @@ output:
     )
     .unwrap();
 
-    let config = Config::load(&config_path).unwrap();
+    let (config, raw_clang_args) = Config::load_with_raw_clang_args(&config_path).unwrap();
     let expected_manual = format!("-I{}", normalize_expected_path(&dir.join("manual/inc")));
 
     assert_eq!(
-        config.raw_clang_args(),
+        raw_clang_args.as_slice(),
         &["-Imanual/inc".to_string(), "-DMODE=1".to_string()]
     );
     assert_eq!(

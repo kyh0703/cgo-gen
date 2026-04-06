@@ -3,8 +3,10 @@ use std::{collections::BTreeMap, path::Path};
 use anyhow::{Result, bail};
 
 use crate::{
-    config::{Config, KnownModelField, KnownModelProjection},
+    analysis::model_analysis,
+    domain::kind::{IrFunctionKind, IrTypeKind},
     ir::{IrCallback, IrEnum, IrFunction, IrModule, IrType},
+    pipeline::context::{PipelineContext, PipelineInput},
 };
 
 #[derive(Debug)]
@@ -37,15 +39,23 @@ struct CallbackUsage<'a> {
     param_index: usize,
 }
 
-pub fn render_go_facade(config: &Config, ir: &IrModule) -> Result<Vec<GeneratedGoFile>> {
+pub fn render_go_facade<T: PipelineInput + ?Sized>(
+    input: &T,
+    ir: &IrModule,
+) -> Result<Vec<GeneratedGoFile>> {
+    let mut config = input.to_pipeline_context();
+    if config.known_model_projections.is_empty() {
+        let projections = model_analysis::collect_known_model_projections(&config, ir)?;
+        config = config.with_known_model_projections(projections);
+    }
     let functions = ir
         .functions
         .iter()
-        .filter(|function| function.kind == "function")
-        .filter(|function| free_function_supported(config, function))
+        .filter(|function| function.kind == IrFunctionKind::Function)
+        .filter(|function| free_function_supported(&config, function))
         .collect::<Vec<_>>();
     let enums = ir.enums.iter().collect::<Vec<_>>();
-    let classes = collect_facade_classes(config, ir)?;
+    let classes = collect_facade_classes(&config, ir)?;
     let callback_usages = collect_callback_usages(&functions, &classes, ir);
 
     if functions.is_empty() && classes.is_empty() && enums.is_empty() {
@@ -56,19 +66,19 @@ pub fn render_go_facade(config: &Config, ir: &IrModule) -> Result<Vec<GeneratedG
 
     Ok(vec![GeneratedGoFile {
         filename: config.go_filename(""),
-        contents: render_go_facade_file(config, &enums, &functions, &classes, &callback_usages),
+        contents: render_go_facade_file(&config, &enums, &functions, &classes, &callback_usages),
     }])
 }
 
 fn collect_facade_classes<'a>(
-    config: &Config,
+    config: &PipelineContext,
     ir: &'a IrModule,
 ) -> Result<Vec<AnalyzedFacadeClass<'a>>> {
     let mut methods_by_owner = BTreeMap::<&str, Vec<&IrFunction>>::new();
     for function in ir
         .functions
         .iter()
-        .filter(|function| function.kind == "method")
+        .filter(|function| function.kind == IrFunctionKind::Method)
     {
         let Some(owner) = function.owner_cpp_type.as_deref() else {
             continue;
@@ -81,7 +91,7 @@ fn collect_facade_classes<'a>(
     let constructors = ir
         .functions
         .iter()
-        .filter(|function| function.kind == "constructor")
+        .filter(|function| function.kind == IrFunctionKind::Constructor)
         .filter_map(|function| {
             function
                 .owner_cpp_type
@@ -92,7 +102,7 @@ fn collect_facade_classes<'a>(
     let destructors = ir
         .functions
         .iter()
-        .filter(|function| function.kind == "destructor")
+        .filter(|function| function.kind == IrFunctionKind::Destructor)
         .filter_map(|function| {
             function
                 .owner_cpp_type
@@ -132,7 +142,7 @@ fn collect_facade_classes<'a>(
 }
 
 fn render_go_facade_file(
-    config: &Config,
+    config: &PipelineContext,
     enums: &[&IrEnum],
     functions: &[&IrFunction],
     classes: &[AnalyzedFacadeClass<'_>],
@@ -141,26 +151,31 @@ fn render_go_facade_file(
     let package_name = go_package_name(&config.output.dir);
     let requires_cgo = !functions.is_empty() || !classes.is_empty();
     let requires_errors = !classes.is_empty()
-        || functions
-            .iter()
-            .any(|function| matches!(function.returns.kind.as_str(), "string" | "c_string"))
+        || functions.iter().any(|function| {
+            matches!(
+                function.returns.kind,
+                IrTypeKind::String | IrTypeKind::CString
+            )
+        })
         || classes.iter().any(|class| {
-            class
-                .methods
-                .iter()
-                .any(|function| matches!(function.returns.kind.as_str(), "string" | "c_string"))
+            class.methods.iter().any(|function| {
+                matches!(
+                    function.returns.kind,
+                    IrTypeKind::String | IrTypeKind::CString
+                )
+            })
         });
     let requires_unsafe = functions.iter().any(|function| {
         has_string_params(function.params.iter())
             || has_pointer_params(function.params.iter())
-            || function.returns.kind == "pointer"
+            || function.returns.kind == IrTypeKind::Pointer
     }) || classes.iter().any(|class| {
         has_string_params(class.constructor.params.iter())
             || has_pointer_params(class.constructor.params.iter())
             || class.methods.iter().any(|function| {
                 has_string_params(function.params.iter().skip(1))
                     || has_pointer_params(function.params.iter().skip(1))
-                    || function.returns.kind == "pointer"
+                    || function.returns.kind == IrTypeKind::Pointer
             })
     });
     let requires_sync = !callback_usages.is_empty();
@@ -272,7 +287,7 @@ fn callback_usages_for_function<'a>(
         .iter()
         .enumerate()
         .filter_map(|(index, param)| {
-            (param.ty.kind == "callback").then(|| {
+            (param.ty.kind == IrTypeKind::Callback).then(|| {
                 callbacks
                     .get(param.ty.cpp_type.as_str())
                     .map(|callback| CallbackUsage {
@@ -301,7 +316,7 @@ fn render_callback_type(callback: &IrCallback) -> String {
         .map(|param| format!("{} {}", param.name, callback_go_type(&param.ty)))
         .collect::<Vec<_>>()
         .join(", ");
-    let returns = if callback.returns.kind == "void" {
+    let returns = if callback.returns.kind == IrTypeKind::Void {
         String::new()
     } else {
         format!(" {}", callback_go_type(&callback.returns))
@@ -332,7 +347,7 @@ fn render_callback_export(usage: &CallbackUsage<'_>) -> String {
         callback_go_export_name(usage),
         params
     ));
-    if usage.callback.returns.kind != "void" {
+    if usage.callback.returns.kind != IrTypeKind::Void {
         out.push_str(&format!(
             " {}",
             callback_cgo_return_type(&usage.callback.returns)
@@ -345,7 +360,7 @@ fn render_callback_export(usage: &CallbackUsage<'_>) -> String {
         callback_state_name(usage),
         callback_state_name(usage)
     ));
-    if usage.callback.returns.kind == "void" {
+    if usage.callback.returns.kind == IrTypeKind::Void {
         out.push_str("        return\n");
     } else {
         out.push_str(&format!(
@@ -361,7 +376,7 @@ fn render_callback_export(usage: &CallbackUsage<'_>) -> String {
         .map(|param| render_callback_go_arg(&param.ty, &param.name))
         .collect::<Vec<_>>()
         .join(", ");
-    if usage.callback.returns.kind == "void" {
+    if usage.callback.returns.kind == IrTypeKind::Void {
         out.push_str(&format!("    fn({})\n", args));
     } else {
         out.push_str(&format!(
@@ -381,7 +396,7 @@ fn render_facade_class(class: &AnalyzedFacadeClass<'_>) -> String {
     )
 }
 
-fn render_facade_constructor(config: &Config, class: &AnalyzedFacadeClass<'_>) -> String {
+fn render_facade_constructor(config: &PipelineContext, class: &AnalyzedFacadeClass<'_>) -> String {
     let constructor_params = class.constructor.params.iter().collect::<Vec<_>>();
     let params = render_param_list(config, &constructor_params);
     let prep = render_call_prep(config, &constructor_params);
@@ -426,7 +441,7 @@ fn render_facade_close(class: &AnalyzedFacadeClass<'_>) -> String {
 }
 
 fn render_general_api_method(
-    config: &Config,
+    config: &PipelineContext,
     class: &AnalyzedFacadeClass<'_>,
     function: &IrFunction,
 ) -> String {
@@ -454,10 +469,10 @@ fn render_general_api_method(
         go_method_export_name(function),
         params
     ));
-    match function.returns.kind.as_str() {
-        "void" => out.push_str(" {\n"),
-        "string" | "c_string" => out.push_str(" (string, error) {\n"),
-        "pointer" => out.push_str(&format!(
+    match function.returns.kind {
+        IrTypeKind::Void => out.push_str(" {\n"),
+        IrTypeKind::String | IrTypeKind::CString => out.push_str(" (string, error) {\n"),
+        IrTypeKind::Pointer => out.push_str(&format!(
             " {} {{\n",
             go_pointer_return_type(&function.returns).unwrap()
         )),
@@ -474,12 +489,12 @@ fn render_general_api_method(
         "    if {} == nil || {}.ptr == nil {{\n",
         receiver, receiver
     ));
-    match function.returns.kind.as_str() {
-        "void" => out.push_str("        return\n"),
-        "string" | "c_string" => {
+    match function.returns.kind {
+        IrTypeKind::Void => out.push_str("        return\n"),
+        IrTypeKind::String | IrTypeKind::CString => {
             out.push_str("        return \"\", errors.New(\"facade receiver is nil\")\n")
         }
-        "pointer" => out.push_str("        return nil\n"),
+        IrTypeKind::Pointer => out.push_str("        return nil\n"),
         _ if is_model_wrapper_return(&function.returns) => out.push_str("        return nil\n"),
         _ => out.push_str(&format!(
             "        return {}\n",
@@ -497,8 +512,8 @@ fn render_general_api_method(
         out.push_str(&line);
         out.push('\n');
     }
-    match function.returns.kind.as_str() {
-        "void" => {
+    match function.returns.kind {
+        IrTypeKind::Void => {
             out.push_str(&format!("    {}\n", call));
             for line in prep.post_call_lines {
                 out.push_str("    ");
@@ -506,7 +521,7 @@ fn render_general_api_method(
                 out.push('\n');
             }
         }
-        "string" => {
+        IrTypeKind::String => {
             out.push_str(&format!("    raw := {}\n", call));
             for line in prep.post_call_lines {
                 out.push_str("    ");
@@ -518,7 +533,7 @@ fn render_general_api_method(
                 config.naming.prefix
             ));
         }
-        "c_string" => {
+        IrTypeKind::CString => {
             out.push_str(&format!("    raw := {}\n", call));
             for line in prep.post_call_lines {
                 out.push_str("    ");
@@ -529,7 +544,7 @@ fn render_general_api_method(
                 "    if raw == nil {\n        return \"\", errors.New(\"wrapper returned nil string\")\n    }\n    return C.GoString(raw), nil\n",
             );
         }
-        "pointer" => {
+        IrTypeKind::Pointer => {
             let go_type = go_pointer_return_type(&function.returns).unwrap();
             out.push_str(&format!("    raw := {}\n", call));
             for line in prep.post_call_lines {
@@ -571,7 +586,7 @@ fn render_general_api_method(
     out
 }
 
-fn render_free_function(config: &Config, function: &IrFunction) -> String {
+fn render_free_function(config: &PipelineContext, function: &IrFunction) -> String {
     if has_callback_param(function.params.iter()) {
         return render_callback_free_function(config, function);
     }
@@ -581,8 +596,8 @@ fn render_free_function(config: &Config, function: &IrFunction) -> String {
     let call = format!("C.{}({})", function.name, prep.args.join(", "));
     let go_name = go_facade_export_name(function);
 
-    match function.returns.kind.as_str() {
-        "void" => {
+    match function.returns.kind {
+        IrTypeKind::Void => {
             let mut out = format!("func {}({}) {{\n", go_name, params);
             for line in prep.setup_lines {
                 out.push_str("    ");
@@ -603,7 +618,7 @@ fn render_free_function(config: &Config, function: &IrFunction) -> String {
             out.push_str("}\n");
             out
         }
-        "string" => {
+        IrTypeKind::String => {
             let mut out = format!("func {}({}) (string, error) {{\n", go_name, params);
             out.push_str(&indented_lines(&prep.setup_lines));
             out.push_str(&indented_lines(&prep.defer_lines));
@@ -615,7 +630,7 @@ fn render_free_function(config: &Config, function: &IrFunction) -> String {
             ));
             out
         }
-        "c_string" => {
+        IrTypeKind::CString => {
             let mut out = format!("func {}({}) (string, error) {{\n", go_name, params);
             out.push_str(&indented_lines(&prep.setup_lines));
             out.push_str(&indented_lines(&prep.defer_lines));
@@ -626,7 +641,7 @@ fn render_free_function(config: &Config, function: &IrFunction) -> String {
             );
             out
         }
-        "pointer" => {
+        IrTypeKind::Pointer => {
             let go_type = go_pointer_return_type(&function.returns).unwrap();
             let mut out = format!("func {}({}) {} {{\n", go_name, params, go_type);
             out.push_str(&indented_lines(&prep.setup_lines));
@@ -670,7 +685,7 @@ fn render_free_function(config: &Config, function: &IrFunction) -> String {
 }
 
 fn render_callback_method(
-    config: &Config,
+    config: &PipelineContext,
     class: &AnalyzedFacadeClass<'_>,
     function: &IrFunction,
 ) -> String {
@@ -695,10 +710,10 @@ fn render_callback_method(
         go_method_export_name(function),
         params
     ));
-    match function.returns.kind.as_str() {
-        "void" => out.push_str(" {\n"),
-        "string" | "c_string" => out.push_str(" (string, error) {\n"),
-        "pointer" => out.push_str(&format!(
+    match function.returns.kind {
+        IrTypeKind::Void => out.push_str(" {\n"),
+        IrTypeKind::String | IrTypeKind::CString => out.push_str(" (string, error) {\n"),
+        IrTypeKind::Pointer => out.push_str(&format!(
             " {} {{\n",
             go_pointer_return_type(&function.returns).unwrap()
         )),
@@ -715,12 +730,12 @@ fn render_callback_method(
         "    if {} == nil || {}.ptr == nil {{\n",
         receiver, receiver
     ));
-    match function.returns.kind.as_str() {
-        "void" => out.push_str("        return\n"),
-        "string" | "c_string" => {
+    match function.returns.kind {
+        IrTypeKind::Void => out.push_str("        return\n"),
+        IrTypeKind::String | IrTypeKind::CString => {
             out.push_str("        return \"\", errors.New(\"facade receiver is nil\")\n")
         }
-        "pointer" => out.push_str("        return nil\n"),
+        IrTypeKind::Pointer => out.push_str("        return nil\n"),
         _ if is_model_wrapper_return(&function.returns) => out.push_str("        return nil\n"),
         _ => out.push_str(&format!(
             "        return {}\n",
@@ -730,22 +745,22 @@ fn render_callback_method(
     out.push_str("    }\n");
     out.push_str(&indented_lines(&prep.setup_lines));
     out.push_str(&indented_lines(&prep.defer_lines));
-    match function.returns.kind.as_str() {
-        "void" => out.push_str(&format!("    {}\n", call)),
-        "string" => {
+    match function.returns.kind {
+        IrTypeKind::Void => out.push_str(&format!("    {}\n", call)),
+        IrTypeKind::String => {
             out.push_str(&format!("    raw := {}\n", call));
             out.push_str(&format!(
                 "    if raw == nil {{\n        return \"\", errors.New(\"wrapper returned nil string\")\n    }}\n    defer C.{}_string_free(raw)\n    return C.GoString(raw), nil\n",
                 config.naming.prefix
             ));
         }
-        "c_string" => {
+        IrTypeKind::CString => {
             out.push_str(&format!("    raw := {}\n", call));
             out.push_str(
                 "    if raw == nil {\n        return \"\", errors.New(\"wrapper returned nil string\")\n    }\n    return C.GoString(raw), nil\n",
             );
         }
-        "pointer" => {
+        IrTypeKind::Pointer => {
             let go_type = go_pointer_return_type(&function.returns).unwrap();
             out.push_str(&format!("    raw := {}\n", call));
             out.push_str(&format!("    return ({})(unsafe.Pointer(raw))\n", go_type));
@@ -770,7 +785,7 @@ fn render_callback_method(
     out
 }
 
-fn render_callback_free_function(config: &Config, function: &IrFunction) -> String {
+fn render_callback_free_function(config: &PipelineContext, function: &IrFunction) -> String {
     let params_list = function.params.iter().collect::<Vec<_>>();
     let params = render_param_list(config, &params_list);
     let prep = render_callback_call_prep(config, function, &params_list, 0);
@@ -778,10 +793,10 @@ fn render_callback_free_function(config: &Config, function: &IrFunction) -> Stri
     let go_name = go_facade_export_name(function);
 
     let mut out = format!("func {}({})", go_name, params);
-    match function.returns.kind.as_str() {
-        "void" => out.push_str(" {\n"),
-        "string" | "c_string" => out.push_str(" (string, error) {\n"),
-        "pointer" => out.push_str(&format!(
+    match function.returns.kind {
+        IrTypeKind::Void => out.push_str(" {\n"),
+        IrTypeKind::String | IrTypeKind::CString => out.push_str(" (string, error) {\n"),
+        IrTypeKind::Pointer => out.push_str(&format!(
             " {} {{\n",
             go_pointer_return_type(&function.returns).unwrap()
         )),
@@ -796,22 +811,22 @@ fn render_callback_free_function(config: &Config, function: &IrFunction) -> Stri
     }
     out.push_str(&indented_lines(&prep.setup_lines));
     out.push_str(&indented_lines(&prep.defer_lines));
-    match function.returns.kind.as_str() {
-        "void" => out.push_str(&format!("    {}\n", call)),
-        "string" => {
+    match function.returns.kind {
+        IrTypeKind::Void => out.push_str(&format!("    {}\n", call)),
+        IrTypeKind::String => {
             out.push_str(&format!("    raw := {}\n", call));
             out.push_str(&format!(
                 "    if raw == nil {{\n        return \"\", errors.New(\"wrapper returned nil string\")\n    }}\n    defer C.{}_string_free(raw)\n    return C.GoString(raw), nil\n",
                 config.naming.prefix
             ));
         }
-        "c_string" => {
+        IrTypeKind::CString => {
             out.push_str(&format!("    raw := {}\n", call));
             out.push_str(
                 "    if raw == nil {\n        return \"\", errors.New(\"wrapper returned nil string\")\n    }\n    return C.GoString(raw), nil\n",
             );
         }
-        "pointer" => {
+        IrTypeKind::Pointer => {
             let go_type = go_pointer_return_type(&function.returns).unwrap();
             out.push_str(&format!("    raw := {}\n", call));
             out.push_str(&format!("    return ({})(unsafe.Pointer(raw))\n", go_type));
@@ -837,7 +852,7 @@ fn render_callback_free_function(config: &Config, function: &IrFunction) -> Stri
 }
 
 fn render_callback_call_prep(
-    config: &Config,
+    config: &PipelineContext,
     function: &IrFunction,
     params: &[&crate::ir::IrParam],
     param_offset: usize,
@@ -845,7 +860,7 @@ fn render_callback_call_prep(
     let mut prep = RenderedCallPrep::default();
 
     for (index, param) in params.iter().enumerate() {
-        if param.ty.kind == "callback" {
+        if param.ty.kind == IrTypeKind::Callback {
             let state = callback_state_name_from_function(function, index + param_offset);
             prep.setup_lines.push(format!("{state}.mu.Lock()"));
             prep.setup_lines
@@ -855,8 +870,8 @@ fn render_callback_call_prep(
             continue;
         }
 
-        match param.ty.kind.as_str() {
-            "string" | "c_string" => {
+        match param.ty.kind {
+            IrTypeKind::String | IrTypeKind::CString => {
                 let c_name = format!("cArg{index}");
                 prep.setup_lines
                     .push(format!("{c_name} := C.CString({})", param.name));
@@ -864,15 +879,15 @@ fn render_callback_call_prep(
                     .push(format!("defer C.free(unsafe.Pointer({c_name}))"));
                 prep.args.push(c_name);
             }
-            "reference" => render_reference_arg(&mut prep, &param.ty, &param.name, index),
-            "pointer" => render_pointer_arg(&mut prep, &param.ty, &param.name, index),
-            "extern_struct_reference" => {
+            IrTypeKind::Reference => render_reference_arg(&mut prep, &param.ty, &param.name, index),
+            IrTypeKind::Pointer => render_pointer_arg(&mut prep, &param.ty, &param.name, index),
+            IrTypeKind::ExternStructReference => {
                 render_extern_struct_arg(&mut prep, &param.ty, &param.name, index, true)
             }
-            "extern_struct_pointer" => {
+            IrTypeKind::ExternStructPointer => {
                 render_extern_struct_arg(&mut prep, &param.ty, &param.name, index, false)
             }
-            "model_reference" | "model_pointer" | "model_value" => {
+            IrTypeKind::ModelReference | IrTypeKind::ModelPointer | IrTypeKind::ModelValue => {
                 render_model_arg(config, &mut prep, &param.ty, &param.name, index)
             }
             _ => prep.args.push(render_c_arg(&param.ty, &param.name)),
@@ -882,7 +897,7 @@ fn render_callback_call_prep(
     prep
 }
 
-fn render_param_list(config: &Config, params: &[&crate::ir::IrParam]) -> String {
+fn render_param_list(config: &PipelineContext, params: &[&crate::ir::IrParam]) -> String {
     params
         .iter()
         .map(|param| {
@@ -896,12 +911,12 @@ fn render_param_list(config: &Config, params: &[&crate::ir::IrParam]) -> String 
         .join(", ")
 }
 
-fn render_call_prep(config: &Config, params: &[&crate::ir::IrParam]) -> RenderedCallPrep {
+fn render_call_prep(config: &PipelineContext, params: &[&crate::ir::IrParam]) -> RenderedCallPrep {
     let mut prep = RenderedCallPrep::default();
 
     for (index, param) in params.iter().enumerate() {
-        match param.ty.kind.as_str() {
-            "string" | "c_string" => {
+        match param.ty.kind {
+            IrTypeKind::String | IrTypeKind::CString => {
                 let c_name = format!("cArg{index}");
                 prep.setup_lines
                     .push(format!("{c_name} := C.CString({})", param.name));
@@ -909,15 +924,15 @@ fn render_call_prep(config: &Config, params: &[&crate::ir::IrParam]) -> Rendered
                     .push(format!("defer C.free(unsafe.Pointer({c_name}))"));
                 prep.args.push(c_name);
             }
-            "reference" => render_reference_arg(&mut prep, &param.ty, &param.name, index),
-            "pointer" => render_pointer_arg(&mut prep, &param.ty, &param.name, index),
-            "extern_struct_reference" => {
+            IrTypeKind::Reference => render_reference_arg(&mut prep, &param.ty, &param.name, index),
+            IrTypeKind::Pointer => render_pointer_arg(&mut prep, &param.ty, &param.name, index),
+            IrTypeKind::ExternStructReference => {
                 render_extern_struct_arg(&mut prep, &param.ty, &param.name, index, true)
             }
-            "extern_struct_pointer" => {
+            IrTypeKind::ExternStructPointer => {
                 render_extern_struct_arg(&mut prep, &param.ty, &param.name, index, false)
             }
-            "model_reference" | "model_pointer" | "model_value" => {
+            IrTypeKind::ModelReference | IrTypeKind::ModelPointer | IrTypeKind::ModelValue => {
                 render_model_arg(config, &mut prep, &param.ty, &param.name, index)
             }
             _ => prep.args.push(render_c_arg(&param.ty, &param.name)),
@@ -927,9 +942,9 @@ fn render_call_prep(config: &Config, params: &[&crate::ir::IrParam]) -> Rendered
     prep
 }
 
-fn render_model_handle_arg(config: &Config, ty: &IrType, name: &str) -> Option<String> {
+fn render_model_handle_arg(config: &PipelineContext, ty: &IrType, name: &str) -> Option<String> {
     let projection = config.known_model_projection(&ty.cpp_type)?;
-    if ty.kind == "model_pointer" {
+    if ty.kind == IrTypeKind::ModelPointer {
         Some(format!("optional{}Handle({})", projection.go_name, name))
     } else {
         Some(format!("require{}Handle({})", projection.go_name, name))
@@ -997,20 +1012,22 @@ fn indented_lines(lines: &[String]) -> String {
 }
 
 fn has_string_params<'a>(mut params: impl Iterator<Item = &'a crate::ir::IrParam>) -> bool {
-    params.any(|param| matches!(param.ty.kind.as_str(), "string" | "c_string"))
+    params.any(|param| matches!(param.ty.kind, IrTypeKind::String | IrTypeKind::CString))
 }
 
 fn has_pointer_params<'a>(mut params: impl Iterator<Item = &'a crate::ir::IrParam>) -> bool {
     params.any(|param| {
         matches!(
-            param.ty.kind.as_str(),
-            "pointer" | "extern_struct_pointer" | "extern_struct_reference"
+            param.ty.kind,
+            IrTypeKind::Pointer
+                | IrTypeKind::ExternStructPointer
+                | IrTypeKind::ExternStructReference
         )
     })
 }
 
 fn render_model_arg(
-    config: &Config,
+    config: &PipelineContext,
     prep: &mut RenderedCallPrep,
     ty: &IrType,
     name: &str,
@@ -1023,10 +1040,10 @@ fn render_model_arg(
     let handle = ty.handle.as_deref().unwrap_or("void");
     let c_name = format!("cArg{index}");
     prep.setup_lines.push(format!("var {c_name} *C.{handle}"));
-    if ty.kind != "model_pointer" {
+    if ty.kind != IrTypeKind::ModelPointer {
         prep.setup_lines.push(format!("if {name} == nil {{"));
         prep.setup_lines
-            .push("    panic(\"required facade/model argument cannot be nil\")".to_string());
+            .push("    panic(\"reference facade/model argument cannot be nil\")".to_string());
         prep.setup_lines.push("}".to_string());
     }
     prep.setup_lines.push(format!("if {name} != nil {{"));
@@ -1036,7 +1053,7 @@ fn render_model_arg(
 }
 
 fn has_callback_param<'a>(mut params: impl Iterator<Item = &'a crate::ir::IrParam>) -> bool {
-    params.any(|param| param.ty.kind == "callback")
+    params.any(|param| param.ty.kind == IrTypeKind::Callback)
 }
 
 fn ensure_unique_go_exports(functions: &[&IrFunction]) -> Result<()> {
@@ -1099,16 +1116,16 @@ fn ensure_unique_method_exports(owner: &str, methods: &[&IrFunction]) -> Result<
     bail!("facade export collision detected: {detail}");
 }
 
-fn free_function_supported(config: &Config, function: &IrFunction) -> bool {
-    go_return_supported(&function.returns)
+fn free_function_supported(config: &PipelineContext, function: &IrFunction) -> bool {
+    go_return_supported(config, &function.returns)
         && function
             .params
             .iter()
             .all(|param| go_param_supported(config, &param.ty))
 }
 
-fn method_supported(config: &Config, function: &IrFunction) -> bool {
-    go_return_supported(&function.returns)
+fn method_supported(config: &PipelineContext, function: &IrFunction) -> bool {
+    go_return_supported(config, &function.returns)
         && function
             .params
             .iter()
@@ -1116,24 +1133,26 @@ fn method_supported(config: &Config, function: &IrFunction) -> bool {
             .all(|param| go_param_supported(config, &param.ty))
 }
 
-fn go_param_supported(config: &Config, ty: &IrType) -> bool {
+fn go_param_supported(config: &PipelineContext, ty: &IrType) -> bool {
     go_param_type(config, ty).is_some()
 }
 
-fn go_param_type(config: &Config, ty: &IrType) -> Option<String> {
-    match ty.kind.as_str() {
-        "string" | "c_string" => Some("string".to_string()),
-        "primitive" => go_type_for_ir(ty).map(str::to_string),
-        "reference" => go_type_for_reference(ty).map(|go_type| format!("*{go_type}")),
-        "pointer" => {
+fn go_param_type(config: &PipelineContext, ty: &IrType) -> Option<String> {
+    match ty.kind {
+        IrTypeKind::String | IrTypeKind::CString => Some("string".to_string()),
+        IrTypeKind::Primitive => go_type_for_ir(ty).map(str::to_string),
+        IrTypeKind::Reference => go_type_for_reference(ty).map(|go_type| format!("*{go_type}")),
+        IrTypeKind::Pointer => {
             let base = ty.cpp_type.trim_end_matches('*').trim();
             primitive_go_type(base)
                 .or_else(|| primitive_go_type(ty.c_type.trim_end_matches('*').trim()))
                 .map(|go_type| format!("*{go_type}"))
         }
-        "extern_struct_pointer" | "extern_struct_reference" => extern_struct_go_type(ty),
-        "callback" => Some(leaf_cpp_name(&ty.cpp_type)),
-        "model_reference" | "model_pointer" | "model_value" => config
+        IrTypeKind::ExternStructPointer | IrTypeKind::ExternStructReference => {
+            extern_struct_go_type(ty)
+        }
+        IrTypeKind::Callback => Some(leaf_cpp_name(&ty.cpp_type)),
+        IrTypeKind::ModelReference | IrTypeKind::ModelPointer | IrTypeKind::ModelValue => config
             .known_model_projection(&ty.cpp_type)
             .map(|projection| format!("*{}", projection.go_name))
             .or_else(|| {
@@ -1146,16 +1165,18 @@ fn go_param_type(config: &Config, ty: &IrType) -> Option<String> {
     }
 }
 
-fn go_return_supported(ty: &IrType) -> bool {
-    ty.kind == "void"
-        || matches!(ty.kind.as_str(), "string" | "c_string")
-        || (ty.kind == "primitive" && go_type_for_ir(ty).is_some())
-        || (ty.kind == "pointer" && go_pointer_return_type(ty).is_some())
-        || is_model_wrapper_return(ty)
+fn go_return_supported(config: &PipelineContext, ty: &IrType) -> bool {
+    ty.kind == IrTypeKind::Void
+        || matches!(ty.kind, IrTypeKind::String | IrTypeKind::CString)
+        || (ty.kind == IrTypeKind::Primitive && go_type_for_ir(ty).is_some())
+        || (ty.kind == IrTypeKind::Pointer && go_pointer_return_type(ty).is_some())
+        || matches!(ty.kind, IrTypeKind::ModelPointer | IrTypeKind::ModelView)
+        || (ty.kind == IrTypeKind::ModelValue
+            && config.known_model_projection(&ty.cpp_type).is_some())
 }
 
 fn go_pointer_return_type(ty: &IrType) -> Option<String> {
-    if ty.kind != "pointer" {
+    if ty.kind != IrTypeKind::Pointer {
         return None;
     }
     let base = ty.cpp_type.trim_end_matches('*').trim();
@@ -1164,7 +1185,7 @@ fn go_pointer_return_type(ty: &IrType) -> Option<String> {
         .map(|go_type| format!("*{go_type}"))
 }
 
-fn go_model_return_type(config: &Config, ty: &IrType) -> String {
+fn go_model_return_type(config: &PipelineContext, ty: &IrType) -> String {
     config
         .known_model_projection(&ty.cpp_type)
         .map(|projection| projection.go_name.clone())
@@ -1173,8 +1194,8 @@ fn go_model_return_type(config: &Config, ty: &IrType) -> String {
 
 fn is_model_wrapper_return(ty: &IrType) -> bool {
     matches!(
-        ty.kind.as_str(),
-        "model_pointer" | "model_view" | "model_value"
+        ty.kind,
+        IrTypeKind::ModelPointer | IrTypeKind::ModelView | IrTypeKind::ModelValue
     )
 }
 
@@ -1189,18 +1210,19 @@ fn zero_value_for_go_type(go_type: &str) -> &'static str {
 }
 
 fn go_type_for_ir(ty: &IrType) -> Option<&'static str> {
-    match ty.kind.as_str() {
-        "string" | "c_string" => Some("string"),
-        "primitive" => primitive_go_type(&ty.cpp_type).or_else(|| primitive_go_type(&ty.c_type)),
+    match ty.kind {
+        IrTypeKind::String | IrTypeKind::CString => Some("string"),
+        IrTypeKind::Primitive => {
+            primitive_go_type(&ty.cpp_type).or_else(|| primitive_go_type(&ty.c_type))
+        }
         _ => None,
     }
 }
 
 fn go_type_for_reference(ty: &IrType) -> Option<&'static str> {
-    if ty.kind != "reference" {
+    if ty.kind != IrTypeKind::Reference {
         return None;
     }
-
     primitive_go_type(&ty.cpp_type).or_else(|| primitive_go_type(&ty.c_type))
 }
 
@@ -1330,20 +1352,20 @@ fn go_overload_suffix(function: &IrFunction) -> String {
 }
 
 fn go_overload_token(ty: &IrType) -> String {
-    match ty.kind.as_str() {
-        "callback" => format!("{}Callback", go_export_name(&leaf_cpp_name(&ty.cpp_type))),
-        "string" | "c_string" => string_overload_token(ty),
-        "primitive" => primitive_overload_token(ty),
-        "extern_struct_reference" => extern_struct_overload_token(ty, "Ref"),
-        "extern_struct_pointer" => extern_struct_overload_token(ty, "Ptr"),
-        "model_reference" => format!(
+    match ty.kind {
+        IrTypeKind::Callback => format!("{}Callback", go_export_name(&leaf_cpp_name(&ty.cpp_type))),
+        IrTypeKind::String | IrTypeKind::CString => string_overload_token(ty),
+        IrTypeKind::Primitive => primitive_overload_token(ty),
+        IrTypeKind::ExternStructReference => extern_struct_overload_token(ty, "Ref"),
+        IrTypeKind::ExternStructPointer => extern_struct_overload_token(ty, "Ptr"),
+        IrTypeKind::ModelReference => format!(
             "{}Ref",
             go_export_name(&flatten_qualified_cpp_name(&base_model_cpp_type(
                 &ty.cpp_type
             )))
         ),
-        "model_pointer" => model_pointer_overload_token(ty),
-        "model_value" => format!(
+        IrTypeKind::ModelPointer => model_pointer_overload_token(ty),
+        IrTypeKind::ModelValue => format!(
             "{}Value",
             go_export_name(&flatten_qualified_cpp_name(&base_model_cpp_type(
                 &ty.cpp_type
@@ -1449,8 +1471,8 @@ fn callback_go_export_name(usage: &CallbackUsage<'_>) -> String {
 }
 
 fn callback_cgo_param_type(ty: &IrType) -> &'static str {
-    match ty.kind.as_str() {
-        "string" | "c_string" => "*C.char",
+    match ty.kind {
+        IrTypeKind::String | IrTypeKind::CString => "*C.char",
         _ => cgo_cast_type_from_c_type(&ty.c_type),
     }
 }
@@ -1460,8 +1482,8 @@ fn callback_cgo_return_type(ty: &IrType) -> &'static str {
 }
 
 fn render_callback_go_arg(ty: &IrType, name: &str) -> String {
-    match ty.kind.as_str() {
-        "string" | "c_string" => format!("C.GoString({name})"),
+    match ty.kind {
+        IrTypeKind::String | IrTypeKind::CString => format!("C.GoString({name})"),
         _ => format!("{}({})", callback_go_type(ty), name),
     }
 }
@@ -1542,8 +1564,8 @@ fn ir_uses_struct_timeval(functions: &[&IrFunction], classes: &[AnalyzedFacadeCl
         }))
         .any(|ty| {
             matches!(
-                ty.kind.as_str(),
-                "extern_struct_reference" | "extern_struct_pointer"
+                ty.kind,
+                IrTypeKind::ExternStructReference | IrTypeKind::ExternStructPointer
             ) && base_model_cpp_type(&ty.c_type) == "struct timeval"
         })
 }
@@ -1630,273 +1652,47 @@ fn go_package_name(path: &Path) -> String {
     }
 }
 
-#[derive(Debug, Clone)]
-struct ModelProjection {
-    cpp_type: String,
-    go_name: String,
-    handle_name: String,
-    constructor_symbol: String,
-    destructor_symbol: String,
-    fields: Vec<ModelProjectionField>,
-}
-
-#[derive(Debug, Clone)]
-struct ModelProjectionField {
-    go_name: String,
-    go_type: String,
-    getter_symbol: String,
-    setter_symbol: String,
-    return_kind: String,
-}
-
-pub fn collect_known_model_projections(
-    config: &Config,
-    ir: &IrModule,
-) -> Result<Vec<KnownModelProjection>> {
-    Ok(build_all_model_projections(config, ir)?
-        .into_iter()
-        .map(|projection| KnownModelProjection {
-            cpp_type: projection.cpp_type,
-            handle_name: projection.handle_name,
-            go_name: projection.go_name,
-            output_header: config.generated_header_include(&config.output.header),
-            constructor_symbol: projection.constructor_symbol,
-            destructor_symbol: Some(projection.destructor_symbol),
-            fields: projection
-                .fields
-                .into_iter()
-                .map(|field| KnownModelField {
-                    go_name: field.go_name,
-                    go_type: field.go_type,
-                    getter_symbol: field.getter_symbol,
-                    setter_symbol: field.setter_symbol,
-                    return_kind: field.return_kind,
-                })
-                .collect(),
-        })
-        .collect())
-}
-
-fn build_all_model_projections(config: &Config, ir: &IrModule) -> Result<Vec<ModelProjection>> {
-    let constructors = ir
-        .functions
-        .iter()
-        .filter(|function| function.kind == "constructor")
-        .filter_map(|function| {
-            function
-                .owner_cpp_type
-                .as_deref()
-                .map(|owner| (owner.to_string(), function.name.clone()))
-        })
-        .collect::<BTreeMap<_, _>>();
-    let destructors = ir
-        .functions
-        .iter()
-        .filter(|function| function.kind == "destructor")
-        .filter_map(|function| {
-            function
-                .owner_cpp_type
-                .as_deref()
-                .map(|owner| (owner.to_string(), function.name.clone()))
-        })
-        .collect::<BTreeMap<_, _>>();
-
-    let mut methods_by_owner = BTreeMap::<String, Vec<&IrFunction>>::new();
-    for function in ir
-        .functions
-        .iter()
-        .filter(|function| function.kind == "method")
-    {
-        let Some(owner) = &function.owner_cpp_type else {
-            continue;
-        };
-        methods_by_owner
-            .entry(owner.clone())
-            .or_default()
-            .push(function);
-    }
-
-    let mut projections = Vec::new();
-    for (owner, class_methods) in methods_by_owner {
-        if let Some(projection) = build_model_projection(
-            config,
-            &owner,
-            &class_methods,
-            constructors.get(&owner),
-            destructors.get(&owner),
-        )? {
-            projections.push(projection);
-        }
-    }
-    Ok(projections)
-}
-
-fn build_model_projection(
-    config: &Config,
-    owner: &str,
-    class_methods: &[&IrFunction],
-    constructor_symbol: Option<&String>,
-    destructor_symbol: Option<&String>,
-) -> Result<Option<ModelProjection>> {
-    let setters = class_methods
-        .iter()
-        .filter_map(|function| {
-            setter_suffix(function).map(|suffix| (suffix.to_string(), *function))
-        })
-        .collect::<BTreeMap<_, _>>();
-
-    let mut fields = Vec::new();
-    let mut seen = BTreeMap::<String, ()>::new();
-    for function in class_methods {
-        let Some(suffix) = getter_suffix(function) else {
-            continue;
-        };
-        let Some(setter) = setters.get(suffix) else {
-            continue;
-        };
-        if seen.insert(suffix.to_string(), ()).is_some() {
-            continue;
-        }
-
-        let Some(getter_ty) = go_model_field_type(config, &function.returns) else {
-            continue;
-        };
-        let Some(setter_param) = setter.params.get(1) else {
-            bail!(
-                "setter `{}` on `{owner}` is missing its value parameter",
-                setter.cpp_name
-            );
-        };
-        let Some(setter_ty) = go_model_field_type(config, &setter_param.ty) else {
-            continue;
-        };
-
-        if getter_ty != setter_ty {
-            continue;
-        }
-
-        fields.push(ModelProjectionField {
-            go_name: go_field_name(suffix),
-            go_type: getter_ty.to_string(),
-            getter_symbol: function.name.clone(),
-            setter_symbol: setter.name.clone(),
-            return_kind: function.returns.kind.clone(),
-        });
-    }
-
-    if fields.is_empty() {
-        return Ok(None);
-    }
-
-    let constructor_symbol = constructor_symbol.ok_or_else(|| {
-        anyhow::anyhow!("model projection `{owner}` is missing a constructor wrapper")
-    })?;
-    let destructor_symbol = destructor_symbol.ok_or_else(|| {
-        anyhow::anyhow!("model projection `{owner}` is missing a destructor wrapper")
-    })?;
-
-    Ok(Some(ModelProjection {
-        cpp_type: owner.to_string(),
-        go_name: go_export_name(&leaf_cpp_name(owner)),
-        handle_name: format!("{}Handle", flatten_qualified_cpp_name(owner)),
-        constructor_symbol: constructor_symbol.clone(),
-        destructor_symbol: destructor_symbol.clone(),
-        fields,
-    }))
-}
-
-fn go_model_field_type(config: &Config, ty: &IrType) -> Option<String> {
-    match ty.kind.as_str() {
-        "model_value" => Some(format!("*{}", go_model_return_type(config, ty))),
-        _ => go_type_for_ir(ty).map(str::to_string),
-    }
-}
-
-fn getter_suffix(function: &IrFunction) -> Option<&str> {
-    if function.kind != "method" || function.params.len() != 1 || function.returns.kind == "void" {
-        return None;
-    }
-    function
-        .cpp_name
-        .rsplit("::")
-        .next()
-        .and_then(|name| name.strip_prefix("Get"))
-        .filter(|suffix| !suffix.is_empty())
-}
-
-fn setter_suffix(function: &IrFunction) -> Option<&str> {
-    if function.kind != "method" || function.params.len() != 2 || function.returns.kind != "void" {
-        return None;
-    }
-    function
-        .cpp_name
-        .rsplit("::")
-        .next()
-        .and_then(|name| name.strip_prefix("Set"))
-        .filter(|suffix| !suffix.is_empty())
-}
-
-fn go_field_name(value: &str) -> String {
-    value
-        .split('_')
-        .flat_map(split_pascal_tokens)
-        .map(|token| match token.to_ascii_lowercase().as_str() {
-            "id" => "ID".to_string(),
-            "url" => "URL".to_string(),
-            "db" => "DB".to_string(),
-            "api" => "API".to_string(),
-            "http" => "HTTP".to_string(),
-            "https" => "HTTPS".to_string(),
-            "json" => "JSON".to_string(),
-            "xml" => "XML".to_string(),
-            other if token.chars().all(|ch| ch.is_uppercase()) => other.to_ascii_uppercase(),
-            _ => token,
-        })
-        .collect::<Vec<_>>()
-        .join("")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
-        config::{KnownModelField, KnownModelProjection},
+        config::Config,
+        domain::model_projection::{ModelProjection, ModelProjectionField},
         ir::IrParam,
+        pipeline::context::PipelineContext,
     };
 
-    fn test_config_with_known_model() -> Config {
-        Config {
-            known_model_projections: vec![KnownModelProjection {
+    fn test_context_with_known_model() -> PipelineContext {
+        PipelineContext::new(Config::default()).with_known_model_projections(vec![
+            ModelProjection {
                 cpp_type: "ThingModel".to_string(),
                 handle_name: "ThingModelHandle".to_string(),
                 go_name: "ThingModel".to_string(),
-                output_header: "thing_model_wrapper.h".to_string(),
                 constructor_symbol: "cgowrap_ThingModel_new".to_string(),
-                destructor_symbol: Some("cgowrap_ThingModel_delete".to_string()),
-                fields: vec![KnownModelField {
+                destructor_symbol: "cgowrap_ThingModel_delete".to_string(),
+                fields: vec![ModelProjectionField {
                     go_name: "Value".to_string(),
                     go_type: "int".to_string(),
                     getter_symbol: "cgowrap_ThingModel_GetValue".to_string(),
                     setter_symbol: "cgowrap_ThingModel_SetValue".to_string(),
-                    return_kind: "primitive".to_string(),
+                    return_kind: IrTypeKind::Primitive,
                 }],
-            }],
-            ..Config::default()
-        }
+            },
+        ])
     }
 
     fn primitive_type(cpp_type: &str, c_type: &str) -> IrType {
         IrType {
-            kind: "primitive".to_string(),
+            kind: IrTypeKind::Primitive,
             cpp_type: cpp_type.to_string(),
             c_type: c_type.to_string(),
             handle: None,
         }
     }
 
-    fn model_type(kind: &str, cpp_type: &str) -> IrType {
+    fn model_type(kind: IrTypeKind, cpp_type: &str) -> IrType {
         IrType {
-            kind: kind.to_string(),
+            kind,
             cpp_type: cpp_type.to_string(),
             c_type: format!("{cpp_type}Handle*"),
             handle: Some(format!("{cpp_type}Handle")),
@@ -1905,7 +1701,7 @@ mod tests {
 
     fn reference_type(cpp_type: &str, c_type: &str) -> IrType {
         IrType {
-            kind: "reference".to_string(),
+            kind: IrTypeKind::Reference,
             cpp_type: cpp_type.to_string(),
             c_type: c_type.to_string(),
             handle: None,
@@ -1914,10 +1710,10 @@ mod tests {
 
     #[test]
     fn method_supports_known_model_reference_params() {
-        let config = test_config_with_known_model();
+        let config = test_context_with_known_model();
         let function = IrFunction {
             name: "cgowrap_Api_GetThing".to_string(),
-            kind: "method".to_string(),
+            kind: IrFunctionKind::Method,
             cpp_name: "Api::GetThing".to_string(),
             method_of: Some("Api".to_string()),
             owner_cpp_type: Some("Api".to_string()),
@@ -1928,7 +1724,7 @@ mod tests {
                 IrParam {
                     name: "self".to_string(),
                     ty: IrType {
-                        kind: "opaque".to_string(),
+                        kind: IrTypeKind::Opaque,
                         cpp_type: "Api".to_string(),
                         c_type: "ApiHandle*".to_string(),
                         handle: Some("ApiHandle".to_string()),
@@ -1936,7 +1732,7 @@ mod tests {
                 },
                 IrParam {
                     name: "out".to_string(),
-                    ty: model_type("model_reference", "ThingModel"),
+                    ty: model_type(IrTypeKind::ModelReference, "ThingModel"),
                 },
                 IrParam {
                     name: "id".to_string(),
@@ -1950,10 +1746,10 @@ mod tests {
 
     #[test]
     fn method_supports_unknown_model_params_as_handles() {
-        let config = test_config_with_known_model();
+        let config = test_context_with_known_model();
         let function = IrFunction {
             name: "cgowrap_Api_GetThing".to_string(),
-            kind: "method".to_string(),
+            kind: IrFunctionKind::Method,
             cpp_name: "Api::GetThing".to_string(),
             method_of: Some("Api".to_string()),
             owner_cpp_type: Some("Api".to_string()),
@@ -1964,7 +1760,7 @@ mod tests {
                 IrParam {
                     name: "self".to_string(),
                     ty: IrType {
-                        kind: "opaque".to_string(),
+                        kind: IrTypeKind::Opaque,
                         cpp_type: "Api".to_string(),
                         c_type: "ApiHandle*".to_string(),
                         handle: Some("ApiHandle".to_string()),
@@ -1972,7 +1768,7 @@ mod tests {
                 },
                 IrParam {
                     name: "value".to_string(),
-                    ty: model_type("model_reference", "UnknownThing"),
+                    ty: model_type(IrTypeKind::ModelReference, "UnknownThing"),
                 },
             ],
         };
@@ -1982,10 +1778,10 @@ mod tests {
 
     #[test]
     fn method_supports_primitive_reference_and_known_model_params() {
-        let config = test_config_with_known_model();
+        let config = test_context_with_known_model();
         let function = IrFunction {
             name: "cgowrap_Api_NextThing".to_string(),
-            kind: "method".to_string(),
+            kind: IrFunctionKind::Method,
             cpp_name: "Api::NextThing".to_string(),
             method_of: Some("Api".to_string()),
             owner_cpp_type: Some("Api".to_string()),
@@ -1996,7 +1792,7 @@ mod tests {
                 IrParam {
                     name: "self".to_string(),
                     ty: IrType {
-                        kind: "opaque".to_string(),
+                        kind: IrTypeKind::Opaque,
                         cpp_type: "Api".to_string(),
                         c_type: "ApiHandle*".to_string(),
                         handle: Some("ApiHandle".to_string()),
@@ -2008,7 +1804,7 @@ mod tests {
                 },
                 IrParam {
                     name: "out".to_string(),
-                    ty: model_type("model_reference", "ThingModel"),
+                    ty: model_type(IrTypeKind::ModelReference, "ThingModel"),
                 },
             ],
         };
@@ -2023,16 +1819,16 @@ mod tests {
     #[test]
     fn overload_tokens_distinguish_model_ref_and_ptr() {
         assert_eq!(
-            go_overload_token(&model_type("model_reference", "ThingModel")),
+            go_overload_token(&model_type(IrTypeKind::ModelReference, "ThingModel")),
             "ThingModelRef"
         );
         assert_eq!(
-            go_overload_token(&model_type("model_pointer", "ThingModel")),
+            go_overload_token(&model_type(IrTypeKind::ModelPointer, "ThingModel")),
             "ThingModelPtr"
         );
         assert_eq!(
             go_overload_token(&IrType {
-                kind: "model_pointer".to_string(),
+                kind: IrTypeKind::ModelPointer,
                 cpp_type: "ThingModel**".to_string(),
                 c_type: "ThingModelHandle**".to_string(),
                 handle: Some("ThingModelHandle".to_string()),
@@ -2053,7 +1849,7 @@ mod tests {
         );
         assert_eq!(
             go_overload_token(&IrType {
-                kind: "c_string".to_string(),
+                kind: IrTypeKind::CString,
                 cpp_type: "NPCSTR".to_string(),
                 c_type: "const char*".to_string(),
                 handle: None,
@@ -2062,7 +1858,7 @@ mod tests {
         );
         assert_eq!(
             go_overload_token(&IrType {
-                kind: "string".to_string(),
+                kind: IrTypeKind::String,
                 cpp_type: "NPSTR".to_string(),
                 c_type: "char*".to_string(),
                 handle: None,
@@ -2087,7 +1883,7 @@ mod tests {
         let self_param = IrParam {
             name: "self".to_string(),
             ty: IrType {
-                kind: "opaque".to_string(),
+                kind: IrTypeKind::Opaque,
                 cpp_type: "myApi".to_string(),
                 c_type: "myApiHandle*".to_string(),
                 handle: Some(handle_name.clone()),
@@ -2104,14 +1900,14 @@ mod tests {
             functions: vec![
                 IrFunction {
                     name: "cgowrap_myApi_new".to_string(),
-                    kind: "constructor".to_string(),
+                    kind: IrFunctionKind::Constructor,
                     cpp_name: "myApi".to_string(),
                     method_of: None,
                     owner_cpp_type: Some("myApi".to_string()),
                     is_const: None,
                     field_accessor: None,
                     returns: IrType {
-                        kind: "opaque".to_string(),
+                        kind: IrTypeKind::Opaque,
                         cpp_type: "myApi".to_string(),
                         c_type: "myApiHandle*".to_string(),
                         handle: Some(handle_name.clone()),
@@ -2120,14 +1916,14 @@ mod tests {
                 },
                 IrFunction {
                     name: "cgowrap_myApi_delete".to_string(),
-                    kind: "destructor".to_string(),
+                    kind: IrFunctionKind::Destructor,
                     cpp_name: "myApi".to_string(),
                     method_of: None,
                     owner_cpp_type: Some("myApi".to_string()),
                     is_const: None,
                     field_accessor: None,
                     returns: IrType {
-                        kind: "void".to_string(),
+                        kind: IrTypeKind::Void,
                         cpp_type: "void".to_string(),
                         c_type: "void".to_string(),
                         handle: None,
@@ -2136,7 +1932,7 @@ mod tests {
                 },
                 IrFunction {
                     name: "cgowrap_myApi_IsReady".to_string(),
-                    kind: "method".to_string(),
+                    kind: IrFunctionKind::Method,
                     cpp_name: "myApi::IsReady".to_string(),
                     method_of: Some("myApi".to_string()),
                     owner_cpp_type: Some("myApi".to_string()),
@@ -2155,7 +1951,7 @@ mod tests {
             },
         };
 
-        let config = Config::default();
+        let config = PipelineContext::new(Config::default());
         let files = render_go_facade(&config, &ir).unwrap();
         assert!(!files.is_empty(), "expected at least one Go file");
         let contents = &files[0].contents;
@@ -2171,38 +1967,39 @@ mod tests {
 
     #[test]
     fn model_view_return_is_supported() {
-        let ty = model_type("model_view", "ThingModel");
-        assert!(go_return_supported(&ty));
+        let ty = model_type(IrTypeKind::ModelView, "ThingModel");
+        let config = test_context_with_known_model();
+        assert!(go_return_supported(&config, &ty));
     }
 
     #[test]
     fn model_view_return_renders_wrap_pattern() {
-        let config = test_config_with_known_model();
+        let config = test_context_with_known_model();
         let self_param = IrParam {
             name: "self".to_string(),
             ty: IrType {
-                kind: "opaque".to_string(),
+                kind: IrTypeKind::Opaque,
                 cpp_type: "Api".to_string(),
                 c_type: "ApiHandle*".to_string(),
                 handle: Some("ApiHandle".to_string()),
             },
         };
         let void_type = IrType {
-            kind: "void".to_string(),
+            kind: IrTypeKind::Void,
             cpp_type: "void".to_string(),
             c_type: "void".to_string(),
             handle: None,
         };
         let constructor = IrFunction {
             name: "cgowrap_Api_new".to_string(),
-            kind: "constructor".to_string(),
+            kind: IrFunctionKind::Constructor,
             cpp_name: "Api".to_string(),
             method_of: None,
             owner_cpp_type: Some("Api".to_string()),
             is_const: None,
             field_accessor: None,
             returns: IrType {
-                kind: "opaque".to_string(),
+                kind: IrTypeKind::Opaque,
                 cpp_type: "Api*".to_string(),
                 c_type: "ApiHandle*".to_string(),
                 handle: Some("ApiHandle".to_string()),
@@ -2211,7 +2008,7 @@ mod tests {
         };
         let destructor = IrFunction {
             name: "cgowrap_Api_delete".to_string(),
-            kind: "destructor".to_string(),
+            kind: IrFunctionKind::Destructor,
             cpp_name: "Api".to_string(),
             method_of: None,
             owner_cpp_type: Some("Api".to_string()),
@@ -2222,13 +2019,13 @@ mod tests {
         };
         let function = IrFunction {
             name: "cgowrap_Api_GetThing".to_string(),
-            kind: "method".to_string(),
+            kind: IrFunctionKind::Method,
             cpp_name: "Api::GetThing".to_string(),
             method_of: Some("Api".to_string()),
             owner_cpp_type: Some("Api".to_string()),
             is_const: Some(false),
             field_accessor: None,
-            returns: model_type("model_view", "ThingModel"),
+            returns: model_type(IrTypeKind::ModelView, "ThingModel"),
             params: vec![self_param],
         };
 
@@ -2258,8 +2055,8 @@ mod tests {
 
     #[test]
     fn model_view_return_uses_leaf_name_for_unknown_model() {
-        let config = test_config_with_known_model();
-        let ty = model_type("model_view", "UnknownClass");
+        let config = test_context_with_known_model();
+        let ty = model_type(IrTypeKind::ModelView, "UnknownClass");
         let go_name = go_model_return_type(&config, &ty);
         assert_eq!(go_name, "UnknownClass");
     }

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 
-use crate::{config::Config, generator, ir};
+use crate::{config::Config, generator, ir, pipeline::context::PipelineContext};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -54,16 +54,20 @@ pub fn run() -> Result<()> {
             dump_ir,
             go_module,
         } => {
-            let config = Config::load(config)?.with_go_module(go_module);
-            generator::generate_all(&config, dump_ir)?;
+            let (config, raw_clang_args) = Config::load_with_raw_clang_args(config)?;
+            let ctx = PipelineContext::new(config)
+                .with_raw_clang_args(raw_clang_args)
+                .with_go_module(go_module);
+            generator::generate_all(&ctx, dump_ir)?;
         }
         Command::Ir {
             config,
             output,
             format,
         } => {
-            let (config, parsed) = generator::prepare_with_parsed(&Config::load(config)?)?;
-            let ir = ir::normalize(&config, &parsed)?;
+            let ctx = PipelineContext::from_config_path(config)?;
+            let (ctx, parsed) = generator::prepare_with_parsed(&ctx)?;
+            let ir = ir::normalize(&ctx, &parsed)?;
             match (output, format) {
                 (Some(path), IrFormat::Yaml) => generator::write_ir(&path, &ir)?,
                 (Some(path), IrFormat::Json) => {
@@ -74,8 +78,9 @@ pub fn run() -> Result<()> {
             }
         }
         Command::Check { config } => {
-            let (config, parsed) = generator::prepare_with_parsed(&Config::load(config)?)?;
-            let ir = ir::normalize(&config, &parsed)?;
+            let ctx = PipelineContext::from_config_path(config)?;
+            let (ctx, parsed) = generator::prepare_with_parsed(&ctx)?;
+            let ir = ir::normalize(&ctx, &parsed)?;
             println!(
                 "ok: {} headers, {} classes, {} functions, {} enums, {} abi functions",
                 parsed.headers.len(),
