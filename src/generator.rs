@@ -7,17 +7,20 @@ use std::{
 use anyhow::{Context, Result, bail};
 
 use crate::{
-    config::Config,
+    analysis::model_analysis,
+    domain::kind::{FieldAccessKind, IrFunctionKind, IrTypeKind},
     facade,
     ir::{IrCallback, IrFunction, IrModule, IrParam, IrType},
     parser,
+    pipeline::context::{PipelineContext, PipelineInput},
 };
 
-pub fn generate_all(config: &Config, write_ir: bool) -> Result<()> {
-    let (config, parsed) = prepare_with_parsed(config)?;
-    let generation_headers = generation_headers(&config);
+pub fn generate_all<T: PipelineInput + ?Sized>(input: &T, write_ir: bool) -> Result<()> {
+    let ctx = input.to_pipeline_context();
+    let (ctx, parsed) = prepare_with_parsed(&ctx)?;
+    let generation_headers = generation_headers(&ctx);
 
-    if generation_headers.len() > 1 && !config.uses_default_output_names() {
+    if generation_headers.len() > 1 && !ctx.uses_default_output_names() {
         bail!(
             "multi-header generation does not support explicit output.header/source/ir overrides; leave them as defaults to emit one wrapper set per header"
         );
@@ -27,8 +30,8 @@ pub fn generate_all(config: &Config, write_ir: bool) -> Result<()> {
         let scoped = generation_headers
             .first()
             .cloned()
-            .map(|header| config.scoped_to_header(header))
-            .unwrap_or_else(|| config.clone());
+            .map(|header| ctx.scoped_to_header(header))
+            .unwrap_or_else(|| ctx.clone());
         let header_api = scoped
             .target_header
             .as_deref()
@@ -39,7 +42,7 @@ pub fn generate_all(config: &Config, write_ir: bool) -> Result<()> {
     }
 
     for header in &generation_headers {
-        let scoped = config.scoped_to_header(header.clone());
+        let scoped = ctx.scoped_to_header(header.clone());
         let header_api = parsed.filter_to_header(header);
         if header_api.is_empty() {
             continue;
@@ -51,12 +54,12 @@ pub fn generate_all(config: &Config, write_ir: bool) -> Result<()> {
     Ok(())
 }
 
-fn generation_headers(config: &Config) -> Vec<PathBuf> {
-    if config.input.dir.is_some() {
-        return scan_generation_headers(config.input.dir.as_ref().unwrap()).unwrap_or_default();
+fn generation_headers(ctx: &PipelineContext) -> Vec<PathBuf> {
+    if ctx.input.dir.is_some() {
+        return scan_generation_headers(ctx.input.dir.as_ref().unwrap()).unwrap_or_default();
     }
 
-    config.input.headers.clone()
+    ctx.input.headers.clone()
 }
 
 fn scan_generation_headers(dir: &Path) -> Result<Vec<PathBuf>> {
@@ -77,21 +80,31 @@ fn scan_generation_headers(dir: &Path) -> Result<Vec<PathBuf>> {
     Ok(headers.into_iter().collect())
 }
 
-pub fn prepare_config(config: &Config) -> Result<Config> {
-    Ok(prepare_with_parsed(config)?.0)
+pub fn prepare_context<T: PipelineInput + ?Sized>(input: &T) -> Result<PipelineContext> {
+    Ok(prepare_with_parsed(input)?.0)
 }
 
-pub fn prepare_with_parsed(config: &Config) -> Result<(Config, parser::ParsedApi)> {
-    let parsed = parser::parse(config)?;
-    let config = prepare_config_from_parsed(config, &parsed)?;
-    Ok((config, parsed))
+pub fn prepare_config<T: PipelineInput + ?Sized>(input: &T) -> Result<PipelineContext> {
+    prepare_context(input)
 }
 
-fn prepare_config_from_parsed(config: &Config, parsed: &parser::ParsedApi) -> Result<Config> {
+pub fn prepare_with_parsed<T: PipelineInput + ?Sized>(
+    input: &T,
+) -> Result<(PipelineContext, parser::ParsedApi)> {
+    let ctx = input.to_pipeline_context();
+    let parsed = parser::parse(&ctx)?;
+    let ctx = build_pipeline_context(&ctx, &parsed)?;
+    Ok((ctx, parsed))
+}
+
+fn build_pipeline_context(
+    ctx: &PipelineContext,
+    parsed: &parser::ParsedApi,
+) -> Result<PipelineContext> {
     let known_model_types = collect_known_model_types(parsed);
-    let scoped = config.clone().with_known_model_types(known_model_types);
+    let scoped = ctx.clone().with_known_model_types(known_model_types);
     let ir = crate::ir::normalize(&scoped, parsed)?;
-    let known_model_projections = facade::collect_known_model_projections(&scoped, &ir)?;
+    let known_model_projections = model_analysis::collect_known_model_projections(&scoped, &ir)?;
     Ok(scoped.with_known_model_projections(known_model_projections))
 }
 
@@ -111,33 +124,34 @@ fn collect_known_model_types(parsed: &parser::ParsedApi) -> Vec<String> {
         .collect()
 }
 
-pub fn generate(config: &Config, ir: &IrModule, write_ir: bool) -> Result<()> {
-    fs::create_dir_all(config.output_dir()).with_context(|| {
+pub fn generate<T: PipelineInput + ?Sized>(input: &T, ir: &IrModule, write_ir: bool) -> Result<()> {
+    let ctx = input.to_pipeline_context();
+    fs::create_dir_all(ctx.output_dir()).with_context(|| {
         format!(
             "failed to create output dir: {}",
-            config.output_dir().display()
+            ctx.output_dir().display()
         )
     })?;
 
-    let header_path = config.output_dir().join(&config.output.header);
-    let source_path = config.output_dir().join(&config.output.source);
-    let ir_path = config.output_dir().join(&config.output.ir);
-    fs::write(&header_path, render_header(config, ir))
+    let header_path = ctx.output_dir().join(&ctx.output.header);
+    let source_path = ctx.output_dir().join(&ctx.output.source);
+    let ir_path = ctx.output_dir().join(&ctx.output.ir);
+    fs::write(&header_path, render_header(&ctx, ir))
         .with_context(|| format!("failed to write header: {}", header_path.display()))?;
-    fs::write(&source_path, render_source(config, ir))
+    fs::write(&source_path, render_source(&ctx, ir))
         .with_context(|| format!("failed to write source: {}", source_path.display()))?;
-    for go_file in facade::render_go_facade(config, ir)? {
-        fs::create_dir_all(config.output_dir()).with_context(|| {
+    for go_file in facade::render_go_facade(&ctx, ir)? {
+        fs::create_dir_all(ctx.output_dir()).with_context(|| {
             format!(
                 "failed to create go output dir: {}",
-                config.output_dir().display()
+                ctx.output_dir().display()
             )
         })?;
-        let go_path = config.output_dir().join(&go_file.filename);
+        let go_path = ctx.output_dir().join(&go_file.filename);
         fs::write(&go_path, go_file.contents)
             .with_context(|| format!("failed to write Go wrapper: {}", go_path.display()))?;
     }
-    write_go_package_metadata(config)?;
+    write_go_package_metadata(&ctx)?;
     if write_ir {
         let serialized = serde_yaml::to_string(ir)?;
         fs::write(&ir_path, serialized)
@@ -153,17 +167,17 @@ pub fn write_ir(path: &Path, ir: &IrModule) -> Result<()> {
     Ok(())
 }
 
-fn write_go_package_metadata(config: &Config) -> Result<()> {
-    let Some(go_module) = config.go_module.as_deref() else {
+fn write_go_package_metadata(ctx: &PipelineContext) -> Result<()> {
+    let Some(go_module) = ctx.go_module.as_deref() else {
         return Ok(());
     };
 
-    let go_mod_path = config.output_dir().join("go.mod");
+    let go_mod_path = ctx.output_dir().join("go.mod");
     fs::write(&go_mod_path, render_go_mod(go_module))
         .with_context(|| format!("failed to write go.mod: {}", go_mod_path.display()))?;
 
-    let build_flags_path = config.output_dir().join("build_flags.go");
-    fs::write(&build_flags_path, render_build_flags(config)).with_context(|| {
+    let build_flags_path = ctx.output_dir().join("build_flags.go");
+    fs::write(&build_flags_path, render_build_flags(ctx)).with_context(|| {
         format!(
             "failed to write build_flags.go: {}",
             build_flags_path.display()
@@ -177,19 +191,19 @@ fn render_go_mod(go_module: &str) -> String {
     format!("module {go_module}\n\ngo 1.25\n")
 }
 
-fn render_build_flags(config: &Config) -> String {
-    let package_name = go_package_name(&config.output.dir);
-    let cxxflags = exported_cxxflags(config);
+fn render_build_flags(ctx: &PipelineContext) -> String {
+    let package_name = go_package_name(&ctx.output.dir);
+    let cxxflags = exported_cxxflags(ctx);
     let cxxflags_line = cxxflags.join(" ");
     format!(
         "package {package_name}\n\n/*\n#cgo CFLAGS: -I${{SRCDIR}}\n#cgo CXXFLAGS: {cxxflags_line}\n*/\nimport \"C\"\n"
     )
 }
 
-fn exported_cxxflags(config: &Config) -> Vec<String> {
+fn exported_cxxflags(ctx: &PipelineContext) -> Vec<String> {
     let mut flags = vec!["-I${SRCDIR}".to_string()];
     let mut index = 0;
-    let raw = config.raw_clang_args();
+    let raw = ctx.raw_clang_args();
 
     while index < raw.len() {
         let arg = &raw[index];
@@ -240,11 +254,12 @@ fn go_package_name(path: &Path) -> String {
     }
 }
 
-pub fn render_header(config: &Config, ir: &IrModule) -> String {
+pub fn render_header<T: PipelineInput + ?Sized>(input: &T, ir: &IrModule) -> String {
+    let ctx = input.to_pipeline_context();
     let guard = format!(
         "{}_{}",
-        config.naming.prefix.to_uppercase(),
-        config.output.header.replace('.', "_").to_uppercase()
+        ctx.naming.prefix.to_uppercase(),
+        ctx.output.header.replace('.', "_").to_uppercase()
     );
     let mut out = String::new();
     out.push_str(&format!("#ifndef {guard}\n#define {guard}\n\n"));
@@ -280,11 +295,11 @@ pub fn render_header(config: &Config, ir: &IrModule) -> String {
     if ir
         .functions
         .iter()
-        .any(|function| function.returns.kind == "string")
+        .any(|function| function.returns.kind == IrTypeKind::String)
     {
         out.push_str(&format!(
             "void {}_string_free(char* value);\n\n",
-            config.naming.prefix
+            ctx.naming.prefix
         ));
     }
 
@@ -293,9 +308,10 @@ pub fn render_header(config: &Config, ir: &IrModule) -> String {
     out
 }
 
-pub fn render_source(config: &Config, ir: &IrModule) -> String {
+pub fn render_source<T: PipelineInput + ?Sized>(input: &T, ir: &IrModule) -> String {
+    let ctx = input.to_pipeline_context();
     let mut out = String::new();
-    out.push_str(&format!("#include \"{}\"\n", config.output.header));
+    out.push_str(&format!("#include \"{}\"\n", ctx.output.header));
     out.push_str("#include <cstdlib>\n#include <cstring>\n#include <new>\n#include <string>\n\n");
     for header in &ir.source_headers {
         let include_name = Path::new(header)
@@ -315,7 +331,7 @@ pub fn render_source(config: &Config, ir: &IrModule) -> String {
         function
             .params
             .iter()
-            .any(|param| param.ty.kind == "callback")
+            .any(|param| param.ty.kind == IrTypeKind::Callback)
     }) {
         out.push_str(&render_callback_bridge_def(function, &callback_map));
         out.push('\n');
@@ -324,16 +340,19 @@ pub fn render_source(config: &Config, ir: &IrModule) -> String {
     if ir
         .functions
         .iter()
-        .any(|function| function.returns.kind == "string")
+        .any(|function| function.returns.kind == IrTypeKind::String)
     {
-        out.push_str(&render_string_free(config));
+        out.push_str(&render_string_free(&ctx));
     }
 
     out
 }
 
-pub fn render_go_structs(config: &Config, ir: &IrModule) -> Result<Vec<GeneratedGoFile>> {
-    facade::render_go_facade(config, ir)
+pub fn render_go_structs<T: PipelineInput + ?Sized>(
+    input: &T,
+    ir: &IrModule,
+) -> Result<Vec<GeneratedGoFile>> {
+    facade::render_go_facade(input, ir)
 }
 
 fn render_callback_decl(out: &mut String, callback: &IrCallback) {
@@ -379,11 +398,11 @@ fn render_function_def(function: &IrFunction) -> String {
         function.name,
         render_param_list(function)
     );
-    let body = match function.kind.as_str() {
-        "constructor" => render_constructor_body(function),
-        "destructor" => render_destructor_body(function),
-        "method" => render_method_body(function),
-        _ => render_free_function_body(function),
+    let body = match function.kind {
+        IrFunctionKind::Constructor => render_constructor_body(function),
+        IrFunctionKind::Destructor => render_destructor_body(function),
+        IrFunctionKind::Method => render_method_body(function),
+        IrFunctionKind::Function => render_free_function_body(function),
     };
     format!("{signature} {{\n{body}}}\n")
 }
@@ -425,10 +444,13 @@ fn render_method_body(function: &IrFunction) -> String {
         } else {
             format!("reinterpret_cast<{}*>(self)", owner)
         };
-        return match accessor.access.as_str() {
-            "get" => render_field_getter_body(function, &receiver, &accessor.field_name),
-            "set" => render_field_setter_body(function, &receiver, &accessor.field_name),
-            _ => unreachable!("unsupported field accessor kind"),
+        return match accessor.access {
+            FieldAccessKind::Get => {
+                render_field_getter_body(function, &receiver, &accessor.field_name)
+            }
+            FieldAccessKind::Set => {
+                render_field_setter_body(function, &receiver, &accessor.field_name)
+            }
         };
     }
     let receiver = if function.is_const.unwrap_or(false) {
@@ -450,14 +472,14 @@ fn render_free_function_body(function: &IrFunction) -> String {
 
 fn render_callable_body(function: &IrFunction, target: &str, arg_start: usize) -> String {
     let args = call_args(function, arg_start);
-    match function.returns.kind.as_str() {
-        "void" => format!("    {}({});\n", target, args),
-        "string" => format!(
+    match function.returns.kind {
+        IrTypeKind::Void => format!("    {}({});\n", target, args),
+        IrTypeKind::String => format!(
             "    std::string result = {}({});\n    char* buffer = static_cast<char*>(std::malloc(result.size() + 1));\n    if (buffer == nullptr) {{\n        return nullptr;\n    }}\n    std::memcpy(buffer, result.c_str(), result.size() + 1);\n    return buffer;\n",
             target, args
         ),
-        "model_view" => render_model_view_return(function, target, &args),
-        "model_value" => format!(
+        IrTypeKind::ModelView => render_model_view_return(function, target, &args),
+        IrTypeKind::ModelValue => format!(
             "    return reinterpret_cast<{}>(new {}({}({})));\n",
             function.returns.c_type,
             base_model_cpp_type(&function.returns.cpp_type),
@@ -473,8 +495,8 @@ fn render_callable_body(function: &IrFunction, target: &str, arg_start: usize) -
 }
 
 fn render_field_getter_body(function: &IrFunction, receiver: &str, field_name: &str) -> String {
-    match function.returns.kind.as_str() {
-        "model_value" => format!(
+    match function.returns.kind {
+        IrTypeKind::ModelValue => format!(
             "    return reinterpret_cast<{}>(new {}({receiver}->{}));\n",
             function.returns.c_type,
             base_model_cpp_type(&function.returns.cpp_type),
@@ -488,8 +510,8 @@ fn render_field_setter_body(function: &IrFunction, receiver: &str, field_name: &
     let Some(value_param) = function.params.get(1) else {
         return format!("    {receiver}->{} = value;\n", field_name);
     };
-    match value_param.ty.kind.as_str() {
-        "model_value" => format!(
+    match value_param.ty.kind {
+        IrTypeKind::ModelValue => format!(
             "    {receiver}->{} = *reinterpret_cast<{}*>(value);\n",
             field_name,
             base_model_cpp_type(&value_param.ty.cpp_type)
@@ -524,23 +546,23 @@ fn call_args(function: &IrFunction, start: usize) -> String {
 }
 
 fn render_cpp_arg(ty: IrType, name: &str) -> String {
-    match ty.kind.as_str() {
-        "primitive" if ty.cpp_type != ty.c_type => {
+    match ty.kind {
+        IrTypeKind::Primitive if ty.cpp_type != ty.c_type => {
             format!("static_cast<{}>({name})", ty.cpp_type)
         }
-        "string" => format!("std::string({name} != nullptr ? {name} : \"\")"),
-        "reference" => primitive_alias_cast_target(&ty)
+        IrTypeKind::String => format!("std::string({name} != nullptr ? {name} : \"\")"),
+        IrTypeKind::Reference => primitive_alias_cast_target(&ty)
             .map(|cpp_type| format!("*reinterpret_cast<{}*>({name})", cpp_type))
             .unwrap_or_else(|| format!("*{name}")),
-        "pointer" => primitive_alias_cast_target(&ty)
+        IrTypeKind::Pointer => primitive_alias_cast_target(&ty)
             .map(|cpp_type| format!("reinterpret_cast<{}*>({name})", cpp_type))
             .unwrap_or_else(|| name.to_string()),
-        "extern_struct_reference" => format!("*{name}"),
-        "model_reference" => format!(
+        IrTypeKind::ExternStructReference => format!("*{name}"),
+        IrTypeKind::ModelReference => format!(
             "*reinterpret_cast<{}*>({name})",
             base_model_cpp_type(&ty.cpp_type)
         ),
-        "model_pointer" => format!(
+        IrTypeKind::ModelPointer => format!(
             "reinterpret_cast<{}*>({name})",
             base_model_cpp_type(&ty.cpp_type)
         ),
@@ -549,9 +571,9 @@ fn render_cpp_arg(ty: IrType, name: &str) -> String {
 }
 
 fn primitive_alias_cast_target(ty: &IrType) -> Option<&str> {
-    let cpp_base = match ty.kind.as_str() {
-        "reference" => ty.cpp_type.trim_end_matches('&').trim(),
-        "pointer" => ty.cpp_type.trim_end_matches('*').trim(),
+    let cpp_base = match ty.kind {
+        IrTypeKind::Reference => ty.cpp_type.trim_end_matches('&').trim(),
+        IrTypeKind::Pointer => ty.cpp_type.trim_end_matches('*').trim(),
         _ => return None,
     };
     let c_base = ty.c_type.trim_end_matches('*').trim();
@@ -608,7 +630,7 @@ fn callback_bridge_functions(ir: &IrModule) -> Vec<IrFunction> {
             function
                 .params
                 .iter()
-                .any(|param| param.ty.kind == "callback")
+                .any(|param| param.ty.kind == IrTypeKind::Callback)
         })
         .map(make_callback_bridge_function)
         .collect()
@@ -620,11 +642,11 @@ fn make_callback_bridge_function(function: &IrFunction) -> IrFunction {
         .iter()
         .enumerate()
         .map(|(index, param)| {
-            if param.ty.kind == "callback" {
+            if param.ty.kind == IrTypeKind::Callback {
                 IrParam {
                     name: format!("use_cb{index}"),
                     ty: IrType {
-                        kind: "primitive".to_string(),
+                        kind: IrTypeKind::Primitive,
                         cpp_type: "bool".to_string(),
                         c_type: "bool".to_string(),
                         handle: None,
@@ -638,7 +660,7 @@ fn make_callback_bridge_function(function: &IrFunction) -> IrFunction {
 
     IrFunction {
         name: format!("{}_bridge", function.name),
-        kind: "function".to_string(),
+        kind: IrFunctionKind::Function,
         cpp_name: function.cpp_name.clone(),
         method_of: function.method_of.clone(),
         owner_cpp_type: function.owner_cpp_type.clone(),
@@ -663,7 +685,7 @@ fn render_callback_bridge_body(
     let mut out = String::new();
 
     for (index, param) in function.params.iter().enumerate() {
-        if param.ty.kind != "callback" {
+        if param.ty.kind != IrTypeKind::Callback {
             continue;
         }
         let callback = callbacks
@@ -678,7 +700,7 @@ fn render_callback_bridge_body(
         .iter()
         .enumerate()
         .map(|(index, param)| {
-            if param.ty.kind == "callback" {
+            if param.ty.kind == IrTypeKind::Callback {
                 format!(
                     "use_cb{index} ? {} : nullptr",
                     callback_trampoline_name(function, index)
@@ -690,8 +712,8 @@ fn render_callback_bridge_body(
         .collect::<Vec<_>>()
         .join(", ");
 
-    match function.returns.kind.as_str() {
-        "void" => out.push_str(&format!("    {}({});\n", target, call_args)),
+    match function.returns.kind {
+        IrTypeKind::Void => out.push_str(&format!("    {}({});\n", target, call_args)),
         _ => out.push_str(&format!("    return {}({});\n", target, call_args)),
     }
 
@@ -720,7 +742,7 @@ fn render_callback_trampoline_decl(
         .collect::<Vec<_>>()
         .join(", ");
     let go_symbol = callback_go_export_name(function, index);
-    let invoke = if callback.returns.kind == "void" {
+    let invoke = if callback.returns.kind == IrTypeKind::Void {
         format!("{}({});", go_symbol, call_args)
     } else {
         format!("return {}({});", go_symbol, call_args)
@@ -767,15 +789,15 @@ fn ir_uses_struct_timeval(ir: &IrModule) -> bool {
         }))
         .any(|ty| {
             matches!(
-                ty.kind.as_str(),
-                "extern_struct_reference" | "extern_struct_pointer"
+                ty.kind,
+                IrTypeKind::ExternStructReference | IrTypeKind::ExternStructPointer
             ) && base_model_cpp_type(&ty.c_type) == "struct timeval"
         })
 }
 
-fn render_string_free(config: &Config) -> String {
+fn render_string_free(ctx: &PipelineContext) -> String {
     format!(
         "void {}_string_free(char* value) {{\n    std::free(value);\n}}\n",
-        config.naming.prefix
+        ctx.naming.prefix
     )
 }
