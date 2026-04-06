@@ -485,12 +485,11 @@ output:
         header.contains("void cgowrap_Parent_SetChild(ParentHandle* self, ChildHandle* value);")
     );
     assert!(source.contains(
-        "return reinterpret_cast<ChildHandle*>(new Child(reinterpret_cast<const Parent*>(self)->child));"
+        "return reinterpret_cast<ChildHandle*>(new decltype(reinterpret_cast<const Parent*>(self)->child)(reinterpret_cast<const Parent*>(self)->child));"
     ));
-    assert!(
-        source
-            .contains("reinterpret_cast<Parent*>(self)->child = *reinterpret_cast<Child*>(value);")
-    );
+    assert!(source.contains(
+        "reinterpret_cast<Parent*>(self)->child = *reinterpret_cast<decltype(reinterpret_cast<Parent*>(self)->child)* >(value);"
+    ));
     assert!(go_text.contains("func (p *Parent) GetChild() *Child {"));
     assert!(go_text.contains("func (p *Parent) SetChild(value *Child) {"));
 }

@@ -3,9 +3,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use anyhow::{Result, bail};
 use serde::Serialize;
 
+pub use crate::domain::kind::{FieldAccessKind, IrFunctionKind, IrTypeKind};
+
 use crate::{
     config::Config,
-    domain::kind::{FieldAccessKind, IrFunctionKind, IrTypeKind},
     parser::{
         CppCallbackTypedef, CppClass, CppConstructor, CppEnum, CppField, CppFunction, CppMethod,
         CppParam, ParsedApi,
