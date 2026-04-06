@@ -183,6 +183,12 @@ pub fn normalize(config: &Config, api: &ParsedApi) -> Result<IrModule> {
     let mut callbacks = Vec::new();
     let mut skipped_declarations = Vec::new();
     let callback_names = callback_name_set(api);
+    let abstract_types = api
+        .classes
+        .iter()
+        .filter(|class| class.is_abstract)
+        .map(|class| cpp_qualified(&class.namespace, &class.name))
+        .collect::<BTreeSet<_>>();
 
     for class in &api.classes {
         let handle_name = format!("{}Handle", flatten_cpp_name(&class.namespace, &class.name));
@@ -194,14 +200,20 @@ pub fn normalize(config: &Config, api: &ParsedApi) -> Result<IrModule> {
             config,
             class,
             &handle_name,
+            &abstract_types,
             &callback_names,
             &mut skipped_declarations,
         )?);
     }
 
     for function in &api.functions {
-        if let Some(function) =
-            normalize_function(config, function, &callback_names, &mut skipped_declarations)?
+        if let Some(function) = normalize_function(
+            config,
+            function,
+            &abstract_types,
+            &callback_names,
+            &mut skipped_declarations,
+        )?
         {
             functions.push(function);
         }
@@ -347,6 +359,7 @@ fn normalize_class(
     config: &Config,
     class: &CppClass,
     handle_name: &str,
+    abstract_types: &BTreeSet<String>,
     callback_names: &BTreeSet<String>,
     skipped_declarations: &mut Vec<SkippedDeclaration>,
 ) -> Result<Vec<IrFunction>> {
@@ -422,15 +435,16 @@ fn normalize_class(
     });
 
     for method in &class.methods {
-        if let Some(function) = normalize_method(
-            config,
-            class,
-            handle_name,
-            method,
-            callback_names,
-            skipped_declarations,
-        )? {
-            functions.push(function);
+            if let Some(function) = normalize_method(
+                config,
+                class,
+                handle_name,
+                method,
+                abstract_types,
+                callback_names,
+                skipped_declarations,
+            )? {
+                functions.push(function);
         }
     }
 
@@ -653,6 +667,7 @@ fn normalize_method(
     class: &CppClass,
     handle_name: &str,
     method: &CppMethod,
+    abstract_types: &BTreeSet<String>,
     callback_names: &BTreeSet<String>,
     skipped_declarations: &mut Vec<SkippedDeclaration>,
 ) -> Result<Option<IrFunction>> {
@@ -722,6 +737,7 @@ fn normalize_method(
             config,
             &method.return_type,
             &method.return_canonical_type,
+            abstract_types,
             callback_names,
         )?,
         params,
@@ -731,6 +747,7 @@ fn normalize_method(
 fn normalize_function(
     config: &Config,
     function: &CppFunction,
+    abstract_types: &BTreeSet<String>,
     callback_names: &BTreeSet<String>,
     skipped_declarations: &mut Vec<SkippedDeclaration>,
 ) -> Result<Option<IrFunction>> {
@@ -774,6 +791,7 @@ fn normalize_function(
             config,
             &function.return_type,
             &function.return_canonical_type,
+            abstract_types,
             callback_names,
         )?,
         params: function
@@ -836,16 +854,21 @@ fn normalize_return_type_with_canonical(
     config: &Config,
     cpp_type: &str,
     canonical_type: &str,
+    abstract_types: &BTreeSet<String>,
     callback_names: &BTreeSet<String>,
 ) -> Result<IrType> {
     let mut ty = normalize_type_with_canonical(config, cpp_type, canonical_type, callback_names)?;
-    if matches!(
-        ty.kind,
-        IrTypeKind::ModelReference | IrTypeKind::ModelPointer
-    ) {
+    if matches!(ty.kind, IrTypeKind::ModelReference | IrTypeKind::ModelPointer)
+        && !is_abstract_model_type(&ty.cpp_type, abstract_types)
+    {
         ty.kind = IrTypeKind::ModelView;
     }
     Ok(ty)
+}
+
+fn is_abstract_model_type(cpp_type: &str, abstract_types: &BTreeSet<String>) -> bool {
+    let base = base_model_cpp_type(cpp_type);
+    !base.is_empty() && abstract_types.contains(&base)
 }
 
 fn function_pointer_reason(
@@ -1582,12 +1605,30 @@ mod tests {
             &Config::default(),
             "ThingModel*",
             "ThingModel*",
+            &BTreeSet::new(),
             &callback_names,
         )
         .unwrap();
 
         assert_eq!(ty.kind, "model_view");
         assert_eq!(ty.c_type, "ThingModelHandle*");
+    }
+
+    #[test]
+    fn keeps_abstract_model_pointer_returns_as_model_pointer() {
+        let callback_names = BTreeSet::new();
+        let abstract_types = BTreeSet::from([String::from("DBHandler")]);
+        let ty = normalize_return_type_with_canonical(
+            &Config::default(),
+            "DBHandler*",
+            "DBHandler*",
+            &abstract_types,
+            &callback_names,
+        )
+        .unwrap();
+
+        assert_eq!(ty.kind, "model_pointer");
+        assert_eq!(ty.c_type, "DBHandlerHandle*");
     }
 
     #[test]
