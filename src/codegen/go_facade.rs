@@ -3,10 +3,10 @@ use std::{collections::BTreeMap, path::Path};
 use anyhow::{Result, bail};
 
 use crate::{
-    analysis::model_analysis,
+    codegen::ir_norm,
     domain::kind::{IrFunctionKind, IrTypeKind},
     ir::{IrCallback, IrEnum, IrFunction, IrModule, IrType},
-    pipeline::context::{PipelineContext, PipelineInput},
+    pipeline::context::PipelineContext,
 };
 
 #[derive(Debug)]
@@ -39,15 +39,10 @@ struct CallbackUsage<'a> {
     param_index: usize,
 }
 
-pub fn render_go_facade<T: PipelineInput + ?Sized>(
-    input: &T,
+pub fn render_go_facade(
+    config: &PipelineContext,
     ir: &IrModule,
 ) -> Result<Vec<GeneratedGoFile>> {
-    let mut config = input.to_pipeline_context();
-    if config.known_model_projections.is_empty() {
-        let projections = model_analysis::collect_known_model_projections(&config, ir)?;
-        config = config.with_known_model_projections(projections);
-    }
     let functions = ir
         .functions
         .iter()
@@ -854,7 +849,7 @@ fn render_callback_free_function(config: &PipelineContext, function: &IrFunction
 fn render_callback_call_prep(
     config: &PipelineContext,
     function: &IrFunction,
-    params: &[&crate::ir::IrParam],
+    params: &[&ir_norm::IrParam],
     param_offset: usize,
 ) -> RenderedCallPrep {
     let mut prep = RenderedCallPrep::default();
@@ -897,7 +892,7 @@ fn render_callback_call_prep(
     prep
 }
 
-fn render_param_list(config: &PipelineContext, params: &[&crate::ir::IrParam]) -> String {
+fn render_param_list(config: &PipelineContext, params: &[&ir_norm::IrParam]) -> String {
     params
         .iter()
         .map(|param| {
@@ -911,7 +906,7 @@ fn render_param_list(config: &PipelineContext, params: &[&crate::ir::IrParam]) -
         .join(", ")
 }
 
-fn render_call_prep(config: &PipelineContext, params: &[&crate::ir::IrParam]) -> RenderedCallPrep {
+fn render_call_prep(config: &PipelineContext, params: &[&ir_norm::IrParam]) -> RenderedCallPrep {
     let mut prep = RenderedCallPrep::default();
 
     for (index, param) in params.iter().enumerate() {
@@ -1011,11 +1006,11 @@ fn indented_lines(lines: &[String]) -> String {
         .collect::<String>()
 }
 
-fn has_string_params<'a>(mut params: impl Iterator<Item = &'a crate::ir::IrParam>) -> bool {
+fn has_string_params<'a>(mut params: impl Iterator<Item = &'a ir_norm::IrParam>) -> bool {
     params.any(|param| matches!(param.ty.kind, IrTypeKind::String | IrTypeKind::CString))
 }
 
-fn has_pointer_params<'a>(mut params: impl Iterator<Item = &'a crate::ir::IrParam>) -> bool {
+fn has_pointer_params<'a>(mut params: impl Iterator<Item = &'a ir_norm::IrParam>) -> bool {
     params.any(|param| {
         matches!(
             param.ty.kind,
@@ -1052,7 +1047,7 @@ fn render_model_arg(
     prep.args.push(c_name);
 }
 
-fn has_callback_param<'a>(mut params: impl Iterator<Item = &'a crate::ir::IrParam>) -> bool {
+fn has_callback_param<'a>(mut params: impl Iterator<Item = &'a ir_norm::IrParam>) -> bool {
     params.any(|param| param.ty.kind == IrTypeKind::Callback)
 }
 
@@ -1165,14 +1160,13 @@ fn go_param_type(config: &PipelineContext, ty: &IrType) -> Option<String> {
     }
 }
 
-fn go_return_supported(config: &PipelineContext, ty: &IrType) -> bool {
+fn go_return_supported(_config: &PipelineContext, ty: &IrType) -> bool {
     ty.kind == IrTypeKind::Void
         || matches!(ty.kind, IrTypeKind::String | IrTypeKind::CString)
         || (ty.kind == IrTypeKind::Primitive && go_type_for_ir(ty).is_some())
         || (ty.kind == IrTypeKind::Pointer && go_pointer_return_type(ty).is_some())
         || matches!(ty.kind, IrTypeKind::ModelPointer | IrTypeKind::ModelView)
-        || (ty.kind == IrTypeKind::ModelValue
-            && config.known_model_projection(&ty.cpp_type).is_some())
+        || ty.kind == IrTypeKind::ModelValue
 }
 
 fn go_pointer_return_type(ty: &IrType) -> Option<String> {
@@ -1877,7 +1871,7 @@ mod tests {
 
     #[test]
     fn render_go_facade_uses_capitalized_struct_name_for_lowercase_cpp_class() {
-        use crate::ir::{IrModule, OpaqueType, SupportMetadata};
+        use crate::codegen::ir_norm::{IrModule, OpaqueType, SupportMetadata};
 
         let handle_name = "myApiHandle".to_string();
         let self_param = IrParam {

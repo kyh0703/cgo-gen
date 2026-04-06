@@ -1,6 +1,6 @@
 use std::{env, fs};
 
-use cgo_gen::{config::Config, generator, ir, parser};
+use cgo_gen::{config::Config, generator, ir, parser, pipeline::context::PipelineContext};
 
 fn temp_output_dir(label: &str) -> std::path::PathBuf {
     let mut path = env::temp_dir();
@@ -15,9 +15,10 @@ fn generates_go_facade_for_simple_free_function_header() {
     let mut config = Config::load("tests/fixtures/simple/config.yaml").unwrap();
     config.output.dir = temp_output_dir("generate");
 
-    let parsed = parser::parse(&config).unwrap();
-    let ir = ir::normalize(&config, &parsed).unwrap();
-    generator::generate(&config, &ir, true).unwrap();
+    let ctx = generator::prepare_config(&PipelineContext::new(config.clone())).unwrap();
+    let parsed = parser::parse(&ctx).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
+    generator::generate(&ctx, &ir, true).unwrap();
 
     let go_facade = fs::read_to_string(config.output_dir().join(config.go_filename(""))).unwrap();
 
@@ -68,9 +69,10 @@ naming:
     .unwrap();
 
     let config = Config::load(&config_path).unwrap();
-    let parsed = parser::parse(&config).unwrap();
-    let ir = ir::normalize(&config, &parsed).unwrap();
-    generator::generate(&config, &ir, true).unwrap();
+    let ctx = generator::prepare_config(&PipelineContext::new(config.clone())).unwrap();
+    let parsed = parser::parse(&ctx).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
+    generator::generate(&ctx, &ir, true).unwrap();
 
     let go_facade = fs::read_to_string(config.output_dir().join(config.go_filename(""))).unwrap();
 
@@ -128,9 +130,10 @@ naming:
     .unwrap();
 
     let config = Config::load(&config_path).unwrap();
-    let parsed = parser::parse(&config).unwrap();
-    let ir = ir::normalize(&config, &parsed).unwrap();
-    let error = generator::generate(&config, &ir, true)
+    let ctx = generator::prepare_config(&PipelineContext::new(config)).unwrap();
+    let parsed = parser::parse(&ctx).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
+    let error = generator::generate(&ctx, &ir, true)
         .unwrap_err()
         .to_string();
 
@@ -180,9 +183,10 @@ naming:
     .unwrap();
 
     let config = Config::load(&config_path).unwrap();
-    let parsed = parser::parse(&config).unwrap();
-    let ir = ir::normalize(&config, &parsed).unwrap();
-    generator::generate(&config, &ir, true).unwrap();
+    let ctx = generator::prepare_config(&PipelineContext::new(config)).unwrap();
+    let parsed = parser::parse(&ctx).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
+    generator::generate(&ctx, &ir, true).unwrap();
 
     let go_facade = fs::read_to_string(root.join("out/media_wrapper.go")).unwrap();
 
@@ -241,7 +245,8 @@ naming:
     .unwrap();
 
     let config = Config::load(&config_path).unwrap();
-    generator::generate_all(&config, true).unwrap();
+    let ctx = PipelineContext::new(config.clone());
+    generator::generate_all(&ctx, true).unwrap();
 
     let go_facade = fs::read_to_string(root.join("out/api_wrapper.go")).unwrap();
 
@@ -304,7 +309,8 @@ naming:
     .unwrap();
 
     let config = Config::load(&config_path).unwrap();
-    generator::generate_all(&config, true).unwrap();
+    let ctx = PipelineContext::new(config.clone());
+    generator::generate_all(&ctx, true).unwrap();
 
     let go_facade = fs::read_to_string(root.join("out/api_wrapper.go")).unwrap();
 
@@ -373,7 +379,8 @@ naming:
     .unwrap();
 
     let config = Config::load(&config_path).unwrap();
-    generator::generate_all(&config, true).unwrap();
+    let ctx = PipelineContext::new(config.clone());
+    generator::generate_all(&ctx, true).unwrap();
 
     let go_facade = fs::read_to_string(root.join("out/api_wrapper.go")).unwrap();
 
@@ -472,7 +479,8 @@ naming:
     .unwrap();
 
     let config = Config::load(&config_path).unwrap();
-    generator::generate_all(&config, true).unwrap();
+    let ctx = PipelineContext::new(config.clone());
+    generator::generate_all(&ctx, true).unwrap();
 
     let raw_header = fs::read_to_string(root.join("out/api_wrapper.h")).unwrap();
     let raw_source = fs::read_to_string(root.join("out/api_wrapper.cpp")).unwrap();
@@ -559,7 +567,10 @@ naming:
     )
     .unwrap();
 
-    let prepared = generator::prepare_config(&Config::load(&config_path).unwrap()).unwrap();
+    let prepared = generator::prepare_config(&PipelineContext::new(
+        Config::load(&config_path).unwrap(),
+    ))
+    .unwrap();
     let facade_header = prepared
         .input
         .headers
@@ -636,7 +647,8 @@ naming:
     .unwrap();
 
     let config = Config::load(&config_path).unwrap();
-    generator::generate_all(&config, true).unwrap();
+    let ctx = PipelineContext::new(config.clone());
+    generator::generate_all(&ctx, true).unwrap();
 
     let go_facade = fs::read_to_string(root.join("out/api_wrapper.go")).unwrap();
 
@@ -701,7 +713,8 @@ naming:
     .unwrap();
 
     let config = Config::load(&config_path).unwrap();
-    generator::generate_all(&config, true).unwrap();
+    let ctx = PipelineContext::new(config.clone());
+    generator::generate_all(&ctx, true).unwrap();
 
     let raw_source = fs::read_to_string(root.join("out/api_wrapper.cpp")).unwrap();
     let go_facade = fs::read_to_string(root.join("out/api_wrapper.go")).unwrap();
@@ -772,7 +785,8 @@ naming:
     .unwrap();
 
     let config = Config::load(&config_path).unwrap();
-    generator::generate_all(&config, true).unwrap();
+    let ctx = PipelineContext::new(config.clone());
+    generator::generate_all(&ctx, true).unwrap();
 
     let go_facade = fs::read_to_string(root.join("out/api_wrapper.go")).unwrap();
 
@@ -836,7 +850,8 @@ naming:
     .unwrap();
 
     let config = Config::load(&config_path).unwrap();
-    generator::generate_all(&config, true).unwrap();
+    let ctx = PipelineContext::new(config.clone());
+    generator::generate_all(&ctx, true).unwrap();
 
     let go_model = fs::read_to_string(root.join("out/is_web_hook_wrapper.go")).unwrap();
     let go_facade = fs::read_to_string(root.join("out/i_si_lib_wrapper.go")).unwrap();
@@ -902,7 +917,8 @@ naming:
     .unwrap();
 
     let config = Config::load(&config_path).unwrap();
-    generator::generate_all(&config, true).unwrap();
+    let ctx = PipelineContext::new(config.clone());
+    generator::generate_all(&ctx, true).unwrap();
 
     let ir_dump = fs::read_to_string(root.join("out/api_wrapper.ir.yaml")).unwrap();
     let raw_header = fs::read_to_string(root.join("out/api_wrapper.h")).unwrap();

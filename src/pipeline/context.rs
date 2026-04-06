@@ -1,7 +1,4 @@
-use std::{
-    ops::{Deref, DerefMut},
-    path::PathBuf,
-};
+use std::{ops::Deref, path::PathBuf};
 
 use anyhow::Result;
 
@@ -37,6 +34,11 @@ impl PipelineContext {
 
     pub fn with_raw_clang_args(mut self, raw_clang_args: Vec<String>) -> Self {
         self.raw_clang_args = raw_clang_args;
+        self
+    }
+
+    pub fn with_output_dir(mut self, output_dir: PathBuf) -> Self {
+        self.config.output.dir = output_dir;
         self
     }
 
@@ -96,33 +98,11 @@ impl PipelineContext {
     }
 }
 
-pub trait PipelineInput {
-    fn to_pipeline_context(&self) -> PipelineContext;
-}
-
-impl PipelineInput for PipelineContext {
-    fn to_pipeline_context(&self) -> PipelineContext {
-        self.clone()
-    }
-}
-
-impl PipelineInput for Config {
-    fn to_pipeline_context(&self) -> PipelineContext {
-        PipelineContext::new(self.clone())
-    }
-}
-
 impl Deref for PipelineContext {
     type Target = Config;
 
     fn deref(&self) -> &Self::Target {
         &self.config
-    }
-}
-
-impl DerefMut for PipelineContext {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.config
     }
 }
 
