@@ -487,9 +487,9 @@ fn render_callable_body(function: &IrFunction, target: &str, arg_start: usize) -
 fn render_field_getter_body(function: &IrFunction, receiver: &str, field_name: &str) -> String {
     match function.returns.kind {
         IrTypeKind::ModelValue => format!(
-            "    return reinterpret_cast<{}>(new {}({receiver}->{}));\n",
+            "    return reinterpret_cast<{}>(new decltype({receiver}->{})({receiver}->{}));\n",
             function.returns.c_type,
-            base_model_cpp_type(&function.returns.cpp_type),
+            field_name,
             field_name
         ),
         _ => format!("    return {receiver}->{};\n", field_name),
@@ -512,9 +512,9 @@ fn render_field_setter_body(function: &IrFunction, receiver: &str, field_name: &
             )
         }
         IrTypeKind::ModelValue => format!(
-            "    {receiver}->{} = *reinterpret_cast<{}*>(value);\n",
+            "    {receiver}->{} = *reinterpret_cast<decltype({receiver}->{})* >(value);\n",
             field_name,
-            base_model_cpp_type(&value_param.ty.cpp_type)
+            field_name
         ),
         _ => format!("    {receiver}->{} = value;\n", field_name),
     }
