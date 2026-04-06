@@ -493,7 +493,7 @@ naming:
 }
 
 #[test]
-fn skips_raw_unsafe_by_value_internal_types_without_aborting_supported_facade_output() {
+fn keeps_by_value_return_support_while_skipping_raw_unsafe_by_value_params() {
     let root = temp_output_dir("unknown-model-by-value-skip");
     let include_dir = root.join("include");
     fs::create_dir_all(&include_dir).unwrap();
@@ -595,7 +595,7 @@ naming:
     assert!(go_facade.contains("func (a *Api) Count() int {"));
     assert!(go_facade.contains("func (a *Api) GetThing(id int, out *ThingModel) bool {"));
     assert!(!go_facade.contains("SaveUnknown("));
-    assert!(!go_facade.contains("BuildUnknown("));
+    assert!(go_facade.contains("func (a *Api) BuildUnknown() *UnknownThing {"));
 }
 
 #[test]
