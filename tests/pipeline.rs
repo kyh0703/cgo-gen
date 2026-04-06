@@ -1,6 +1,9 @@
 use std::{env, fs};
 
-use cgo_gen::{config::Config, domain::kind::IrTypeKind, generator, ir, parser};
+use cgo_gen::{
+    config::Config, domain::kind::IrTypeKind, generator, ir, parser,
+    pipeline::context::PipelineContext,
+};
 
 fn temp_output_dir(label: &str) -> std::path::PathBuf {
     let mut path = env::temp_dir();
@@ -13,12 +16,13 @@ fn temp_output_dir(label: &str) -> std::path::PathBuf {
 #[test]
 fn parses_fixture_and_builds_ir() {
     let config = Config::load("tests/fixtures/simple/config.yaml").unwrap();
-    let parsed = parser::parse(&config).unwrap();
+    let ctx = PipelineContext::new(config);
+    let parsed = parser::parse(&ctx).unwrap();
     assert_eq!(parsed.classes.len(), 1);
     assert_eq!(parsed.functions.len(), 1);
     assert_eq!(parsed.enums.len(), 1);
 
-    let ir = ir::normalize(&config, &parsed).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
     assert!(
         ir.functions
             .iter()
@@ -38,9 +42,10 @@ fn parses_fixture_and_builds_ir() {
 fn generates_wrapper_files() {
     let mut config = Config::load("tests/fixtures/simple/config.yaml").unwrap();
     config.output.dir = temp_output_dir("generate");
-    let parsed = parser::parse(&config).unwrap();
-    let ir = ir::normalize(&config, &parsed).unwrap();
-    generator::generate(&config, &ir, true).unwrap();
+    let ctx = generator::prepare_config(&PipelineContext::new(config.clone())).unwrap();
+    let parsed = parser::parse(&ctx).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
+    generator::generate(&ctx, &ir, true).unwrap();
 
     let header = fs::read_to_string(config.output_dir().join(&config.output.header)).unwrap();
     let source = fs::read_to_string(config.output_dir().join(&config.output.source)).unwrap();

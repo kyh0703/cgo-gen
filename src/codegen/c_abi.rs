@@ -8,15 +8,14 @@ use anyhow::{Context, Result, bail};
 
 use crate::{
     analysis::model_analysis,
+    codegen::{go_facade as facade, ir_norm as ir},
     domain::kind::{FieldAccessKind, IrFunctionKind, IrTypeKind},
-    facade,
-    ir::{IrCallback, IrFunction, IrFunctionKind, IrModule, IrParam, IrType, IrTypeKind},
-    parser,
-    pipeline::context::{PipelineContext, PipelineInput},
+    ir::{IrCallback, IrFunction, IrModule, IrParam, IrType},
+    parsing::parser,
+    pipeline::context::PipelineContext,
 };
 
-pub fn generate_all<T: PipelineInput + ?Sized>(input: &T, write_ir: bool) -> Result<()> {
-    let ctx = input.to_pipeline_context();
+pub fn generate_all(ctx: &PipelineContext, write_ir: bool) -> Result<()> {
     let (ctx, parsed) = prepare_with_parsed(&ctx)?;
     let generation_headers = generation_headers(&ctx);
 
@@ -37,7 +36,7 @@ pub fn generate_all<T: PipelineInput + ?Sized>(input: &T, write_ir: bool) -> Res
             .as_deref()
             .map(|header| parsed.filter_to_header(header))
             .unwrap_or_else(|| parsed.clone());
-        let ir = crate::ir::normalize(&scoped, &header_api)?;
+        let ir = ir::normalize(&scoped, &header_api)?;
         return generate(&scoped, &ir, write_ir);
     }
 
@@ -47,7 +46,7 @@ pub fn generate_all<T: PipelineInput + ?Sized>(input: &T, write_ir: bool) -> Res
         if header_api.is_empty() {
             continue;
         }
-        let ir = crate::ir::normalize(&scoped, &header_api)?;
+        let ir = ir::normalize(&scoped, &header_api)?;
         generate(&scoped, &ir, write_ir)?;
     }
 
@@ -80,19 +79,16 @@ fn scan_generation_headers(dir: &Path) -> Result<Vec<PathBuf>> {
     Ok(headers.into_iter().collect())
 }
 
-pub fn prepare_context<T: PipelineInput + ?Sized>(input: &T) -> Result<PipelineContext> {
-    Ok(prepare_with_parsed(input)?.0)
+pub fn prepare_context(ctx: &PipelineContext) -> Result<PipelineContext> {
+    Ok(prepare_with_parsed(ctx)?.0)
 }
 
-pub fn prepare_config<T: PipelineInput + ?Sized>(input: &T) -> Result<PipelineContext> {
-    prepare_context(input)
+pub fn prepare_config(ctx: &PipelineContext) -> Result<PipelineContext> {
+    prepare_context(ctx)
 }
 
-pub fn prepare_with_parsed<T: PipelineInput + ?Sized>(
-    input: &T,
-) -> Result<(PipelineContext, parser::ParsedApi)> {
-    let ctx = input.to_pipeline_context();
-    let parsed = parser::parse(&ctx)?;
+pub fn prepare_with_parsed(ctx: &PipelineContext) -> Result<(PipelineContext, parser::ParsedApi)> {
+    let parsed = parser::parse(ctx)?;
     let ctx = build_pipeline_context(&ctx, &parsed)?;
     Ok((ctx, parsed))
 }
@@ -103,7 +99,7 @@ fn build_pipeline_context(
 ) -> Result<PipelineContext> {
     let known_model_types = collect_known_model_types(parsed);
     let scoped = ctx.clone().with_known_model_types(known_model_types);
-    let ir = crate::ir::normalize(&scoped, parsed)?;
+    let ir = ir::normalize(&scoped, parsed)?;
     let known_model_projections = model_analysis::collect_known_model_projections(&scoped, &ir)?;
     Ok(scoped.with_known_model_projections(known_model_projections))
 }
@@ -124,8 +120,7 @@ fn collect_known_model_types(parsed: &parser::ParsedApi) -> Vec<String> {
         .collect()
 }
 
-pub fn generate<T: PipelineInput + ?Sized>(input: &T, ir: &IrModule, write_ir: bool) -> Result<()> {
-    let ctx = input.to_pipeline_context();
+pub fn generate(ctx: &PipelineContext, ir: &IrModule, write_ir: bool) -> Result<()> {
     fs::create_dir_all(ctx.output_dir()).with_context(|| {
         format!(
             "failed to create output dir: {}",
@@ -254,8 +249,7 @@ fn go_package_name(path: &Path) -> String {
     }
 }
 
-pub fn render_header<T: PipelineInput + ?Sized>(input: &T, ir: &IrModule) -> String {
-    let ctx = input.to_pipeline_context();
+pub fn render_header(ctx: &PipelineContext, ir: &IrModule) -> String {
     let guard = format!(
         "{}_{}",
         ctx.naming.prefix.to_uppercase(),
@@ -308,8 +302,7 @@ pub fn render_header<T: PipelineInput + ?Sized>(input: &T, ir: &IrModule) -> Str
     out
 }
 
-pub fn render_source<T: PipelineInput + ?Sized>(input: &T, ir: &IrModule) -> String {
-    let ctx = input.to_pipeline_context();
+pub fn render_source(ctx: &PipelineContext, ir: &IrModule) -> String {
     let mut out = String::new();
     out.push_str(&format!("#include \"{}\"\n", ctx.output.header));
     out.push_str("#include <cstdlib>\n#include <cstring>\n#include <new>\n#include <string>\n\n");
@@ -348,11 +341,8 @@ pub fn render_source<T: PipelineInput + ?Sized>(input: &T, ir: &IrModule) -> Str
     out
 }
 
-pub fn render_go_structs<T: PipelineInput + ?Sized>(
-    input: &T,
-    ir: &IrModule,
-) -> Result<Vec<GeneratedGoFile>> {
-    facade::render_go_facade(input, ir)
+pub fn render_go_structs(ctx: &PipelineContext, ir: &IrModule) -> Result<Vec<GeneratedGoFile>> {
+    facade::render_go_facade(ctx, ir)
 }
 
 fn render_callback_decl(out: &mut String, callback: &IrCallback) {
@@ -372,7 +362,7 @@ fn render_callback_decl(out: &mut String, callback: &IrCallback) {
     ));
 }
 
-pub use crate::facade::GeneratedGoFile;
+pub use crate::codegen::go_facade::GeneratedGoFile;
 
 fn render_function_decl(function: &IrFunction) -> String {
     let params = render_param_list(function);
@@ -511,6 +501,16 @@ fn render_field_setter_body(function: &IrFunction, receiver: &str, field_name: &
         return format!("    {receiver}->{} = value;\n", field_name);
     };
     match value_param.ty.kind {
+        IrTypeKind::CString => {
+            let Some(length) = char_array_length(&value_param.ty.cpp_type) else {
+                return format!("    {receiver}->{} = value;\n", field_name);
+            };
+            let copy_len = length.saturating_sub(1);
+            format!(
+                "    if (value == nullptr) {{\n        {receiver}->{}[0] = '\\0';\n        return;\n    }}\n    std::strncpy({receiver}->{}, value, {});\n    {receiver}->{}[{}] = '\\0';\n",
+                field_name, field_name, copy_len, field_name, copy_len
+            )
+        }
         IrTypeKind::ModelValue => format!(
             "    {receiver}->{} = *reinterpret_cast<{}*>(value);\n",
             field_name,
@@ -559,6 +559,10 @@ fn render_cpp_arg(ty: IrType, name: &str) -> String {
             .unwrap_or_else(|| name.to_string()),
         IrTypeKind::ExternStructReference => format!("*{name}"),
         IrTypeKind::ModelReference => format!(
+            "*reinterpret_cast<{}*>({name})",
+            base_model_cpp_type(&ty.cpp_type)
+        ),
+        IrTypeKind::ModelValue => format!(
             "*reinterpret_cast<{}*>({name})",
             base_model_cpp_type(&ty.cpp_type)
         ),

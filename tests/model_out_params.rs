@@ -1,6 +1,6 @@
 use std::{env, fs, path::PathBuf};
 
-use cgo_gen::{config::Config, generator};
+use cgo_gen::{config::Config, generator, pipeline::context::PipelineContext};
 
 fn temp_dir(label: &str) -> PathBuf {
     let mut path = env::temp_dir();
@@ -61,7 +61,8 @@ naming:
     .unwrap();
 
     let config = Config::load(&config_path).unwrap();
-    generator::generate_all(&config, true).unwrap();
+    let ctx = PipelineContext::new(config.clone());
+    generator::generate_all(&ctx, true).unwrap();
 
     let raw_output_dir = root.join("gen");
     let api_header = fs::read_to_string(raw_output_dir.join("api_wrapper.h")).unwrap();
@@ -133,7 +134,8 @@ naming:
     .unwrap();
 
     let config = Config::load(&config_path).unwrap();
-    generator::generate_all(&config, true).unwrap();
+    let ctx = PipelineContext::new(config.clone());
+    generator::generate_all(&ctx, true).unwrap();
 
     let api_go = fs::read_to_string(root.join("gen/api_wrapper.go")).unwrap();
 
