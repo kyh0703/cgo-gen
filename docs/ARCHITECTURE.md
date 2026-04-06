@@ -39,6 +39,20 @@
 - Emits physical files under `output.dir/`.
 - Hides raw iteration, callbacks, native error codes, and native calling conventions.
 
+## Runtime boundaries
+
+The generator now separates file configuration, runtime pipeline state, analysis, and rendering more explicitly.
+
+- `Config` is the persisted file configuration only.
+- `PipelineContext` owns runtime-derived state such as scoped headers, resolved clang args, discovered model types, and analyzed model projections.
+- `domain::kind` owns the serialized IR enums (`IrTypeKind`, `IrFunctionKind`, `FieldAccessKind`) so IR classification is checked at compile time instead of being carried as free-form strings.
+- `domain::model_projection` owns the single shared projection model used by analysis and rendering.
+- `parsing` owns libclang parsing and translation-unit collection.
+- `analysis` owns derived model projection analysis.
+- `codegen` owns IR normalization plus C ABI and Go facade rendering.
+
+The important enforced boundary is that parsing and IR normalization now require `PipelineContext` directly. Raw `Config` no longer acts as an implicit pipeline input, and renderers consume analyzed pipeline state instead of recomputing it ad hoc.
+
 ## Design principle
 
 The generated wrapping package is not the place for business logic. Its job is to expose a stable, reusable shared SDK over the native SIL surface so DCM/HTD/other IE modules can share the same models and common APIs.
@@ -91,3 +105,4 @@ For the current facade slice, the design now applies **model-aware routing first
   - namespaced facade functions that would collide in Go export names are rejected during generation.
 - Typedef/DTO model generation, model-mapped collection facade generation, callback facade generation, and richer type-driven facade lifting beyond the first out-param pattern are not implemented yet.
 - Review note (2026-03-25): the current durable real-SIL evidence still supports keeping `IsAAMaster.h` as the only verified checked-in shared model header. Raw-visible types such as `IsCluster` and `IsCSTASession` remain non-onboarded until a narrower public-model case is proven.
+- Update note (2026-04-06): the codebase layout now follows the current DDD split in implemented form, with `src/parsing/`, `src/codegen/`, `src/analysis/`, `src/domain/`, and `src/pipeline/` carrying the main boundaries above.
