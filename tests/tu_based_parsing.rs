@@ -95,7 +95,8 @@ output:
     .unwrap();
 
     let config = Config::load(fixture.join("config.yaml")).unwrap();
-    let parsed = parser::parse(&config).unwrap();
+    let ctx = PipelineContext::new(config);
+    let parsed = parser::parse(&ctx).unwrap();
 
     assert!(
         parsed

@@ -4,7 +4,7 @@ use std::{
     process::Command,
 };
 
-use cgo_gen::{config::Config, generator, ir, parser};
+use cgo_gen::{config::Config, generator, ir, parser, pipeline::context::PipelineContext};
 
 fn temp_output_dir(label: &str) -> PathBuf {
     let mut path = env::temp_dir();
@@ -35,9 +35,10 @@ fn project_root() -> PathBuf {
 fn generated_wrapper_compiles_and_runs_against_sample_cpp_library() {
     let mut config = Config::load("cppgo-wrap.yaml").unwrap();
     config.output.dir = temp_output_dir("link");
-    let parsed = parser::parse(&config).unwrap();
-    let ir = ir::normalize(&config, &parsed).unwrap();
-    generator::generate(&config, &ir, true).unwrap();
+    let ctx = generator::prepare_config(&PipelineContext::new(config.clone())).unwrap();
+    let parsed = parser::parse(&ctx).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
+    generator::generate(&ctx, &ir, true).unwrap();
 
     let smoke_cpp = config.output.dir.join("smoke.cpp");
     fs::write(
@@ -139,9 +140,10 @@ output:
     .unwrap();
 
     let config = Config::load(root.join("config.yaml")).unwrap();
-    let parsed = parser::parse(&config).unwrap();
-    let ir = ir::normalize(&config, &parsed).unwrap();
-    generator::generate(&config, &ir, true).unwrap();
+    let ctx = generator::prepare_config(&PipelineContext::new(config.clone())).unwrap();
+    let parsed = parser::parse(&ctx).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
+    generator::generate(&ctx, &ir, true).unwrap();
 
     let smoke_cpp = config.output.dir.join("smoke.cpp");
     fs::write(
@@ -221,9 +223,10 @@ output:
     .unwrap();
 
     let config = Config::load(root.join("config.yaml")).unwrap();
-    let parsed = parser::parse(&config).unwrap();
-    let ir = ir::normalize(&config, &parsed).unwrap();
-    generator::generate(&config, &ir, true).unwrap();
+    let ctx = generator::prepare_config(&PipelineContext::new(config.clone())).unwrap();
+    let parsed = parser::parse(&ctx).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
+    generator::generate(&ctx, &ir, true).unwrap();
 
     let smoke_cpp = config.output.dir.join("smoke.cpp");
     fs::write(
@@ -297,9 +300,10 @@ output:
     .unwrap();
 
     let config = Config::load(root.join("config.yaml")).unwrap();
-    let parsed = parser::parse(&config).unwrap();
-    let ir = ir::normalize(&config, &parsed).unwrap();
-    generator::generate(&config, &ir, true).unwrap();
+    let ctx = generator::prepare_config(&PipelineContext::new(config.clone())).unwrap();
+    let parsed = parser::parse(&ctx).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
+    generator::generate(&ctx, &ir, true).unwrap();
 
     let header = fs::read_to_string(config.output_dir().join(&config.output.header)).unwrap();
     let go_wrapper = fs::read_to_string(config.output_dir().join(config.go_filename(""))).unwrap();
@@ -389,9 +393,10 @@ output:
     .unwrap();
 
     let config = Config::load(root.join("config.yaml")).unwrap();
-    let parsed = parser::parse(&config).unwrap();
-    let ir = ir::normalize(&config, &parsed).unwrap();
-    generator::generate(&config, &ir, true).unwrap();
+    let ctx = generator::prepare_config(&PipelineContext::new(config.clone())).unwrap();
+    let parsed = parser::parse(&ctx).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
+    generator::generate(&ctx, &ir, true).unwrap();
 
     let smoke_cpp = config.output.dir.join("smoke.cpp");
     fs::write(
@@ -493,9 +498,10 @@ output:
     .unwrap();
 
     let config = Config::load(root.join("config.yaml")).unwrap();
-    let parsed = parser::parse(&config).unwrap();
-    let ir = ir::normalize(&config, &parsed).unwrap();
-    generator::generate(&config, &ir, true).unwrap();
+    let ctx = generator::prepare_config(&PipelineContext::new(config.clone())).unwrap();
+    let parsed = parser::parse(&ctx).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
+    generator::generate(&ctx, &ir, true).unwrap();
 
     let source = fs::read_to_string(config.output_dir().join(&config.output.source)).unwrap();
     assert!(source.contains(

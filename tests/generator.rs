@@ -10,15 +10,16 @@ use std::{env, fs};
 #[test]
 fn renders_header_and_source_from_fixture() {
     let config = Config::load("tests/fixtures/simple/config.yaml").unwrap();
-    let parsed = parser::parse(&config).unwrap();
-    let ir = ir::normalize(&config, &parsed).unwrap();
+    let ctx = PipelineContext::new(config.clone());
+    let parsed = parser::parse(&ctx).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
 
-    let header = render_header(&config, &ir);
+    let header = render_header(&ctx, &ir);
     assert!(header.contains("typedef struct fooBarHandle fooBarHandle;"));
     assert!(header.contains("fooBarHandle* cgowrap_foo_bar_new(int value);"));
     assert!(header.contains("char* cgowrap_foo_bar_name(const fooBarHandle* self);"));
 
-    let source = render_source(&config, &ir);
+    let source = render_source(&ctx, &ir);
     assert!(source.contains(&format!("#include \"{}\"", config.output.header)));
     assert!(source.contains("return reinterpret_cast<fooBarHandle*>(new foo::Bar(value));"));
     assert!(source.contains("delete reinterpret_cast<foo::Bar*>(self);"));
@@ -27,10 +28,11 @@ fn renders_header_and_source_from_fixture() {
 #[test]
 fn renders_unified_go_wrapper() {
     let config = Config::load("tests/fixtures/simple/config.yaml").unwrap();
-    let parsed = parser::parse(&config).unwrap();
-    let ir = ir::normalize(&config, &parsed).unwrap();
+    let ctx = generator::prepare_config(&PipelineContext::new(config)).unwrap();
+    let parsed = parser::parse(&ctx).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
 
-    let go = render_go_structs(&config, &ir).unwrap();
+    let go = render_go_structs(&ctx, &ir).unwrap();
     assert_eq!(go.len(), 1);
     assert!(go[0].contents.contains("type Bar struct {"));
     assert!(go[0].contents.contains("func Add(lhs int, rhs int) int {"));
@@ -64,8 +66,10 @@ output:
     )
     .unwrap();
 
-    let config =
-        generator::prepare_config(&Config::load(root.join("config.yaml")).unwrap()).unwrap();
+    let config = generator::prepare_config(&PipelineContext::new(
+        Config::load(root.join("config.yaml")).unwrap(),
+    ))
+    .unwrap();
     let parsed = parser::parse(&config).unwrap();
     let ir = ir::normalize(&config, &parsed).unwrap();
 
@@ -106,8 +110,10 @@ output:
     )
     .unwrap();
 
-    let config =
-        generator::prepare_config(&Config::load(root.join("config.yaml")).unwrap()).unwrap();
+    let config = generator::prepare_config(&PipelineContext::new(
+        Config::load(root.join("config.yaml")).unwrap(),
+    ))
+    .unwrap();
     let parsed = parser::parse(&config).unwrap();
     let ir = ir::normalize(&config, &parsed).unwrap();
     let header = render_header(&config, &ir);
@@ -152,9 +158,10 @@ output:
     .unwrap();
 
     let config = Config::load(root.join("config.yaml")).unwrap();
-    let parsed = parser::parse(&config).unwrap();
-    let ir = ir::normalize(&config, &parsed).unwrap();
-    let header = render_header(&config, &ir);
+    let ctx = PipelineContext::new(config.clone());
+    let parsed = parser::parse(&ctx).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
+    let header = render_header(&ctx, &ir);
 
     let ptr = ir
         .functions
@@ -263,11 +270,12 @@ output:
     .unwrap();
 
     let config = Config::load(root.join("config.yaml")).unwrap();
-    let parsed = parser::parse(&config).unwrap();
-    let ir = ir::normalize(&config, &parsed).unwrap();
-    let header = render_header(&config, &ir);
-    let source = render_source(&config, &ir);
-    let go = render_go_structs(&config, &ir).unwrap();
+    let ctx = generator::prepare_config(&PipelineContext::new(config)).unwrap();
+    let parsed = parser::parse(&ctx).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
+    let header = render_header(&ctx, &ir);
+    let source = render_source(&ctx, &ir);
+    let go = render_go_structs(&ctx, &ir).unwrap();
 
     assert!(header.contains("int cgowrap_Counter_GetValue(const CounterHandle* self);"));
     assert!(header.contains("void cgowrap_Counter_SetValue(CounterHandle* self, int value);"));
@@ -349,10 +357,11 @@ output:
     .unwrap();
 
     let config = Config::load(root.join("config.yaml")).unwrap();
-    let parsed = parser::parse(&config).unwrap();
-    let ir = ir::normalize(&config, &parsed).unwrap();
-    let header = render_header(&config, &ir);
-    let source = render_source(&config, &ir);
+    let ctx = PipelineContext::new(config.clone());
+    let parsed = parser::parse(&ctx).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
+    let header = render_header(&ctx, &ir);
+    let source = render_source(&ctx, &ir);
 
     let getter = ir
         .functions
@@ -403,9 +412,10 @@ output:
     .unwrap();
 
     let config = Config::load(root.join("config.yaml")).unwrap();
-    let parsed = parser::parse(&config).unwrap();
-    let ir = ir::normalize(&config, &parsed).unwrap();
-    let source = render_source(&config, &ir);
+    let ctx = PipelineContext::new(config.clone());
+    let parsed = parser::parse(&ctx).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
+    let source = render_source(&ctx, &ir);
 
     let ptr_getter = ir
         .functions
@@ -458,11 +468,12 @@ output:
     .unwrap();
 
     let config = Config::load(root.join("config.yaml")).unwrap();
-    let parsed = parser::parse(&config).unwrap();
-    let ir = ir::normalize(&config, &parsed).unwrap();
-    let header = render_header(&config, &ir);
-    let source = render_source(&config, &ir);
-    let go = render_go_structs(&config, &ir).unwrap();
+    let ctx = generator::prepare_config(&PipelineContext::new(config)).unwrap();
+    let parsed = parser::parse(&ctx).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
+    let header = render_header(&ctx, &ir);
+    let source = render_source(&ctx, &ir);
+    let go = render_go_structs(&ctx, &ir).unwrap();
     let go_text = go
         .iter()
         .map(|file| file.contents.as_str())

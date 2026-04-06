@@ -4,7 +4,7 @@ use std::{
     process::Command,
 };
 
-use cgo_gen::{config::Config, generator, ir, parser};
+use cgo_gen::{config::Config, generator, ir, parser, pipeline::context::PipelineContext};
 use serde_yaml::Value;
 
 fn temp_output_dir(label: &str) -> PathBuf {
@@ -59,14 +59,15 @@ fn parses_and_generates_wrapper_for_isaamaster_fixture() {
     let mut config = Config::load("tests/fixtures/isaamaster/config.yaml").unwrap();
     config.output.dir = temp_output_dir("generate");
 
-    let parsed = parser::parse(&config).unwrap();
+    let ctx = generator::prepare_config(&PipelineContext::new(config.clone())).unwrap();
+    let parsed = parser::parse(&ctx).unwrap();
     assert_eq!(parsed.classes.len(), 1);
     assert_eq!(parsed.functions.len(), 0);
     assert_eq!(parsed.enums.len(), 0);
     assert_eq!(parsed.classes[0].name, "IsAAMaster");
     assert_eq!(parsed.classes[0].methods.len(), 70);
 
-    let ir = ir::normalize(&config, &parsed).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
     assert_eq!(ir.functions.len(), 72);
     assert!(
         ir.functions
@@ -79,7 +80,7 @@ fn parses_and_generates_wrapper_for_isaamaster_fixture() {
             .any(|item| item.name == "sil_IsAAMaster_SetDigit1_Num")
     );
 
-    generator::generate(&config, &ir, true).unwrap();
+    generator::generate(&ctx, &ir, true).unwrap();
 
     let header = fs::read_to_string(config.output_dir().join(&config.output.header)).unwrap();
     let source = fs::read_to_string(config.output_dir().join(&config.output.source)).unwrap();
@@ -118,9 +119,10 @@ fn generated_wrapper_compiles_and_runs_against_isaamaster_fixture() {
     let mut config = Config::load("tests/fixtures/isaamaster/config.yaml").unwrap();
     config.output.dir = temp_output_dir("compile");
 
-    let parsed = parser::parse(&config).unwrap();
-    let ir = ir::normalize(&config, &parsed).unwrap();
-    generator::generate(&config, &ir, true).unwrap();
+    let ctx = generator::prepare_config(&PipelineContext::new(config.clone())).unwrap();
+    let parsed = parser::parse(&ctx).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
+    generator::generate(&ctx, &ir, true).unwrap();
 
     let smoke_cpp = config.output.dir.join("smoke.cpp");
     fs::write(
@@ -185,9 +187,10 @@ fn unified_go_wrapper_renders_isaamaster_methods() {
     let mut config = Config::load("tests/fixtures/isaamaster/config.yaml").unwrap();
     config.output.dir = temp_output_dir("model-auto");
 
-    let parsed = parser::parse(&config).unwrap();
-    let ir = ir::normalize(&config, &parsed).unwrap();
-    generator::generate(&config, &ir, true).unwrap();
+    let ctx = generator::prepare_config(&PipelineContext::new(config.clone())).unwrap();
+    let parsed = parser::parse(&ctx).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
+    generator::generate(&ctx, &ir, true).unwrap();
 
     let go_struct_path = config.output_dir().join(config.go_filename("IsAAMaster"));
     let go_wrapper = fs::read_to_string(go_struct_path).unwrap();
