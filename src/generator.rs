@@ -9,7 +9,7 @@ use anyhow::{Context, Result, bail};
 use crate::{
     config::Config,
     facade,
-    ir::{IrCallback, IrFunction, IrModule, IrParam, IrType},
+    ir::{IrCallback, IrFunction, IrFunctionKind, IrModule, IrParam, IrType, IrTypeKind},
     parser,
 };
 
@@ -624,7 +624,7 @@ fn make_callback_bridge_function(function: &IrFunction) -> IrFunction {
                 IrParam {
                     name: format!("use_cb{index}"),
                     ty: IrType {
-                        kind: "primitive".to_string(),
+                        kind: IrTypeKind::Primitive,
                         cpp_type: "bool".to_string(),
                         c_type: "bool".to_string(),
                         handle: None,
@@ -638,7 +638,7 @@ fn make_callback_bridge_function(function: &IrFunction) -> IrFunction {
 
     IrFunction {
         name: format!("{}_bridge", function.name),
-        kind: "function".to_string(),
+        kind: IrFunctionKind::Function,
         cpp_name: function.cpp_name.clone(),
         method_of: function.method_of.clone(),
         owner_cpp_type: function.owner_cpp_type.clone(),
