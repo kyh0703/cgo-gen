@@ -849,7 +849,7 @@ fn render_callback_trampoline_decl(
         format!("return {}({});", go_symbol, call_args)
     };
     format!(
-        "    extern {} {}({});\n    {} {} = []({}) -> {} {{ {} }};\n",
+        "    extern \"C\" {} {}({});\n    {} {} = []({}) -> {} {{ {} }};\n",
         callback.returns.c_type,
         go_symbol,
         params,
