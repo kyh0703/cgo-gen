@@ -1088,7 +1088,7 @@ fn normalize_type(cpp_type: &str, callback_names: &BTreeSet<String>) -> Result<I
             c_type: "char*".to_string(),
             handle: None,
         }),
-        "NPVOID" => Ok(IrType {
+        "NPVOID" | "void *" | "void*" => Ok(IrType {
             kind: IrTypeKind::ModelPointer,
             cpp_type: "void".to_string(),
             c_type: "NPVOIDHandle*".to_string(),
