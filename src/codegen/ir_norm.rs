@@ -795,6 +795,7 @@ fn normalize_return_type_with_canonical(
         ty.kind,
         IrTypeKind::ModelReference | IrTypeKind::ModelPointer
     ) && !is_abstract_model_type(&ty.cpp_type, abstract_types)
+        && base_model_cpp_type(&ty.cpp_type) != "void"
     {
         ty.kind = IrTypeKind::ModelView;
     }
