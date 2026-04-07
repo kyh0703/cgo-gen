@@ -663,9 +663,10 @@ fn render_general_api_method(
             if go_name == "unsafe.Pointer" {
                 out.push_str("    return unsafe.Pointer(raw)\n");
             } else {
+                let ptr_expr = cast_raw_to_projection_handle(config, &function.returns, "raw");
                 out.push_str(&format!(
-                    "    if raw == nil {{\n        return nil\n    }}\n    return &{}{{ptr: raw}}\n",
-                    go_name
+                    "    if raw == nil {{\n        return nil\n    }}\n    return &{}{{ptr: {}}}\n",
+                    go_name, ptr_expr
                 ));
             }
         }
@@ -776,9 +777,10 @@ fn render_free_function(config: &PipelineContext, function: &IrFunction) -> Stri
             out.push_str(&indented_lines(&prep.defer_lines));
             out.push_str(&format!("    raw := {}\n", call));
             out.push_str(&indented_lines(&prep.post_call_lines));
+            let ptr_expr = cast_raw_to_projection_handle(config, &function.returns, "raw");
             out.push_str(&format!(
-                "    if raw == nil {{\n        return nil\n    }}\n    return &{}{{ptr: raw}}\n}}\n",
-                go_name_str
+                "    if raw == nil {{\n        return nil\n    }}\n    return &{}{{ptr: {}}}\n}}\n",
+                go_name_str, ptr_expr
             ));
             out
         }
@@ -902,9 +904,10 @@ fn render_callback_method(
             if go_name == "unsafe.Pointer" {
                 out.push_str("    return unsafe.Pointer(raw)\n");
             } else {
+                let ptr_expr = cast_raw_to_projection_handle(config, &function.returns, "raw");
                 out.push_str(&format!(
-                    "    if raw == nil {{\n        return nil\n    }}\n    return &{}{{ptr: raw}}\n",
-                    go_name
+                    "    if raw == nil {{\n        return nil\n    }}\n    return &{}{{ptr: {}}}\n",
+                    go_name, ptr_expr
                 ));
             }
         }
@@ -985,9 +988,10 @@ fn render_callback_free_function(config: &PipelineContext, function: &IrFunction
             if go_name_str == "unsafe.Pointer" {
                 out.push_str("    return unsafe.Pointer(raw)\n");
             } else {
+                let ptr_expr = cast_raw_to_projection_handle(config, &function.returns, "raw");
                 out.push_str(&format!(
-                    "    if raw == nil {{\n        return nil\n    }}\n    return &{}{{ptr: raw}}\n",
-                    go_name_str
+                    "    if raw == nil {{\n        return nil\n    }}\n    return &{}{{ptr: {}}}\n",
+                    go_name_str, ptr_expr
                 ));
             }
         }
@@ -1127,6 +1131,27 @@ fn render_model_handle_arg(config: &PipelineContext, ty: &IrType, name: &str) ->
         }
     }
     Some(handle_arg)
+}
+
+/// Returns an expression for `raw` cast to the projection's handle type,
+/// inserting an unsafe.Pointer cast when the C return type's handle differs
+/// from the projection's stored handle type.
+fn cast_raw_to_projection_handle(
+    config: &PipelineContext,
+    returns: &IrType,
+    raw_expr: &str,
+) -> String {
+    if let Some(projection) = config.known_model_projection(&returns.cpp_type) {
+        if let Some(expected_handle) = &returns.handle {
+            if *expected_handle != projection.handle_name {
+                return format!(
+                    "(*C.{})(unsafe.Pointer({}))",
+                    projection.handle_name, raw_expr
+                );
+            }
+        }
+    }
+    raw_expr.to_string()
 }
 
 fn render_pointer_arg(prep: &mut RenderedCallPrep, ty: &IrType, name: &str, index: usize) {
