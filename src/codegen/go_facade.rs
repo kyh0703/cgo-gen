@@ -256,7 +256,8 @@ fn render_go_facade_file(
         if covered_handles.contains(opaque.name.as_str()) {
             continue;
         }
-        let go_name = flatten_qualified_cpp_name(&opaque.cpp_type);
+        let base = opaque.name.strip_suffix("Handle").unwrap_or(&opaque.name);
+        let go_name = go_export_name(base);
         out.push_str(&format!(
             "type {} struct {{\n    ptr *C.{}\n}}\n\n",
             go_name, opaque.name
@@ -1266,14 +1267,18 @@ fn go_param_type(config: &PipelineContext, ty: &IrType) -> Option<String> {
         }
         IrTypeKind::Callback => Some(leaf_cpp_name(&ty.cpp_type)),
         IrTypeKind::ModelReference | IrTypeKind::ModelPointer | IrTypeKind::ModelValue => {
-            let base = flatten_qualified_cpp_name(&base_model_cpp_type(&ty.cpp_type));
-            if base == "void" {
+            if base_model_cpp_type(&ty.cpp_type) == "void" {
                 return Some("unsafe.Pointer".to_string());
             }
             config
                 .known_model_projection(&ty.cpp_type)
                 .map(|projection| format!("*{}", projection.go_name))
-                .or_else(|| Some(format!("*{base}")))
+                .or_else(|| {
+                    ty.handle
+                        .as_deref()
+                        .and_then(|h| h.strip_suffix("Handle"))
+                        .map(|base| format!("*{}", go_export_name(base)))
+                })
         }
         _ => None,
     }
@@ -1302,14 +1307,19 @@ fn go_pointer_return_type(ty: &IrType) -> Option<String> {
 }
 
 fn go_model_return_type(config: &PipelineContext, ty: &IrType) -> String {
-    let base = flatten_qualified_cpp_name(&base_model_cpp_type(&ty.cpp_type));
-    if base == "void" {
+    if base_model_cpp_type(&ty.cpp_type) == "void" {
         return "unsafe.Pointer".to_string();
     }
     config
         .known_model_projection(&ty.cpp_type)
         .map(|projection| projection.go_name.clone())
-        .unwrap_or(base)
+        .unwrap_or_else(|| {
+            ty.handle
+                .as_deref()
+                .and_then(|h| h.strip_suffix("Handle"))
+                .map(|base| go_export_name(base))
+                .unwrap_or_else(|| flatten_qualified_cpp_name(&base_model_cpp_type(&ty.cpp_type)))
+        })
 }
 
 fn is_model_wrapper_return(ty: &IrType) -> bool {
