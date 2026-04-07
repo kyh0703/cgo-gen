@@ -25,6 +25,13 @@ pub fn generate_all(ctx: &PipelineContext, write_ir: bool) -> Result<()> {
         );
     }
 
+    // Collect all class handles across all input headers for cross-file dedup.
+    let global_class_handles: BTreeSet<String> = parsed
+        .classes
+        .iter()
+        .map(|class| format!("{}Handle", ir::flatten_cpp_name(&class.namespace, &class.name)))
+        .collect();
+
     if generation_headers.len() <= 1 {
         let scoped = generation_headers
             .first()
@@ -36,8 +43,8 @@ pub fn generate_all(ctx: &PipelineContext, write_ir: bool) -> Result<()> {
             .as_deref()
             .map(|header| parsed.filter_to_header(header))
             .unwrap_or_else(|| parsed.clone());
-        let ir = ir::normalize(&scoped, &header_api)?;
-        return generate(&scoped, &ir, write_ir);
+        let normalized_ir = ir::normalize(&scoped, &header_api)?;
+        return generate(&scoped, &normalized_ir, write_ir, &global_class_handles);
     }
 
     for header in &generation_headers {
@@ -46,8 +53,8 @@ pub fn generate_all(ctx: &PipelineContext, write_ir: bool) -> Result<()> {
         if header_api.is_empty() {
             continue;
         }
-        let ir = ir::normalize(&scoped, &header_api)?;
-        generate(&scoped, &ir, write_ir)?;
+        let normalized_ir = ir::normalize(&scoped, &header_api)?;
+        generate(&scoped, &normalized_ir, write_ir, &global_class_handles)?;
     }
 
     Ok(())
@@ -120,7 +127,7 @@ fn collect_known_model_types(parsed: &parser::ParsedApi) -> Vec<String> {
         .collect()
 }
 
-pub fn generate(ctx: &PipelineContext, ir: &IrModule, write_ir: bool) -> Result<()> {
+pub fn generate(ctx: &PipelineContext, ir: &IrModule, write_ir: bool, global_class_handles: &BTreeSet<String>) -> Result<()> {
     fs::create_dir_all(ctx.output_dir()).with_context(|| {
         format!(
             "failed to create output dir: {}",
@@ -135,7 +142,7 @@ pub fn generate(ctx: &PipelineContext, ir: &IrModule, write_ir: bool) -> Result<
         .with_context(|| format!("failed to write header: {}", header_path.display()))?;
     fs::write(&source_path, render_source(&ctx, ir))
         .with_context(|| format!("failed to write source: {}", source_path.display()))?;
-    for go_file in facade::render_go_facade(&ctx, ir)? {
+    for go_file in facade::render_go_facade(&ctx, ir, global_class_handles)? {
         fs::create_dir_all(ctx.output_dir()).with_context(|| {
             format!(
                 "failed to create go output dir: {}",
@@ -361,7 +368,7 @@ pub fn render_source(ctx: &PipelineContext, ir: &IrModule) -> String {
 }
 
 pub fn render_go_structs(ctx: &PipelineContext, ir: &IrModule) -> Result<Vec<GeneratedGoFile>> {
-    facade::render_go_facade(ctx, ir)
+    facade::render_go_facade(ctx, ir, &BTreeSet::new())
 }
 
 fn render_callback_decl(out: &mut String, callback: &IrCallback) {

@@ -1417,7 +1417,7 @@ fn cpp_qualified(namespace: &[String], leaf: &str) -> String {
     }
 }
 
-fn flatten_cpp_name(namespace: &[String], leaf: &str) -> String {
+pub fn flatten_cpp_name(namespace: &[String], leaf: &str) -> String {
     if namespace.is_empty() {
         leaf.to_string()
     } else {
