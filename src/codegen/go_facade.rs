@@ -1112,11 +1112,21 @@ fn render_call_prep(config: &PipelineContext, params: &[&ir_norm::IrParam]) -> R
 
 fn render_model_handle_arg(config: &PipelineContext, ty: &IrType, name: &str) -> Option<String> {
     let projection = config.known_model_projection(&ty.cpp_type)?;
-    if ty.kind == IrTypeKind::ModelPointer {
-        Some(format!("optional{}Handle({})", projection.go_name, name))
+    let handle_arg = if ty.kind == IrTypeKind::ModelPointer {
+        format!("optional{}Handle({})", projection.go_name, name)
     } else {
-        Some(format!("require{}Handle({})", projection.go_name, name))
+        format!("require{}Handle({})", projection.go_name, name)
+    };
+    // When the C function's expected handle type differs from the model projection's
+    // handle type (e.g., UCIDHandle* vs _UCIDHandle*), cast via unsafe.Pointer.
+    if let Some(expected_handle) = &ty.handle {
+        if *expected_handle != projection.handle_name {
+            return Some(format!(
+                "(*C.{expected_handle})(unsafe.Pointer({handle_arg}))"
+            ));
+        }
     }
+    Some(handle_arg)
 }
 
 fn render_pointer_arg(prep: &mut RenderedCallPrep, ty: &IrType, name: &str, index: usize) {
@@ -1734,6 +1744,9 @@ fn cgo_cast_type_from_c_type(c_type: &str) -> &'static str {
         "uint16" | "uint16_t" => "C.uint16_t",
         "uint32" | "uint32_t" | "unsignedint" | "unsigned" => "C.uint32_t",
         "uint64" | "uint64_t" => "C.uint64_t",
+        "unsignedlonglong" => "C.ulonglong",
+        "longlong" | "signedlonglong" => "C.longlong",
+        "ulong" | "unsignedlong" => "C.ulong",
         "short" => "C.short",
         "long" => "C.long",
         "size_t" => "C.size_t",
