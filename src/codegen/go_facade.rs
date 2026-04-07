@@ -181,6 +181,7 @@ fn render_go_facade_file(
         has_string_params(function.params.iter())
             || has_pointer_params(function.params.iter())
             || has_byte_array_params(function.params.iter())
+            || has_void_model_params(function.params.iter())
             || matches!(
                 function.returns.kind,
                 IrTypeKind::Pointer | IrTypeKind::FixedByteArray
@@ -190,10 +191,12 @@ fn render_go_facade_file(
             has_string_params(ctor.params.iter())
                 || has_pointer_params(ctor.params.iter())
                 || has_byte_array_params(ctor.params.iter())
+                || has_void_model_params(ctor.params.iter())
         }) || class.methods.iter().any(|function| {
             has_string_params(function.params.iter().skip(1))
                 || has_pointer_params(function.params.iter().skip(1))
                 || has_byte_array_params(function.params.iter().skip(1))
+                || has_void_model_params(function.params.iter().skip(1))
                 || matches!(
                     function.returns.kind,
                     IrTypeKind::Pointer | IrTypeKind::FixedByteArray
@@ -251,6 +254,12 @@ fn render_go_facade_file(
         .iter()
         .map(|class| class.handle_name.as_str())
         .collect::<std::collections::BTreeSet<_>>();
+    // Also track Go names used by primary class wrappers to catch cases where a typedef
+    // and a class produce the same Go name (e.g. _LegId class → "LegId", LegId opaque → "LegId").
+    let covered_go_names: BTreeSet<String> = classes
+        .iter()
+        .map(|class| class.go_name.clone())
+        .collect();
 
     for opaque in opaque_types {
         if covered_handles.contains(opaque.name.as_str()) {
@@ -258,6 +267,9 @@ fn render_go_facade_file(
         }
         let base = opaque.name.strip_suffix("Handle").unwrap_or(&opaque.name);
         let go_name = go_export_name(base);
+        if covered_go_names.contains(&go_name) {
+            continue;
+        }
         out.push_str(&format!(
             "type {} struct {{\n    ptr *C.{}\n}}\n\n",
             go_name, opaque.name
@@ -1139,6 +1151,15 @@ fn has_byte_array_params<'a>(mut params: impl Iterator<Item = &'a ir_norm::IrPar
     params.any(|param| param.ty.kind == IrTypeKind::FixedByteArray)
 }
 
+fn has_void_model_params<'a>(mut params: impl Iterator<Item = &'a ir_norm::IrParam>) -> bool {
+    params.any(|param| {
+        matches!(
+            param.ty.kind,
+            IrTypeKind::ModelReference | IrTypeKind::ModelPointer | IrTypeKind::ModelValue
+        ) && base_model_cpp_type(&param.ty.cpp_type) == "void"
+    })
+}
+
 fn render_model_arg(
     config: &PipelineContext,
     prep: &mut RenderedCallPrep,
@@ -1148,6 +1169,19 @@ fn render_model_arg(
 ) {
     if let Some(handle_arg) = render_model_handle_arg(config, ty, name) {
         prep.args.push(handle_arg);
+        return;
+    }
+    // void model params: the Go type is unsafe.Pointer, which has no .ptr field.
+    // Cast directly to *C.<handle> instead.
+    if base_model_cpp_type(&ty.cpp_type) == "void" {
+        let handle = ty.handle.as_deref().unwrap_or("void");
+        let c_name = format!("cArg{index}");
+        prep.setup_lines.push(format!("var {c_name} *C.{handle}"));
+        prep.setup_lines.push(format!("if {name} != nil {{"));
+        prep.setup_lines
+            .push(format!("    {c_name} = (*C.{handle})({name})"));
+        prep.setup_lines.push("}".to_string());
+        prep.args.push(c_name);
         return;
     }
     let handle = ty.handle.as_deref().unwrap_or("void");

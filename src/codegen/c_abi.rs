@@ -25,17 +25,6 @@ pub fn generate_all(ctx: &PipelineContext, write_ir: bool) -> Result<()> {
         );
     }
 
-    // Collect handles only for classes that have a destructor — those are the ones that will
-    // actually get a Go wrapper struct generated. Classes without a destructor (e.g. pure
-    // key/value types with no lifecycle) are left emittable as opaque types so that method
-    // signatures referencing them can still compile.
-    let global_class_handles: BTreeSet<String> = parsed
-        .classes
-        .iter()
-        .filter(|class| class.has_destructor)
-        .map(|class| format!("{}Handle", ir::flatten_cpp_name(&class.namespace, &class.name)))
-        .collect();
-
     if generation_headers.len() <= 1 {
         let scoped = generation_headers
             .first()
@@ -48,7 +37,8 @@ pub fn generate_all(ctx: &PipelineContext, write_ir: bool) -> Result<()> {
             .map(|header| parsed.filter_to_header(header))
             .unwrap_or_else(|| parsed.clone());
         let normalized_ir = ir::normalize(&scoped, &header_api)?;
-        return generate(&scoped, &normalized_ir, write_ir, &global_class_handles);
+        let class_handles = class_handles_with_methods(&normalized_ir);
+        return generate(&scoped, &normalized_ir, write_ir, &class_handles);
     }
 
     // Pass 1: normalize all headers up front so we can do global deduplication in pass 2.
@@ -63,6 +53,15 @@ pub fn generate_all(ctx: &PipelineContext, write_ir: bool) -> Result<()> {
         all_normalized.push((scoped, normalized_ir));
     }
 
+    // Compute the set of handles for classes that will get primary Go wrapper structs.
+    // These are classes with at least one method AND a destructor in any normalized IR.
+    // Using the normalized IR (instead of parsed.classes.has_destructor) correctly
+    // includes classes with implicit C++ destructors (has_destructor=false in parser).
+    let global_class_handles: BTreeSet<String> = all_normalized
+        .iter()
+        .flat_map(|(_, ir)| class_handles_with_methods(ir))
+        .collect();
+
     // Pass 2: generate each file, tracking every opaque handle that has already been
     // emitted so that non-class opaque types shared across headers are declared only once.
     let mut globally_emitted_opaques = global_class_handles;
@@ -74,6 +73,26 @@ pub fn generate_all(ctx: &PipelineContext, write_ir: bool) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Returns the set of C handle names for classes that will generate primary Go wrapper structs.
+/// A class gets a wrapper if it has at least one method AND a synthesized destructor in the
+/// normalized IR. Using the IR (not parser's has_destructor) correctly covers classes with
+/// implicit C++ destructors.
+fn class_handles_with_methods(ir: &IrModule) -> BTreeSet<String> {
+    let handles_with_methods: BTreeSet<&str> = ir
+        .functions
+        .iter()
+        .filter(|f| f.kind == IrFunctionKind::Method)
+        .filter_map(|f| f.method_of.as_deref())
+        .collect();
+    ir.functions
+        .iter()
+        .filter(|f| f.kind == IrFunctionKind::Destructor)
+        .filter_map(|f| f.method_of.as_deref())
+        .filter(|h| handles_with_methods.contains(*h))
+        .map(|s| s.to_string())
+        .collect()
 }
 
 fn generation_headers(ctx: &PipelineContext) -> Vec<PathBuf> {
