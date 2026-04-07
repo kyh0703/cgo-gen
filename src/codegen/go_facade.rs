@@ -5,7 +5,7 @@ use anyhow::{Result, bail};
 use crate::{
     codegen::ir_norm,
     domain::kind::{IrFunctionKind, IrTypeKind},
-    ir::{IrCallback, IrEnum, IrFunction, IrModule, IrType},
+    ir::{IrCallback, IrEnum, IrFunction, IrModule, IrType, OpaqueType},
     pipeline::context::PipelineContext,
 };
 
@@ -19,7 +19,7 @@ pub struct GeneratedGoFile {
 struct AnalyzedFacadeClass<'a> {
     go_name: String,
     handle_name: String,
-    constructor: &'a IrFunction,
+    constructor: Option<&'a IrFunction>,
     destructor: &'a IrFunction,
     methods: Vec<&'a IrFunction>,
 }
@@ -61,7 +61,14 @@ pub fn render_go_facade(
 
     Ok(vec![GeneratedGoFile {
         filename: config.go_filename(""),
-        contents: render_go_facade_file(&config, &enums, &functions, &classes, &callback_usages),
+        contents: render_go_facade_file(
+            &config,
+            &enums,
+            &functions,
+            &classes,
+            &callback_usages,
+            &ir.opaque_types,
+        ),
     }])
 }
 
@@ -110,15 +117,15 @@ fn collect_facade_classes<'a>(
     for (owner, methods) in methods_by_owner {
         ensure_unique_method_exports(owner, &methods)?;
 
-        let Some(constructor) = constructors.get(owner).copied() else {
-            continue;
-        };
-        if !constructor
-            .params
-            .iter()
-            .all(|param| go_param_supported(config, &param.ty))
-        {
-            continue;
+        let constructor = constructors.get(owner).copied();
+        if let Some(ctor) = constructor {
+            if !ctor
+                .params
+                .iter()
+                .all(|param| go_param_supported(config, &param.ty))
+            {
+                continue;
+            }
         }
         let Some(destructor) = destructors.get(owner).copied() else {
             continue;
@@ -142,10 +149,11 @@ fn render_go_facade_file(
     functions: &[&IrFunction],
     classes: &[AnalyzedFacadeClass<'_>],
     callback_usages: &[CallbackUsage<'_>],
+    opaque_types: &[OpaqueType],
 ) -> String {
     let package_name = go_package_name(&config.output.dir);
     let requires_cgo = !functions.is_empty() || !classes.is_empty();
-    let requires_errors = !classes.is_empty()
+    let requires_errors = classes.iter().any(|class| class.constructor.is_some())
         || functions.iter().any(|function| {
             matches!(
                 function.returns.kind,
@@ -169,18 +177,19 @@ fn render_go_facade_file(
                 IrTypeKind::Pointer | IrTypeKind::FixedByteArray
             )
     }) || classes.iter().any(|class| {
-        has_string_params(class.constructor.params.iter())
-            || has_pointer_params(class.constructor.params.iter())
-            || has_byte_array_params(class.constructor.params.iter())
-            || class.methods.iter().any(|function| {
-                has_string_params(function.params.iter().skip(1))
-                    || has_pointer_params(function.params.iter().skip(1))
-                    || has_byte_array_params(function.params.iter().skip(1))
-                    || matches!(
-                        function.returns.kind,
-                        IrTypeKind::Pointer | IrTypeKind::FixedByteArray
-                    )
-            })
+        class.constructor.iter().any(|ctor| {
+            has_string_params(ctor.params.iter())
+                || has_pointer_params(ctor.params.iter())
+                || has_byte_array_params(ctor.params.iter())
+        }) || class.methods.iter().any(|function| {
+            has_string_params(function.params.iter().skip(1))
+                || has_pointer_params(function.params.iter().skip(1))
+                || has_byte_array_params(function.params.iter().skip(1))
+                || matches!(
+                    function.returns.kind,
+                    IrTypeKind::Pointer | IrTypeKind::FixedByteArray
+                )
+        })
     });
     let requires_sync = !callback_usages.is_empty();
 
@@ -229,11 +238,29 @@ fn render_go_facade_file(
         out.push('\n');
     }
 
+    let covered_handles = classes
+        .iter()
+        .map(|class| class.handle_name.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+
+    for opaque in opaque_types {
+        if covered_handles.contains(opaque.name.as_str()) {
+            continue;
+        }
+        let go_name = leaf_cpp_name(&opaque.cpp_type);
+        out.push_str(&format!(
+            "type {} struct {{\n    ptr *C.{}\n}}\n\n",
+            go_name, opaque.name
+        ));
+    }
+
     for class in classes {
         out.push_str(&render_facade_class(class));
         out.push('\n');
-        out.push_str(&render_facade_constructor(config, class));
-        out.push('\n');
+        if let Some(_) = class.constructor {
+            out.push_str(&render_facade_constructor(config, class));
+            out.push('\n');
+        }
         out.push_str(&render_facade_close(class));
         out.push('\n');
         for method in &class.methods {
@@ -401,7 +428,8 @@ fn render_facade_class(class: &AnalyzedFacadeClass<'_>) -> String {
 }
 
 fn render_facade_constructor(config: &PipelineContext, class: &AnalyzedFacadeClass<'_>) -> String {
-    let constructor_params = class.constructor.params.iter().collect::<Vec<_>>();
+    let constructor = class.constructor.expect("render_facade_constructor called without constructor");
+    let constructor_params = constructor.params.iter().collect::<Vec<_>>();
     let params = render_param_list(config, &constructor_params);
     let prep = render_call_prep(config, &constructor_params);
 
@@ -421,7 +449,7 @@ fn render_facade_constructor(config: &PipelineContext, class: &AnalyzedFacadeCla
     }
     out.push_str(&format!(
         "    ptr := C.{}({})\n",
-        class.constructor.name,
+        constructor.name,
         prep.args.join(", "),
     ));
     for line in prep.post_call_lines {
@@ -1636,8 +1664,14 @@ fn ir_uses_struct_timeval(functions: &[&IrFunction], classes: &[AnalyzedFacadeCl
             std::iter::once(&function.returns).chain(function.params.iter().map(|param| &param.ty))
         })
         .chain(classes.iter().flat_map(|class| {
-            std::iter::once(&class.constructor.returns)
-                .chain(class.constructor.params.iter().map(|param| &param.ty))
+            class
+                .constructor
+                .iter()
+                .flat_map(|ctor| {
+                    std::iter::once(&ctor.returns)
+                        .chain(ctor.params.iter().map(|param| &param.ty))
+                        .collect::<Vec<_>>()
+                })
                 .chain(std::iter::once(&class.destructor.returns))
                 .chain(class.destructor.params.iter().map(|param| &param.ty))
                 .chain(class.methods.iter().flat_map(|function| {
@@ -2117,7 +2151,7 @@ mod tests {
         let class = AnalyzedFacadeClass {
             go_name: "Api".to_string(),
             handle_name: "ApiHandle".to_string(),
-            constructor: &constructor,
+            constructor: Some(&constructor),
             destructor: &destructor,
             methods: vec![&function],
         };
