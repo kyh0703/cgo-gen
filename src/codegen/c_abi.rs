@@ -25,7 +25,8 @@ pub fn generate_all(ctx: &PipelineContext, write_ir: bool) -> Result<()> {
         );
     }
 
-    // Collect all class handles across all input headers for cross-file dedup.
+    // Collect all primary class handles across all headers — these are always "pre-claimed"
+    // so that each class's opaque handle is only emitted in its own file.
     let global_class_handles: BTreeSet<String> = parsed
         .classes
         .iter()
@@ -47,6 +48,8 @@ pub fn generate_all(ctx: &PipelineContext, write_ir: bool) -> Result<()> {
         return generate(&scoped, &normalized_ir, write_ir, &global_class_handles);
     }
 
+    // Pass 1: normalize all headers up front so we can do global deduplication in pass 2.
+    let mut all_normalized: Vec<(PipelineContext, IrModule)> = Vec::new();
     for header in &generation_headers {
         let scoped = ctx.scoped_to_header(header.clone());
         let header_api = parsed.filter_to_header(header);
@@ -54,7 +57,17 @@ pub fn generate_all(ctx: &PipelineContext, write_ir: bool) -> Result<()> {
             continue;
         }
         let normalized_ir = ir::normalize(&scoped, &header_api)?;
-        generate(&scoped, &normalized_ir, write_ir, &global_class_handles)?;
+        all_normalized.push((scoped, normalized_ir));
+    }
+
+    // Pass 2: generate each file, tracking every opaque handle that has already been
+    // emitted so that non-class opaque types shared across headers are declared only once.
+    let mut globally_emitted_opaques = global_class_handles;
+    for (scoped, normalized_ir) in &all_normalized {
+        generate(&scoped, &normalized_ir, write_ir, &globally_emitted_opaques)?;
+        for ot in &normalized_ir.opaque_types {
+            globally_emitted_opaques.insert(ot.name.clone());
+        }
     }
 
     Ok(())
