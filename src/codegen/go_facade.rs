@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, path::Path};
+use std::{collections::{BTreeMap, BTreeSet}, path::Path};
 
 use anyhow::{Result, bail};
 
@@ -42,6 +42,7 @@ struct CallbackUsage<'a> {
 pub fn render_go_facade(
     config: &PipelineContext,
     ir: &IrModule,
+    global_class_handles: &BTreeSet<String>,
 ) -> Result<Vec<GeneratedGoFile>> {
     let functions = ir
         .functions
@@ -59,6 +60,13 @@ pub fn render_go_facade(
 
     ensure_unique_go_exports(&functions)?;
 
+    // Exclude opaque types that are primary classes in OTHER files (to avoid redeclarations).
+    let local_opaque_types: Vec<&OpaqueType> = ir
+        .opaque_types
+        .iter()
+        .filter(|ot| !global_class_handles.contains(&ot.name))
+        .collect();
+
     Ok(vec![GeneratedGoFile {
         filename: config.go_filename(""),
         contents: render_go_facade_file(
@@ -67,7 +75,7 @@ pub fn render_go_facade(
             &functions,
             &classes,
             &callback_usages,
-            &ir.opaque_types,
+            &local_opaque_types,
         ),
     }])
 }
@@ -149,7 +157,7 @@ fn render_go_facade_file(
     functions: &[&IrFunction],
     classes: &[AnalyzedFacadeClass<'_>],
     callback_usages: &[CallbackUsage<'_>],
-    opaque_types: &[OpaqueType],
+    opaque_types: &[&OpaqueType],
 ) -> String {
     let package_name = go_package_name(&config.output.dir);
     let requires_cgo = !functions.is_empty() || !classes.is_empty();
