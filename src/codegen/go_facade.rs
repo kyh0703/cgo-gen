@@ -285,6 +285,8 @@ fn render_go_facade_file(
         }
         out.push_str(&render_facade_close(class));
         out.push('\n');
+        out.push_str(&render_handle_helpers(class));
+        out.push('\n');
         for method in &class.methods {
             out.push_str(&render_general_api_method(config, class, method));
             out.push('\n');
@@ -494,6 +496,27 @@ fn render_facade_close(class: &AnalyzedFacadeClass<'_>) -> String {
     )
 }
 
+fn render_handle_helpers(class: &AnalyzedFacadeClass<'_>) -> String {
+    let go_name = &class.go_name;
+    let handle = &class.handle_name;
+    let receiver = receiver_name(go_name);
+    format!(
+        "func require{go_name}Handle({receiver} *{go_name}) *C.{handle} {{\n\
+         \x20   if {receiver} == nil || {receiver}.ptr == nil {{\n\
+         \x20       panic(\"{go_name} handle is required but nil\")\n\
+         \x20   }}\n\
+         \x20   return {receiver}.ptr\n\
+         }}\n\
+         \n\
+         func optional{go_name}Handle({receiver} *{go_name}) *C.{handle} {{\n\
+         \x20   if {receiver} == nil {{\n\
+         \x20       return nil\n\
+         \x20   }}\n\
+         \x20   return {receiver}.ptr\n\
+         }}\n"
+    )
+}
+
 fn render_general_api_method(
     config: &PipelineContext,
     class: &AnalyzedFacadeClass<'_>,
@@ -531,10 +554,14 @@ fn render_general_api_method(
             " {} {{\n",
             go_pointer_return_type(&function.returns).unwrap()
         )),
-        _ if is_model_wrapper_return(&function.returns) => out.push_str(&format!(
-            " *{} {{\n",
-            go_model_return_type(config, &function.returns)
-        )),
+        _ if is_model_wrapper_return(&function.returns) => {
+            let _model_ret = go_model_return_type(config, &function.returns);
+            if _model_ret == "unsafe.Pointer" {
+                out.push_str(" unsafe.Pointer {\n");
+            } else {
+                out.push_str(&format!(" *{} {{\n", _model_ret));
+            }
+        }
         _ => out.push_str(&format!(
             " {} {{\n",
             go_type_for_ir(&function.returns).unwrap()
@@ -633,10 +660,14 @@ fn render_general_api_method(
                 out.push_str(&line);
                 out.push('\n');
             }
-            out.push_str(&format!(
-                "    if raw == nil {{\n        return nil\n    }}\n    return &{}{{ptr: raw}}\n",
-                go_name
-            ));
+            if go_name == "unsafe.Pointer" {
+                out.push_str("    return unsafe.Pointer(raw)\n");
+            } else {
+                out.push_str(&format!(
+                    "    if raw == nil {{\n        return nil\n    }}\n    return &{}{{ptr: raw}}\n",
+                    go_name
+                ));
+            }
         }
         _ => {
             let go_type = go_type_for_ir(&function.returns).unwrap();
@@ -802,10 +833,14 @@ fn render_callback_method(
             " {} {{\n",
             go_pointer_return_type(&function.returns).unwrap()
         )),
-        _ if is_model_wrapper_return(&function.returns) => out.push_str(&format!(
-            " *{} {{\n",
-            go_model_return_type(config, &function.returns)
-        )),
+        _ if is_model_wrapper_return(&function.returns) => {
+            let _model_ret = go_model_return_type(config, &function.returns);
+            if _model_ret == "unsafe.Pointer" {
+                out.push_str(" unsafe.Pointer {\n");
+            } else {
+                out.push_str(&format!(" *{} {{\n", _model_ret));
+            }
+        }
         _ => out.push_str(&format!(
             " {} {{\n",
             go_type_for_ir(&function.returns).unwrap()
@@ -864,10 +899,14 @@ fn render_callback_method(
         _ if is_model_wrapper_return(&function.returns) => {
             let go_name = go_model_return_type(config, &function.returns);
             out.push_str(&format!("    raw := {}\n", call));
-            out.push_str(&format!(
-                "    if raw == nil {{\n        return nil\n    }}\n    return &{}{{ptr: raw}}\n",
-                go_name
-            ));
+            if go_name == "unsafe.Pointer" {
+                out.push_str("    return unsafe.Pointer(raw)\n");
+            } else {
+                out.push_str(&format!(
+                    "    if raw == nil {{\n        return nil\n    }}\n    return &{}{{ptr: raw}}\n",
+                    go_name
+                ));
+            }
         }
         _ => {
             out.push_str(&format!("    result := {}\n", call));
@@ -897,10 +936,14 @@ fn render_callback_free_function(config: &PipelineContext, function: &IrFunction
             " {} {{\n",
             go_pointer_return_type(&function.returns).unwrap()
         )),
-        _ if is_model_wrapper_return(&function.returns) => out.push_str(&format!(
-            " *{} {{\n",
-            go_model_return_type(config, &function.returns)
-        )),
+        _ if is_model_wrapper_return(&function.returns) => {
+            let _model_ret = go_model_return_type(config, &function.returns);
+            if _model_ret == "unsafe.Pointer" {
+                out.push_str(" unsafe.Pointer {\n");
+            } else {
+                out.push_str(&format!(" *{} {{\n", _model_ret));
+            }
+        }
         _ => out.push_str(&format!(
             " {} {{\n",
             go_type_for_ir(&function.returns).unwrap()
@@ -939,10 +982,14 @@ fn render_callback_free_function(config: &PipelineContext, function: &IrFunction
         _ if is_model_wrapper_return(&function.returns) => {
             let go_name_str = go_model_return_type(config, &function.returns);
             out.push_str(&format!("    raw := {}\n", call));
-            out.push_str(&format!(
-                "    if raw == nil {{\n        return nil\n    }}\n    return &{}{{ptr: raw}}\n",
-                go_name_str
-            ));
+            if go_name_str == "unsafe.Pointer" {
+                out.push_str("    return unsafe.Pointer(raw)\n");
+            } else {
+                out.push_str(&format!(
+                    "    if raw == nil {{\n        return nil\n    }}\n    return &{}{{ptr: raw}}\n",
+                    go_name_str
+                ));
+            }
         }
         _ => {
             out.push_str(&format!("    result := {}\n", call));
