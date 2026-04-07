@@ -373,6 +373,10 @@ pub fn render_source(ctx: &PipelineContext, ir: &IrModule) -> String {
         out.push('\n');
     }
     let callback_map = callback_map(ir);
+    let extern_c_block = render_go_callback_extern_c_block(&ir.functions, &callback_map);
+    if !extern_c_block.is_empty() {
+        out.push_str(&extern_c_block);
+    }
     for function in ir.functions.iter().filter(|function| {
         function
             .params
@@ -821,6 +825,41 @@ fn render_callback_bridge_body(
     out
 }
 
+fn render_go_callback_extern_c_block(
+    functions: &[IrFunction],
+    callbacks: &std::collections::BTreeMap<String, IrCallback>,
+) -> String {
+    let mut decls = Vec::new();
+    for function in functions {
+        for (index, param) in function.params.iter().enumerate() {
+            if param.ty.kind != IrTypeKind::Callback {
+                continue;
+            }
+            if let Some(callback) = callbacks.get(&param.ty.cpp_type) {
+                let params = if callback.params.is_empty() {
+                    "void".to_string()
+                } else {
+                    callback
+                        .params
+                        .iter()
+                        .map(|p| format!("{} {}", p.ty.c_type, p.name))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
+                let go_symbol = callback_go_export_name(function, index);
+                decls.push(format!(
+                    "    {} {}({});",
+                    callback.returns.c_type, go_symbol, params
+                ));
+            }
+        }
+    }
+    if decls.is_empty() {
+        return String::new();
+    }
+    format!("extern \"C\" {{\n{}\n}}\n\n", decls.join("\n"))
+}
+
 fn render_callback_trampoline_decl(
     function: &IrFunction,
     index: usize,
@@ -849,10 +888,7 @@ fn render_callback_trampoline_decl(
         format!("return {}({});", go_symbol, call_args)
     };
     format!(
-        "    extern \"C\" {} {}({});\n    {} {} = []({}) -> {} {{ {} }};\n",
-        callback.returns.c_type,
-        go_symbol,
-        params,
+        "    {} {} = []({}) -> {} {{ {} }};\n",
         callback.name,
         callback_trampoline_name(function, index),
         params,
