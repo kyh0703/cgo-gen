@@ -592,10 +592,12 @@ fn render_cpp_arg(ty: IrType, name: &str) -> String {
             "*reinterpret_cast<{}*>({name})",
             base_model_cpp_type(&ty.cpp_type)
         ),
-        IrTypeKind::ModelPointer => format!(
-            "reinterpret_cast<{}*>({name})",
-            base_model_cpp_type(&ty.cpp_type)
-        ),
+        IrTypeKind::ModelPointer => {
+            let base = base_model_cpp_type(&ty.cpp_type);
+            let depth = ty.cpp_type.chars().filter(|ch| *ch == '*').count().max(1);
+            let stars = "*".repeat(depth);
+            format!("reinterpret_cast<{base}{stars}>({name})")
+        }
         IrTypeKind::FixedByteArray => name.to_string(),
         _ => name.to_string(),
     }
