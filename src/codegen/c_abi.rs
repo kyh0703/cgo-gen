@@ -574,11 +574,30 @@ fn call_args(function: &IrFunction, start: usize) -> String {
 fn render_cpp_arg(ty: IrType, name: &str) -> String {
     match ty.kind {
         IrTypeKind::Primitive if ty.cpp_type != ty.c_type => {
-            format!("static_cast<{}>({name})", ty.cpp_type)
+            // Use the C++ alias name only for known generator aliases (e.g. uint32, int32).
+            // For unknown project-specific typedefs (e.g. iChLeg_t) that are not in scope
+            // inside the generated wrapper file, fall back to the canonical C type.
+            let cast_type = if generator_supported_primitive(&ty.cpp_type) {
+                &ty.cpp_type
+            } else {
+                &ty.c_type
+            };
+            format!("static_cast<{cast_type}>({name})")
         }
         IrTypeKind::String => format!("std::string({name} != nullptr ? {name} : \"\")"),
         IrTypeKind::Reference => primitive_alias_cast_target(&ty)
             .map(|cpp_type| format!("*reinterpret_cast<{}*>({name})", cpp_type))
+            .or_else(|| {
+                // Unknown typedef: cast using canonical C type to avoid referencing
+                // project-specific type aliases not in scope in the wrapper.
+                let c_base = ty.c_type.trim_end_matches('*').trim();
+                let cpp_base = ty.cpp_type.trim_end_matches('&').trim();
+                if !generator_supported_primitive(cpp_base) && generator_supported_primitive(c_base) {
+                    Some(format!("*reinterpret_cast<{}*>({name})", c_base))
+                } else {
+                    None
+                }
+            })
             .unwrap_or_else(|| format!("*{name}")),
         IrTypeKind::Pointer => primitive_alias_cast_target(&ty)
             .map(|cpp_type| format!("reinterpret_cast<{}*>({name})", cpp_type))
