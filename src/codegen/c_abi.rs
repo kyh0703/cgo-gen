@@ -25,11 +25,14 @@ pub fn generate_all(ctx: &PipelineContext, write_ir: bool) -> Result<()> {
         );
     }
 
-    // Collect all primary class handles across all headers — these are always "pre-claimed"
-    // so that each class's opaque handle is only emitted in its own file.
+    // Collect handles only for classes that have a destructor — those are the ones that will
+    // actually get a Go wrapper struct generated. Classes without a destructor (e.g. pure
+    // key/value types with no lifecycle) are left emittable as opaque types so that method
+    // signatures referencing them can still compile.
     let global_class_handles: BTreeSet<String> = parsed
         .classes
         .iter()
+        .filter(|class| class.has_destructor)
         .map(|class| format!("{}Handle", ir::flatten_cpp_name(&class.namespace, &class.name)))
         .collect();
 
