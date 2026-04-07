@@ -42,7 +42,7 @@ struct CallbackUsage<'a> {
 pub fn render_go_facade(
     config: &PipelineContext,
     ir: &IrModule,
-    global_class_handles: &BTreeSet<String>,
+    globally_emitted_opaques: &BTreeSet<String>,
 ) -> Result<Vec<GeneratedGoFile>> {
     let functions = ir
         .functions
@@ -60,11 +60,12 @@ pub fn render_go_facade(
 
     ensure_unique_go_exports(&functions)?;
 
-    // Exclude opaque types that are primary classes in OTHER files (to avoid redeclarations).
+    // Exclude opaque types already declared in another file (primary class handles and
+    // any non-class opaque types claimed by a previously-processed header).
     let local_opaque_types: Vec<&OpaqueType> = ir
         .opaque_types
         .iter()
-        .filter(|ot| !global_class_handles.contains(&ot.name))
+        .filter(|ot| !globally_emitted_opaques.contains(&ot.name))
         .collect();
 
     Ok(vec![GeneratedGoFile {
@@ -255,7 +256,7 @@ fn render_go_facade_file(
         if covered_handles.contains(opaque.name.as_str()) {
             continue;
         }
-        let go_name = leaf_cpp_name(&opaque.cpp_type);
+        let go_name = flatten_qualified_cpp_name(&opaque.cpp_type);
         out.push_str(&format!(
             "type {} struct {{\n    ptr *C.{}\n}}\n\n",
             go_name, opaque.name
@@ -1265,7 +1266,7 @@ fn go_param_type(config: &PipelineContext, ty: &IrType) -> Option<String> {
         }
         IrTypeKind::Callback => Some(leaf_cpp_name(&ty.cpp_type)),
         IrTypeKind::ModelReference | IrTypeKind::ModelPointer | IrTypeKind::ModelValue => {
-            let base = leaf_cpp_name(&base_model_cpp_type(&ty.cpp_type));
+            let base = flatten_qualified_cpp_name(&base_model_cpp_type(&ty.cpp_type));
             if base == "void" {
                 return Some("unsafe.Pointer".to_string());
             }
@@ -1301,7 +1302,7 @@ fn go_pointer_return_type(ty: &IrType) -> Option<String> {
 }
 
 fn go_model_return_type(config: &PipelineContext, ty: &IrType) -> String {
-    let base = leaf_cpp_name(&base_model_cpp_type(&ty.cpp_type));
+    let base = flatten_qualified_cpp_name(&base_model_cpp_type(&ty.cpp_type));
     if base == "void" {
         return "unsafe.Pointer".to_string();
     }
@@ -2077,7 +2078,7 @@ mod tests {
         };
 
         let config = PipelineContext::new(Config::default());
-        let files = render_go_facade(&config, &ir).unwrap();
+        let files = render_go_facade(&config, &ir, &BTreeSet::new()).unwrap();
         assert!(!files.is_empty(), "expected at least one Go file");
         let contents = &files[0].contents;
         assert!(
