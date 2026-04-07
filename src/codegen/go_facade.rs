@@ -1228,15 +1228,16 @@ fn go_param_type(config: &PipelineContext, ty: &IrType) -> Option<String> {
             extern_struct_go_type(ty)
         }
         IrTypeKind::Callback => Some(leaf_cpp_name(&ty.cpp_type)),
-        IrTypeKind::ModelReference | IrTypeKind::ModelPointer | IrTypeKind::ModelValue => config
-            .known_model_projection(&ty.cpp_type)
-            .map(|projection| format!("*{}", projection.go_name))
-            .or_else(|| {
-                Some(format!(
-                    "*{}",
-                    leaf_cpp_name(&base_model_cpp_type(&ty.cpp_type))
-                ))
-            }),
+        IrTypeKind::ModelReference | IrTypeKind::ModelPointer | IrTypeKind::ModelValue => {
+            let base = leaf_cpp_name(&base_model_cpp_type(&ty.cpp_type));
+            if base == "void" {
+                return Some("unsafe.Pointer".to_string());
+            }
+            config
+                .known_model_projection(&ty.cpp_type)
+                .map(|projection| format!("*{}", projection.go_name))
+                .or_else(|| Some(format!("*{base}")))
+        }
         _ => None,
     }
 }
@@ -1264,10 +1265,14 @@ fn go_pointer_return_type(ty: &IrType) -> Option<String> {
 }
 
 fn go_model_return_type(config: &PipelineContext, ty: &IrType) -> String {
+    let base = leaf_cpp_name(&base_model_cpp_type(&ty.cpp_type));
+    if base == "void" {
+        return "unsafe.Pointer".to_string();
+    }
     config
         .known_model_projection(&ty.cpp_type)
         .map(|projection| projection.go_name.clone())
-        .unwrap_or_else(|| leaf_cpp_name(&base_model_cpp_type(&ty.cpp_type)))
+        .unwrap_or(base)
 }
 
 fn is_model_wrapper_return(ty: &IrType) -> bool {

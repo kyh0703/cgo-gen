@@ -1088,6 +1088,12 @@ fn normalize_type(cpp_type: &str, callback_names: &BTreeSet<String>) -> Result<I
             c_type: "char*".to_string(),
             handle: None,
         }),
+        "NPVOID" => Ok(IrType {
+            kind: IrTypeKind::ModelPointer,
+            cpp_type: "void".to_string(),
+            c_type: "NPVOIDHandle*".to_string(),
+            handle: Some("NPVOIDHandle".to_string()),
+        }),
         "std::string" | "const std::string &" | "const std::string&" | "std::string_view" => {
             Ok(IrType {
                 kind: IrTypeKind::String,
@@ -1446,6 +1452,7 @@ fn extern_c_struct_base_type(cpp_type: &str) -> Option<String> {
 fn raw_safe_model_handle_name(cpp_type: &str) -> Option<String> {
     let base = base_model_cpp_type(cpp_type);
     if base.is_empty()
+        || base == "void"
         || base.contains('<')
         || base.starts_with("std::")
         || base.starts_with("struct ")
