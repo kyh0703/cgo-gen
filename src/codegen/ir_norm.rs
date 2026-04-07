@@ -944,21 +944,37 @@ fn normalize_type_with_canonical(
             ty.kind,
             IrTypeKind::ModelReference | IrTypeKind::ModelPointer | IrTypeKind::ModelValue
         ) && canonical_trimmed != trimmed
-            && let Ok(mut canonical_ty) = normalize_type(canonical_trimmed, callback_names)
-            && matches!(
-                canonical_ty.kind,
-                IrTypeKind::ExternStructReference
-                    | IrTypeKind::ExternStructPointer
-                    | IrTypeKind::Primitive
-                    | IrTypeKind::Reference
-                    | IrTypeKind::Pointer
-                    | IrTypeKind::String
-                    | IrTypeKind::CString
-                    | IrTypeKind::FixedByteArray
-            )
         {
-            canonical_ty.cpp_type = trimmed.to_string();
-            return Ok(canonical_ty);
+            if let Ok(mut canonical_ty) = normalize_type(canonical_trimmed, callback_names) {
+                if matches!(
+                    canonical_ty.kind,
+                    IrTypeKind::ExternStructReference
+                        | IrTypeKind::ExternStructPointer
+                        | IrTypeKind::Primitive
+                        | IrTypeKind::Reference
+                        | IrTypeKind::Pointer
+                        | IrTypeKind::String
+                        | IrTypeKind::CString
+                        | IrTypeKind::FixedByteArray
+                ) {
+                    canonical_ty.cpp_type = trimmed.to_string();
+                    return Ok(canonical_ty);
+                }
+                // When both original and canonical resolve to a Model kind, use the
+                // canonical type name for C++ code generation (e.g. `iKey_t` instead
+                // of `iKey`) while keeping the original handle/c_type for the C API.
+                if matches!(
+                    canonical_ty.kind,
+                    IrTypeKind::ModelValue
+                        | IrTypeKind::ModelReference
+                        | IrTypeKind::ModelPointer
+                ) {
+                    return Ok(IrType {
+                        cpp_type: canonical_trimmed.to_string(),
+                        ..ty
+                    });
+                }
+            }
         }
         return Ok(ty);
     }
