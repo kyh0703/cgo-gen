@@ -184,7 +184,10 @@ fn render_go_facade_file(
             || has_void_model_params(function.params.iter())
             || matches!(
                 function.returns.kind,
-                IrTypeKind::Pointer | IrTypeKind::FixedByteArray
+                IrTypeKind::Pointer
+                    | IrTypeKind::FixedByteArray
+                    | IrTypeKind::FixedArray
+                    | IrTypeKind::FixedModelArray
             )
     }) || classes.iter().any(|class| {
         class.constructor.iter().any(|ctor| {
@@ -538,153 +541,30 @@ fn render_general_api_method(
             .join(", ")
     );
 
-    let mut out = String::new();
-    out.push_str(&format!(
-        "func ({} *{}) {}({})",
-        receiver,
+    let sig = go_return_sig(config, &function.returns);
+    let sig_part = if sig.is_empty() {
+        String::new()
+    } else {
+        format!(" {sig}")
+    };
+    let mut out = format!(
+        "func ({receiver} *{}) {}({}){sig_part} {{\n",
         class.go_name,
         go_method_export_name(function),
         params
-    ));
-    match function.returns.kind {
-        IrTypeKind::Void => out.push_str(" {\n"),
-        IrTypeKind::String | IrTypeKind::CString => out.push_str(" (string, error) {\n"),
-        IrTypeKind::FixedByteArray => out.push_str(" ([]byte, error) {\n"),
-        IrTypeKind::Pointer => out.push_str(&format!(
-            " {} {{\n",
-            go_pointer_return_type(&function.returns).unwrap()
-        )),
-        _ if is_model_wrapper_return(&function.returns) => {
-            let _model_ret = go_model_return_type(config, &function.returns);
-            if _model_ret == "unsafe.Pointer" {
-                out.push_str(" unsafe.Pointer {\n");
-            } else {
-                out.push_str(&format!(" *{} {{\n", _model_ret));
-            }
-        }
-        _ => out.push_str(&format!(
-            " {} {{\n",
-            go_type_for_ir(&function.returns).unwrap()
-        )),
-    }
+    );
     out.push_str(&format!(
-        "    if {} == nil || {}.ptr == nil {{\n",
-        receiver, receiver
+        "    if {receiver} == nil || {receiver}.ptr == nil {{\n        {}\n    }}\n",
+        go_nil_return_stmt(&function.returns)
     ));
-    match function.returns.kind {
-        IrTypeKind::Void => out.push_str("        return\n"),
-        IrTypeKind::String | IrTypeKind::CString => {
-            out.push_str("        return \"\", errors.New(\"facade receiver is nil\")\n")
-        }
-        IrTypeKind::FixedByteArray => {
-            out.push_str("        return nil, errors.New(\"facade receiver is nil\")\n")
-        }
-        IrTypeKind::Pointer => out.push_str("        return nil\n"),
-        _ if is_model_wrapper_return(&function.returns) => out.push_str("        return nil\n"),
-        _ => out.push_str(&format!(
-            "        return {}\n",
-            zero_value_for_go_type(go_type_for_ir(&function.returns).unwrap())
-        )),
-    }
-    out.push_str("    }\n");
-    for line in prep.setup_lines {
-        out.push_str("    ");
-        out.push_str(&line);
-        out.push('\n');
-    }
-    for line in prep.defer_lines {
-        out.push_str("    ");
-        out.push_str(&line);
-        out.push('\n');
-    }
-    match function.returns.kind {
-        IrTypeKind::Void => {
-            out.push_str(&format!("    {}\n", call));
-            for line in prep.post_call_lines {
-                out.push_str("    ");
-                out.push_str(&line);
-                out.push('\n');
-            }
-        }
-        IrTypeKind::String => {
-            out.push_str(&format!("    raw := {}\n", call));
-            for line in prep.post_call_lines {
-                out.push_str("    ");
-                out.push_str(&line);
-                out.push('\n');
-            }
-            out.push_str(&format!(
-                "    if raw == nil {{\n        return \"\", errors.New(\"wrapper returned nil string\")\n    }}\n    defer C.{}_string_free(raw)\n    return C.GoString(raw), nil\n",
-                config.naming.prefix
-            ));
-        }
-        IrTypeKind::CString => {
-            out.push_str(&format!("    raw := {}\n", call));
-            for line in prep.post_call_lines {
-                out.push_str("    ");
-                out.push_str(&line);
-                out.push('\n');
-            }
-            out.push_str(
-                "    if raw == nil {\n        return \"\", errors.New(\"wrapper returned nil string\")\n    }\n    return C.GoString(raw), nil\n",
-            );
-        }
-        IrTypeKind::FixedByteArray => {
-            let n = ir_norm::byte_array_length(&function.returns.cpp_type).unwrap_or(0);
-            out.push_str(&format!("    raw := {}\n", call));
-            for line in prep.post_call_lines {
-                out.push_str("    ");
-                out.push_str(&line);
-                out.push('\n');
-            }
-            out.push_str(&format!(
-                "    if raw == nil {{\n        return nil, errors.New(\"wrapper returned nil byte array\")\n    }}\n    defer C.{prefix}_byte_array_free(raw)\n    return C.GoBytes(unsafe.Pointer(raw), C.int({n})), nil\n",
-                prefix = config.naming.prefix
-            ));
-        }
-        IrTypeKind::Pointer => {
-            let go_type = go_pointer_return_type(&function.returns).unwrap();
-            out.push_str(&format!("    raw := {}\n", call));
-            for line in prep.post_call_lines {
-                out.push_str("    ");
-                out.push_str(&line);
-                out.push('\n');
-            }
-            out.push_str(&format!("    return ({})(unsafe.Pointer(raw))\n", go_type));
-        }
-        _ if is_model_wrapper_return(&function.returns) => {
-            let go_name = go_model_return_type(config, &function.returns);
-            out.push_str(&format!("    raw := {}\n", call));
-            for line in prep.post_call_lines {
-                out.push_str("    ");
-                out.push_str(&line);
-                out.push('\n');
-            }
-            if go_name == "unsafe.Pointer" {
-                out.push_str("    return unsafe.Pointer(raw)\n");
-            } else {
-                let ptr_expr = cast_raw_to_projection_handle(config, &function.returns, "raw");
-                out.push_str(&format!(
-                    "    if raw == nil {{\n        return nil\n    }}\n    return &{}{{ptr: {}}}\n",
-                    go_name, ptr_expr
-                ));
-            }
-        }
-        _ => {
-            let go_type = go_type_for_ir(&function.returns).unwrap();
-            if go_type == "bool" {
-                out.push_str(&format!("    result := {}\n", call));
-                for line in prep.post_call_lines {
-                    out.push_str("    ");
-                    out.push_str(&line);
-                    out.push('\n');
-                }
-                out.push_str("    return bool(result)\n");
-            } else {
-                out.push_str(&format!("    return {}({})\n", go_type, call));
-            }
-        }
-    }
+    out.push_str(&indented_lines(&prep.setup_lines));
+    out.push_str(&indented_lines(&prep.defer_lines));
+    out.push_str(&render_go_call_return(
+        config,
+        function,
+        &call,
+        &prep.post_call_lines,
+    ));
     out.push_str("}\n");
     out
 }
@@ -699,106 +579,23 @@ fn render_free_function(config: &PipelineContext, function: &IrFunction) -> Stri
     let call = format!("C.{}({})", function.name, prep.args.join(", "));
     let go_name = go_facade_export_name(function);
 
-    match function.returns.kind {
-        IrTypeKind::Void => {
-            let mut out = format!("func {}({}) {{\n", go_name, params);
-            for line in prep.setup_lines {
-                out.push_str("    ");
-                out.push_str(&line);
-                out.push('\n');
-            }
-            for line in prep.defer_lines {
-                out.push_str("    ");
-                out.push_str(&line);
-                out.push('\n');
-            }
-            out.push_str(&format!("    {}\n", call));
-            for line in prep.post_call_lines {
-                out.push_str("    ");
-                out.push_str(&line);
-                out.push('\n');
-            }
-            out.push_str("}\n");
-            out
-        }
-        IrTypeKind::String => {
-            let mut out = format!("func {}({}) (string, error) {{\n", go_name, params);
-            out.push_str(&indented_lines(&prep.setup_lines));
-            out.push_str(&indented_lines(&prep.defer_lines));
-            out.push_str(&format!("    raw := {}\n", call));
-            out.push_str(&indented_lines(&prep.post_call_lines));
-            out.push_str(&format!(
-                "    if raw == nil {{\n        return \"\", errors.New(\"wrapper returned nil string\")\n    }}\n    defer C.{}_string_free(raw)\n    return C.GoString(raw), nil\n}}\n",
-                config.naming.prefix
-            ));
-            out
-        }
-        IrTypeKind::CString => {
-            let mut out = format!("func {}({}) (string, error) {{\n", go_name, params);
-            out.push_str(&indented_lines(&prep.setup_lines));
-            out.push_str(&indented_lines(&prep.defer_lines));
-            out.push_str(&format!("    raw := {}\n", call));
-            out.push_str(&indented_lines(&prep.post_call_lines));
-            out.push_str(
-                "    if raw == nil {\n        return \"\", errors.New(\"wrapper returned nil string\")\n    }\n    return C.GoString(raw), nil\n}\n",
-            );
-            out
-        }
-        IrTypeKind::FixedByteArray => {
-            let n = ir_norm::byte_array_length(&function.returns.cpp_type).unwrap_or(0);
-            let mut out = format!("func {}({}) ([]byte, error) {{\n", go_name, params);
-            out.push_str(&indented_lines(&prep.setup_lines));
-            out.push_str(&indented_lines(&prep.defer_lines));
-            out.push_str(&format!("    raw := {}\n", call));
-            out.push_str(&indented_lines(&prep.post_call_lines));
-            out.push_str(&format!(
-                "    if raw == nil {{\n        return nil, errors.New(\"wrapper returned nil byte array\")\n    }}\n    defer C.{prefix}_byte_array_free(raw)\n    return C.GoBytes(unsafe.Pointer(raw), C.int({n})), nil\n}}\n",
-                prefix = config.naming.prefix
-            ));
-            out
-        }
-        IrTypeKind::Pointer => {
-            let go_type = go_pointer_return_type(&function.returns).unwrap();
-            let mut out = format!("func {}({}) {} {{\n", go_name, params, go_type);
-            out.push_str(&indented_lines(&prep.setup_lines));
-            out.push_str(&indented_lines(&prep.defer_lines));
-            out.push_str(&format!("    raw := {}\n", call));
-            out.push_str(&indented_lines(&prep.post_call_lines));
-            out.push_str(&format!(
-                "    return ({})(unsafe.Pointer(raw))\n}}\n",
-                go_type
-            ));
-            out
-        }
-        _ if is_model_wrapper_return(&function.returns) => {
-            let go_name_str = go_model_return_type(config, &function.returns);
-            let mut out = format!("func {}({}) *{} {{\n", go_name, params, go_name_str);
-            out.push_str(&indented_lines(&prep.setup_lines));
-            out.push_str(&indented_lines(&prep.defer_lines));
-            out.push_str(&format!("    raw := {}\n", call));
-            out.push_str(&indented_lines(&prep.post_call_lines));
-            let ptr_expr = cast_raw_to_projection_handle(config, &function.returns, "raw");
-            out.push_str(&format!(
-                "    if raw == nil {{\n        return nil\n    }}\n    return &{}{{ptr: {}}}\n}}\n",
-                go_name_str, ptr_expr
-            ));
-            out
-        }
-        _ => {
-            let go_type = go_type_for_ir(&function.returns).unwrap();
-            let mut out = format!("func {}({}) {} {{\n", go_name, params, go_type);
-            out.push_str(&indented_lines(&prep.setup_lines));
-            out.push_str(&indented_lines(&prep.defer_lines));
-            if go_type == "bool" {
-                out.push_str(&format!("    result := {}\n", call));
-                out.push_str(&indented_lines(&prep.post_call_lines));
-                out.push_str("    return bool(result)\n}\n");
-            } else {
-                out.push_str(&format!("    return {}({})\n}}\n", go_type, call));
-            }
-            out
-        }
-    }
+    let sig = go_return_sig(config, &function.returns);
+    let sig_part = if sig.is_empty() {
+        String::new()
+    } else {
+        format!(" {sig}")
+    };
+    let mut out = format!("func {go_name}({params}){sig_part} {{\n");
+    out.push_str(&indented_lines(&prep.setup_lines));
+    out.push_str(&indented_lines(&prep.defer_lines));
+    out.push_str(&render_go_call_return(
+        config,
+        function,
+        &call,
+        &prep.post_call_lines,
+    ));
+    out.push_str("}\n");
+    out
 }
 
 fn render_callback_method(
@@ -819,106 +616,30 @@ fn render_callback_method(
             .join(", ")
     );
 
-    let mut out = String::new();
-    out.push_str(&format!(
-        "func ({} *{}) {}({})",
-        receiver,
+    let sig = go_return_sig(config, &function.returns);
+    let sig_part = if sig.is_empty() {
+        String::new()
+    } else {
+        format!(" {sig}")
+    };
+    let mut out = format!(
+        "func ({receiver} *{}) {}({}){sig_part} {{\n",
         class.go_name,
         go_method_export_name(function),
         params
-    ));
-    match function.returns.kind {
-        IrTypeKind::Void => out.push_str(" {\n"),
-        IrTypeKind::String | IrTypeKind::CString => out.push_str(" (string, error) {\n"),
-        IrTypeKind::FixedByteArray => out.push_str(" ([]byte, error) {\n"),
-        IrTypeKind::Pointer => out.push_str(&format!(
-            " {} {{\n",
-            go_pointer_return_type(&function.returns).unwrap()
-        )),
-        _ if is_model_wrapper_return(&function.returns) => {
-            let _model_ret = go_model_return_type(config, &function.returns);
-            if _model_ret == "unsafe.Pointer" {
-                out.push_str(" unsafe.Pointer {\n");
-            } else {
-                out.push_str(&format!(" *{} {{\n", _model_ret));
-            }
-        }
-        _ => out.push_str(&format!(
-            " {} {{\n",
-            go_type_for_ir(&function.returns).unwrap()
-        )),
-    }
+    );
     out.push_str(&format!(
-        "    if {} == nil || {}.ptr == nil {{\n",
-        receiver, receiver
+        "    if {receiver} == nil || {receiver}.ptr == nil {{\n        {}\n    }}\n",
+        go_nil_return_stmt(&function.returns)
     ));
-    match function.returns.kind {
-        IrTypeKind::Void => out.push_str("        return\n"),
-        IrTypeKind::String | IrTypeKind::CString => {
-            out.push_str("        return \"\", errors.New(\"facade receiver is nil\")\n")
-        }
-        IrTypeKind::FixedByteArray => {
-            out.push_str("        return nil, errors.New(\"facade receiver is nil\")\n")
-        }
-        IrTypeKind::Pointer => out.push_str("        return nil\n"),
-        _ if is_model_wrapper_return(&function.returns) => out.push_str("        return nil\n"),
-        _ => out.push_str(&format!(
-            "        return {}\n",
-            zero_value_for_go_type(go_type_for_ir(&function.returns).unwrap())
-        )),
-    }
-    out.push_str("    }\n");
     out.push_str(&indented_lines(&prep.setup_lines));
     out.push_str(&indented_lines(&prep.defer_lines));
-    match function.returns.kind {
-        IrTypeKind::Void => out.push_str(&format!("    {}\n", call)),
-        IrTypeKind::String => {
-            out.push_str(&format!("    raw := {}\n", call));
-            out.push_str(&format!(
-                "    if raw == nil {{\n        return \"\", errors.New(\"wrapper returned nil string\")\n    }}\n    defer C.{}_string_free(raw)\n    return C.GoString(raw), nil\n",
-                config.naming.prefix
-            ));
-        }
-        IrTypeKind::CString => {
-            out.push_str(&format!("    raw := {}\n", call));
-            out.push_str(
-                "    if raw == nil {\n        return \"\", errors.New(\"wrapper returned nil string\")\n    }\n    return C.GoString(raw), nil\n",
-            );
-        }
-        IrTypeKind::FixedByteArray => {
-            let n = ir_norm::byte_array_length(&function.returns.cpp_type).unwrap_or(0);
-            out.push_str(&format!("    raw := {}\n", call));
-            out.push_str(&format!(
-                "    if raw == nil {{\n        return nil, errors.New(\"wrapper returned nil byte array\")\n    }}\n    defer C.{prefix}_byte_array_free(raw)\n    return C.GoBytes(unsafe.Pointer(raw), C.int({n})), nil\n",
-                prefix = config.naming.prefix
-            ));
-        }
-        IrTypeKind::Pointer => {
-            let go_type = go_pointer_return_type(&function.returns).unwrap();
-            out.push_str(&format!("    raw := {}\n", call));
-            out.push_str(&format!("    return ({})(unsafe.Pointer(raw))\n", go_type));
-        }
-        _ if is_model_wrapper_return(&function.returns) => {
-            let go_name = go_model_return_type(config, &function.returns);
-            out.push_str(&format!("    raw := {}\n", call));
-            if go_name == "unsafe.Pointer" {
-                out.push_str("    return unsafe.Pointer(raw)\n");
-            } else {
-                let ptr_expr = cast_raw_to_projection_handle(config, &function.returns, "raw");
-                out.push_str(&format!(
-                    "    if raw == nil {{\n        return nil\n    }}\n    return &{}{{ptr: {}}}\n",
-                    go_name, ptr_expr
-                ));
-            }
-        }
-        _ => {
-            out.push_str(&format!("    result := {}\n", call));
-            out.push_str(&format!(
-                "    return {}(result)\n",
-                go_type_for_ir(&function.returns).unwrap()
-            ));
-        }
-    }
+    out.push_str(&render_go_call_return(
+        config,
+        function,
+        &call,
+        &prep.post_call_lines,
+    ));
     out.push_str("}\n");
     out
 }
@@ -930,79 +651,21 @@ fn render_callback_free_function(config: &PipelineContext, function: &IrFunction
     let call = format!("C.{}_bridge({})", function.name, prep.args.join(", "));
     let go_name = go_facade_export_name(function);
 
-    let mut out = format!("func {}({})", go_name, params);
-    match function.returns.kind {
-        IrTypeKind::Void => out.push_str(" {\n"),
-        IrTypeKind::String | IrTypeKind::CString => out.push_str(" (string, error) {\n"),
-        IrTypeKind::FixedByteArray => out.push_str(" ([]byte, error) {\n"),
-        IrTypeKind::Pointer => out.push_str(&format!(
-            " {} {{\n",
-            go_pointer_return_type(&function.returns).unwrap()
-        )),
-        _ if is_model_wrapper_return(&function.returns) => {
-            let _model_ret = go_model_return_type(config, &function.returns);
-            if _model_ret == "unsafe.Pointer" {
-                out.push_str(" unsafe.Pointer {\n");
-            } else {
-                out.push_str(&format!(" *{} {{\n", _model_ret));
-            }
-        }
-        _ => out.push_str(&format!(
-            " {} {{\n",
-            go_type_for_ir(&function.returns).unwrap()
-        )),
-    }
+    let sig = go_return_sig(config, &function.returns);
+    let sig_part = if sig.is_empty() {
+        String::new()
+    } else {
+        format!(" {sig}")
+    };
+    let mut out = format!("func {go_name}({params}){sig_part} {{\n");
     out.push_str(&indented_lines(&prep.setup_lines));
     out.push_str(&indented_lines(&prep.defer_lines));
-    match function.returns.kind {
-        IrTypeKind::Void => out.push_str(&format!("    {}\n", call)),
-        IrTypeKind::String => {
-            out.push_str(&format!("    raw := {}\n", call));
-            out.push_str(&format!(
-                "    if raw == nil {{\n        return \"\", errors.New(\"wrapper returned nil string\")\n    }}\n    defer C.{}_string_free(raw)\n    return C.GoString(raw), nil\n",
-                config.naming.prefix
-            ));
-        }
-        IrTypeKind::CString => {
-            out.push_str(&format!("    raw := {}\n", call));
-            out.push_str(
-                "    if raw == nil {\n        return \"\", errors.New(\"wrapper returned nil string\")\n    }\n    return C.GoString(raw), nil\n",
-            );
-        }
-        IrTypeKind::FixedByteArray => {
-            let n = ir_norm::byte_array_length(&function.returns.cpp_type).unwrap_or(0);
-            out.push_str(&format!("    raw := {}\n", call));
-            out.push_str(&format!(
-                "    if raw == nil {{\n        return nil, errors.New(\"wrapper returned nil byte array\")\n    }}\n    defer C.{prefix}_byte_array_free(raw)\n    return C.GoBytes(unsafe.Pointer(raw), C.int({n})), nil\n",
-                prefix = config.naming.prefix
-            ));
-        }
-        IrTypeKind::Pointer => {
-            let go_type = go_pointer_return_type(&function.returns).unwrap();
-            out.push_str(&format!("    raw := {}\n", call));
-            out.push_str(&format!("    return ({})(unsafe.Pointer(raw))\n", go_type));
-        }
-        _ if is_model_wrapper_return(&function.returns) => {
-            let go_name_str = go_model_return_type(config, &function.returns);
-            out.push_str(&format!("    raw := {}\n", call));
-            if go_name_str == "unsafe.Pointer" {
-                out.push_str("    return unsafe.Pointer(raw)\n");
-            } else {
-                let ptr_expr = cast_raw_to_projection_handle(config, &function.returns, "raw");
-                out.push_str(&format!(
-                    "    if raw == nil {{\n        return nil\n    }}\n    return &{}{{ptr: {}}}\n",
-                    go_name_str, ptr_expr
-                ));
-            }
-        }
-        _ => {
-            out.push_str(&format!("    result := {}\n", call));
-            out.push_str(&format!(
-                "    return {}(result)\n",
-                go_type_for_ir(&function.returns).unwrap()
-            ));
-        }
-    }
+    out.push_str(&render_go_call_return(
+        config,
+        function,
+        &call,
+        &prep.post_call_lines,
+    ));
     out.push_str("}\n");
     out
 }
@@ -1040,6 +703,36 @@ fn render_callback_call_prep(
                 prep.setup_lines.push(format!(
                     "{c_name} := (*C.uint8_t)(unsafe.Pointer(&{}[0]))",
                     param.name
+                ));
+                prep.args.push(c_name);
+            }
+            IrTypeKind::FixedArray => {
+                let c_name = format!("cArg{index}");
+                let elem = ir_norm::fixed_array_elem_type(&param.ty.cpp_type).unwrap_or("int32_t");
+                let c_elem = primitive_cgo_cast_type(elem).unwrap_or("C.int32_t");
+                prep.setup_lines.push(format!(
+                    "{c_name} := (*{c_elem})(unsafe.Pointer(&{}[0]))",
+                    param.name
+                ));
+                prep.args.push(c_name);
+            }
+            IrTypeKind::FixedModelArray => {
+                let c_handle = param.ty.handle.as_deref().unwrap_or("");
+                let elem_cpp =
+                    ir_norm::fixed_array_elem_type(&param.ty.cpp_type).unwrap_or("");
+                let go_name = go_export_name(&flatten_qualified_cpp_name(elem_cpp));
+                let handles_name = format!("cHandles{index}");
+                let c_name = format!("cArg{index}");
+                prep.setup_lines.push(format!(
+                    "{handles_name} := make([]*C.{c_handle}, len({}))",
+                    param.name
+                ));
+                prep.setup_lines.push(format!(
+                    "for _i, _v := range {} {{ {handles_name}[_i] = require{go_name}Handle(_v) }}",
+                    param.name
+                ));
+                prep.setup_lines.push(format!(
+                    "{c_name} := (**C.{c_handle})(unsafe.Pointer(&{handles_name}[0]))"
                 ));
                 prep.args.push(c_name);
             }
@@ -1093,6 +786,36 @@ fn render_call_prep(config: &PipelineContext, params: &[&ir_norm::IrParam]) -> R
                 prep.setup_lines.push(format!(
                     "{c_name} := (*C.uint8_t)(unsafe.Pointer(&{}[0]))",
                     param.name
+                ));
+                prep.args.push(c_name);
+            }
+            IrTypeKind::FixedArray => {
+                let c_name = format!("cArg{index}");
+                let elem = ir_norm::fixed_array_elem_type(&param.ty.cpp_type).unwrap_or("int32_t");
+                let c_elem = primitive_cgo_cast_type(elem).unwrap_or("C.int32_t");
+                prep.setup_lines.push(format!(
+                    "{c_name} := (*{c_elem})(unsafe.Pointer(&{}[0]))",
+                    param.name
+                ));
+                prep.args.push(c_name);
+            }
+            IrTypeKind::FixedModelArray => {
+                let c_handle = param.ty.handle.as_deref().unwrap_or("");
+                let elem_cpp =
+                    ir_norm::fixed_array_elem_type(&param.ty.cpp_type).unwrap_or("");
+                let go_name = go_export_name(&flatten_qualified_cpp_name(elem_cpp));
+                let handles_name = format!("cHandles{index}");
+                let c_name = format!("cArg{index}");
+                prep.setup_lines.push(format!(
+                    "{handles_name} := make([]*C.{c_handle}, len({}))",
+                    param.name
+                ));
+                prep.setup_lines.push(format!(
+                    "for _i, _v := range {} {{ {handles_name}[_i] = require{go_name}Handle(_v) }}",
+                    param.name
+                ));
+                prep.setup_lines.push(format!(
+                    "{c_name} := (**C.{c_handle})(unsafe.Pointer(&{handles_name}[0]))"
                 ));
                 prep.args.push(c_name);
             }
@@ -1370,6 +1093,14 @@ fn go_param_type(config: &PipelineContext, ty: &IrType) -> Option<String> {
     match ty.kind {
         IrTypeKind::String | IrTypeKind::CString => Some("string".to_string()),
         IrTypeKind::FixedByteArray => Some("[]byte".to_string()),
+        IrTypeKind::FixedArray => {
+            let elem = ir_norm::fixed_array_elem_type(&ty.cpp_type)?;
+            Some(format!("[]{}", primitive_go_type(elem).unwrap_or("int32")))
+        }
+        IrTypeKind::FixedModelArray => {
+            let go_name = go_model_return_type(config, ty);
+            Some(format!("[]*{go_name}"))
+        }
         IrTypeKind::Primitive => go_type_for_ir(ty).map(str::to_string),
         IrTypeKind::Reference => go_type_for_reference(ty).map(|go_type| format!("*{go_type}")),
         IrTypeKind::Pointer => {
@@ -1404,7 +1135,11 @@ fn go_return_supported(_config: &PipelineContext, ty: &IrType) -> bool {
     ty.kind == IrTypeKind::Void
         || matches!(
             ty.kind,
-            IrTypeKind::String | IrTypeKind::CString | IrTypeKind::FixedByteArray
+            IrTypeKind::String
+                | IrTypeKind::CString
+                | IrTypeKind::FixedByteArray
+                | IrTypeKind::FixedArray
+                | IrTypeKind::FixedModelArray
         )
         || (ty.kind == IrTypeKind::Primitive && go_type_for_ir(ty).is_some())
         || (ty.kind == IrTypeKind::Pointer && go_pointer_return_type(ty).is_some())
@@ -1445,6 +1180,156 @@ fn is_model_wrapper_return(ty: &IrType) -> bool {
     )
 }
 
+/// Returns the Go return type signature string (without surrounding parens for single values).
+/// e.g. `""` for void, `"(string, error)"` for string, `"([]*Foo, error)"` for FixedModelArray.
+fn go_return_sig(config: &PipelineContext, ty: &IrType) -> String {
+    match ty.kind {
+        IrTypeKind::Void => String::new(),
+        IrTypeKind::String | IrTypeKind::CString => "(string, error)".to_string(),
+        IrTypeKind::FixedByteArray => "([]byte, error)".to_string(),
+        IrTypeKind::FixedArray => {
+            let elem = ir_norm::fixed_array_elem_type(&ty.cpp_type).unwrap_or("int32_t");
+            let go_elem = primitive_go_type(elem).unwrap_or("int32");
+            format!("([]{go_elem}, error)")
+        }
+        IrTypeKind::FixedModelArray => {
+            let go_name = go_model_return_type(config, ty);
+            format!("([]*{go_name}, error)")
+        }
+        IrTypeKind::Pointer => go_pointer_return_type(ty).unwrap_or_default(),
+        _ if is_model_wrapper_return(ty) => {
+            let model_ret = go_model_return_type(config, ty);
+            if model_ret == "unsafe.Pointer" {
+                "unsafe.Pointer".to_string()
+            } else {
+                format!("*{model_ret}")
+            }
+        }
+        _ => go_type_for_ir(ty).unwrap_or("int32").to_string(),
+    }
+}
+
+/// Returns the nil/zero return statement used inside the receiver-nil guard block.
+fn go_nil_return_stmt(ty: &IrType) -> String {
+    match ty.kind {
+        IrTypeKind::Void => "return".to_string(),
+        IrTypeKind::String | IrTypeKind::CString => {
+            "return \"\", errors.New(\"facade receiver is nil\")".to_string()
+        }
+        IrTypeKind::FixedByteArray | IrTypeKind::FixedArray | IrTypeKind::FixedModelArray => {
+            "return nil, errors.New(\"facade receiver is nil\")".to_string()
+        }
+        IrTypeKind::Pointer => "return nil".to_string(),
+        _ if is_model_wrapper_return(ty) => "return nil".to_string(),
+        _ => format!(
+            "return {}",
+            zero_value_for_go_type(go_type_for_ir(ty).unwrap_or("int32"))
+        ),
+    }
+}
+
+/// Renders the function body from the C call onwards (call, post_call, nil-check, return).
+/// Does NOT include setup/defer lines or the closing `}`.
+fn render_go_call_return(
+    config: &PipelineContext,
+    function: &IrFunction,
+    call: &str,
+    post_call_lines: &[String],
+) -> String {
+    let ty = &function.returns;
+    match ty.kind {
+        IrTypeKind::Void => {
+            let mut out = format!("    {call}\n");
+            out.push_str(&indented_lines(post_call_lines));
+            out
+        }
+        IrTypeKind::String => {
+            let mut out = format!("    raw := {call}\n");
+            out.push_str(&indented_lines(post_call_lines));
+            out.push_str(&format!(
+                "    if raw == nil {{\n        return \"\", errors.New(\"wrapper returned nil string\")\n    }}\n    defer C.{}_string_free(raw)\n    return C.GoString(raw), nil\n",
+                config.naming.prefix
+            ));
+            out
+        }
+        IrTypeKind::CString => {
+            let mut out = format!("    raw := {call}\n");
+            out.push_str(&indented_lines(post_call_lines));
+            out.push_str(
+                "    if raw == nil {\n        return \"\", errors.New(\"wrapper returned nil string\")\n    }\n    return C.GoString(raw), nil\n",
+            );
+            out
+        }
+        IrTypeKind::FixedByteArray => {
+            let n = ir_norm::byte_array_length(&ty.cpp_type).unwrap_or(0);
+            let mut out = format!("    raw := {call}\n");
+            out.push_str(&indented_lines(post_call_lines));
+            out.push_str(&format!(
+                "    if raw == nil {{\n        return nil, errors.New(\"wrapper returned nil byte array\")\n    }}\n    defer C.{prefix}_byte_array_free(raw)\n    return C.GoBytes(unsafe.Pointer(raw), C.int({n})), nil\n",
+                prefix = config.naming.prefix
+            ));
+            out
+        }
+        IrTypeKind::FixedArray => {
+            let n = ir_norm::fixed_array_length(&ty.cpp_type).unwrap_or(0);
+            let elem = ir_norm::fixed_array_elem_type(&ty.cpp_type).unwrap_or("int32_t");
+            let go_elem = primitive_go_type(elem).unwrap_or("int32");
+            let c_elem = primitive_cgo_cast_type(elem).unwrap_or("C.int32_t");
+            let mut out = format!("    raw := {call}\n");
+            out.push_str(&indented_lines(post_call_lines));
+            out.push_str(&format!(
+                "    if raw == nil {{\n        return nil, errors.New(\"wrapper returned nil array\")\n    }}\n    defer C.{prefix}_array_free(unsafe.Pointer(raw))\n    cSlice := (*[{n}]{c_elem})(unsafe.Pointer(raw))\n    result := make([]{go_elem}, {n})\n    for i := range result {{\n        result[i] = {go_elem}(cSlice[i])\n    }}\n    return result, nil\n",
+                prefix = config.naming.prefix
+            ));
+            out
+        }
+        IrTypeKind::FixedModelArray => {
+            let n = ir_norm::fixed_array_length(&ty.cpp_type).unwrap_or(0);
+            let go_name = go_model_return_type(config, ty);
+            let c_handle = ty.handle.as_deref().unwrap_or("");
+            let mut out = format!("    raw := {call}\n");
+            out.push_str(&indented_lines(post_call_lines));
+            out.push_str(&format!(
+                "    if raw == nil {{\n        return nil, errors.New(\"wrapper returned nil model array\")\n    }}\n    defer C.free(unsafe.Pointer(raw))\n    cSlice := (*[{n}]*C.{c_handle})(unsafe.Pointer(raw))\n    result := make([]*{go_name}, {n})\n    for i := range result {{\n        result[i] = &{go_name}{{ptr: cSlice[i]}}\n    }}\n    return result, nil\n"
+            ));
+            out
+        }
+        IrTypeKind::Pointer => {
+            let go_type = go_pointer_return_type(ty).unwrap();
+            let mut out = format!("    raw := {call}\n");
+            out.push_str(&indented_lines(post_call_lines));
+            out.push_str(&format!("    return ({go_type})(unsafe.Pointer(raw))\n"));
+            out
+        }
+        _ if is_model_wrapper_return(ty) => {
+            let go_name = go_model_return_type(config, ty);
+            let mut out = format!("    raw := {call}\n");
+            out.push_str(&indented_lines(post_call_lines));
+            if go_name == "unsafe.Pointer" {
+                out.push_str("    return unsafe.Pointer(raw)\n");
+            } else {
+                let ptr_expr = cast_raw_to_projection_handle(config, ty, "raw");
+                out.push_str(&format!(
+                    "    if raw == nil {{\n        return nil\n    }}\n    return &{go_name}{{ptr: {ptr_expr}}}\n"
+                ));
+            }
+            out
+        }
+        _ => {
+            let go_type = go_type_for_ir(ty).unwrap();
+            let mut out = String::new();
+            if go_type == "bool" {
+                out.push_str(&format!("    result := {call}\n"));
+                out.push_str(&indented_lines(post_call_lines));
+                out.push_str("    return bool(result)\n");
+            } else {
+                out.push_str(&format!("    return {go_type}({call})\n"));
+            }
+            out
+        }
+    }
+}
+
 fn zero_value_for_go_type(go_type: &str) -> &'static str {
     match go_type {
         "bool" => "false",
@@ -1481,6 +1366,10 @@ fn cgo_cast_type(ty: &IrType) -> &'static str {
                 ty.cpp_type, ty.c_type
             )
         })
+}
+
+pub fn primitive_go_type_pub(value: &str) -> Option<&'static str> {
+    primitive_go_type(value)
 }
 
 fn primitive_go_type(value: &str) -> Option<&'static str> {
