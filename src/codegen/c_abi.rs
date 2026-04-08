@@ -232,9 +232,17 @@ fn render_build_flags(ctx: &PipelineContext) -> String {
     let package_name = go_package_name(&ctx.output.dir);
     let cxxflags = exported_cxxflags(ctx);
     let cxxflags_line = cxxflags.join(" ");
-    format!(
-        "package {package_name}\n\n/*\n#cgo CFLAGS: -I${{SRCDIR}}\n#cgo CXXFLAGS: {cxxflags_line}\n*/\nimport \"C\"\n"
-    )
+    let ldflags = &ctx.input.ldflags;
+    if ldflags.is_empty() {
+        format!(
+            "package {package_name}\n\n/*\n#cgo CFLAGS: -I${{SRCDIR}}\n#cgo CXXFLAGS: {cxxflags_line}\n*/\nimport \"C\"\n"
+        )
+    } else {
+        let ldflags_line = ldflags.join(" ");
+        format!(
+            "package {package_name}\n\n/*\n#cgo CFLAGS: -I${{SRCDIR}}\n#cgo CXXFLAGS: {cxxflags_line}\n#cgo LDFLAGS: {ldflags_line}\n*/\nimport \"C\"\n"
+        )
+    }
 }
 
 fn exported_cxxflags(ctx: &PipelineContext) -> Vec<String> {
