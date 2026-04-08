@@ -45,7 +45,7 @@ fn generates_wrapper_files() {
     let ctx = generator::prepare_config(&PipelineContext::new(config.clone())).unwrap();
     let parsed = parser::parse(&ctx).unwrap();
     let ir = ir::normalize(&ctx, &parsed).unwrap();
-    generator::generate(&ctx, &ir, true).unwrap();
+    generator::generate(&ctx, &ir, true, &Default::default()).unwrap();
 
     let header = fs::read_to_string(config.output_dir().join(&config.output.header)).unwrap();
     let source = fs::read_to_string(config.output_dir().join(&config.output.source)).unwrap();

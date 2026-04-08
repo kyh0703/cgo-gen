@@ -42,7 +42,7 @@ fn checked_in_real_sil_model_config_generates_go_wrapper_when_sources_exist() {
 
     let parsed = parser::parse(&scoped).unwrap();
     let ir = ir::normalize(&scoped, &parsed).unwrap();
-    generator::generate(&scoped, &ir, true).unwrap();
+    generator::generate(&scoped, &ir, true, &Default::default()).unwrap();
 
     let go_path = scoped.output_dir().join(scoped.go_filename(""));
     let go_wrapper = fs::read_to_string(&go_path).unwrap();
