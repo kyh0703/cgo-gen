@@ -358,6 +358,16 @@ pub fn render_header(ctx: &PipelineContext, ir: &IrModule) -> String {
         ));
     }
 
+    let needs_array_free = ir.functions.iter().any(|f| {
+        matches!(f.returns.kind, IrTypeKind::FixedArray | IrTypeKind::FixedModelArray)
+    });
+    if needs_array_free {
+        out.push_str(&format!(
+            "void {}_array_free(void* value);\n\n",
+            ctx.naming.prefix
+        ));
+    }
+
     out.push_str("#ifdef __cplusplus\n}\n#endif\n\n");
     out.push_str(&format!("#endif /* {guard} */\n"));
     out
@@ -409,6 +419,13 @@ pub fn render_source(ctx: &PipelineContext, ir: &IrModule) -> String {
         .any(|function| function.returns.kind == IrTypeKind::FixedByteArray)
     {
         out.push_str(&render_byte_array_free(&ctx));
+    }
+
+    let needs_array_free = ir.functions.iter().any(|f| {
+        matches!(f.returns.kind, IrTypeKind::FixedArray | IrTypeKind::FixedModelArray)
+    });
+    if needs_array_free {
+        out.push_str(&render_array_free(&ctx));
     }
 
     out
@@ -544,6 +561,20 @@ fn render_callable_body(function: &IrFunction, target: &str, arg_start: usize) -
         IrTypeKind::FixedByteArray => format!(
             "    auto _tmp = {target}({args});\n    uint8_t* _r = static_cast<uint8_t*>(std::malloc(sizeof(_tmp)));\n    if (_r == nullptr) {{\n        return nullptr;\n    }}\n    std::memcpy(_r, &_tmp, sizeof(_tmp));\n    return _r;\n"
         ),
+        IrTypeKind::FixedArray => {
+            let c_elem = function.returns.c_type.trim_end_matches('*').trim();
+            format!(
+                "    auto _tmp = {target}({args});\n    {c_elem}* _r = static_cast<{c_elem}*>(std::malloc(sizeof(_tmp)));\n    if (_r == nullptr) {{\n        return nullptr;\n    }}\n    std::memcpy(_r, &_tmp, sizeof(_tmp));\n    return _r;\n"
+            )
+        }
+        IrTypeKind::FixedModelArray => {
+            let handle = function.returns.handle.as_deref().unwrap_or("");
+            let base_cpp = base_model_cpp_type(&function.returns.cpp_type);
+            let n = ir::fixed_array_length(&function.returns.cpp_type).unwrap_or(0);
+            format!(
+                "    auto _tmp = {target}({args});\n    {handle}** _r = static_cast<{handle}**>(std::malloc({n} * sizeof({handle}*)));\n    if (_r == nullptr) {{\n        return nullptr;\n    }}\n    for (int _i = 0; _i < {n}; _i++) {{\n        _r[_i] = reinterpret_cast<{handle}*>(new {base_cpp}(_tmp[_i]));\n    }}\n    return _r;\n"
+            )
+        }
         IrTypeKind::ModelView => render_model_view_return(function, target, &args),
         IrTypeKind::ModelValue => format!(
             "    return reinterpret_cast<{}>(new {}({}({})));\n",
@@ -565,6 +596,20 @@ fn render_field_getter_body(function: &IrFunction, receiver: &str, field_name: &
         IrTypeKind::FixedByteArray => format!(
             "    uint8_t* _r = static_cast<uint8_t*>(std::malloc(sizeof({receiver}->{field_name})));\n    if (_r == nullptr) {{\n        return nullptr;\n    }}\n    std::memcpy(_r, {receiver}->{field_name}, sizeof({receiver}->{field_name}));\n    return _r;\n"
         ),
+        IrTypeKind::FixedArray => {
+            let c_elem = function.returns.c_type.trim_end_matches('*').trim();
+            format!(
+                "    {c_elem}* _r = static_cast<{c_elem}*>(std::malloc(sizeof({receiver}->{field_name})));\n    if (_r == nullptr) {{\n        return nullptr;\n    }}\n    std::memcpy(_r, {receiver}->{field_name}, sizeof({receiver}->{field_name}));\n    return _r;\n"
+            )
+        }
+        IrTypeKind::FixedModelArray => {
+            let handle = function.returns.handle.as_deref().unwrap_or("");
+            let base_cpp = base_model_cpp_type(&function.returns.cpp_type);
+            let n = ir::fixed_array_length(&function.returns.cpp_type).unwrap_or(0);
+            format!(
+                "    {handle}** _r = static_cast<{handle}**>(std::malloc({n} * sizeof({handle}*)));\n    if (_r == nullptr) {{\n        return nullptr;\n    }}\n    for (int _i = 0; _i < {n}; _i++) {{\n        _r[_i] = reinterpret_cast<{handle}*>(new {base_cpp}({receiver}->{field_name}[_i]));\n    }}\n    return _r;\n"
+            )
+        }
         IrTypeKind::ModelValue => format!(
             "    return reinterpret_cast<{}>(new {}({receiver}->{field_name}));\n",
             function.returns.c_type,
@@ -592,6 +637,16 @@ fn render_field_setter_body(function: &IrFunction, receiver: &str, field_name: &
         IrTypeKind::FixedByteArray => format!(
             "    if (value == nullptr) {{\n        return;\n    }}\n    std::memcpy({receiver}->{field_name}, value, sizeof({receiver}->{field_name}));\n"
         ),
+        IrTypeKind::FixedArray => format!(
+            "    if (value == nullptr) {{\n        return;\n    }}\n    std::memcpy({receiver}->{field_name}, value, sizeof({receiver}->{field_name}));\n"
+        ),
+        IrTypeKind::FixedModelArray => {
+            let base_cpp = base_model_cpp_type(&value_param.ty.cpp_type);
+            let n = ir::fixed_array_length(&value_param.ty.cpp_type).unwrap_or(0);
+            format!(
+                "    if (value == nullptr) {{\n        return;\n    }}\n    for (int _i = 0; _i < {n}; _i++) {{\n        {receiver}->{field_name}[_i] = *reinterpret_cast<{base_cpp}*>(value[_i]);\n    }}\n"
+            )
+        }
         IrTypeKind::ModelValue => format!(
             "    {receiver}->{field_name} = *reinterpret_cast<{}*>(value);\n",
             base_model_cpp_type(&value_param.ty.cpp_type)
@@ -950,6 +1005,13 @@ fn render_string_free(ctx: &PipelineContext) -> String {
 fn render_byte_array_free(ctx: &PipelineContext) -> String {
     format!(
         "void {}_byte_array_free(uint8_t* value) {{\n    std::free(value);\n}}\n",
+        ctx.naming.prefix
+    )
+}
+
+fn render_array_free(ctx: &PipelineContext) -> String {
+    format!(
+        "void {}_array_free(void* value) {{\n    std::free(value);\n}}\n",
         ctx.naming.prefix
     )
 }

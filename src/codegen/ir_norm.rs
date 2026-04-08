@@ -426,6 +426,8 @@ fn normalize_struct_fields(
             && field_ty.kind != IrTypeKind::ModelValue
             && field_ty.kind != IrTypeKind::CString
             && field_ty.kind != IrTypeKind::FixedByteArray
+            && field_ty.kind != IrTypeKind::FixedArray
+            && field_ty.kind != IrTypeKind::FixedModelArray
         {
             continue;
         }
@@ -1050,6 +1052,26 @@ fn normalize_type(cpp_type: &str, callback_names: &BTreeSet<String>) -> Result<I
         });
     }
 
+    if let Some((elem, _)) = parse_array_type(trimmed) {
+        if is_supported_primitive(elem) {
+            let c_elem = canonical_primitive_c_type(elem);
+            return Ok(IrType {
+                kind: IrTypeKind::FixedArray,
+                cpp_type: trimmed.to_string(),
+                c_type: format!("{c_elem}*"),
+                handle: None,
+            });
+        }
+        if let Some(handle_name) = raw_safe_model_handle_name(elem) {
+            return Ok(IrType {
+                kind: IrTypeKind::FixedModelArray,
+                cpp_type: trimmed.to_string(),
+                c_type: format!("{handle_name}**"),
+                handle: Some(handle_name),
+            });
+        }
+    }
+
     match trimmed {
         "void" => Ok(primitive_type(trimmed)),
         "bool" | "int" | "short" | "long" | "long long" | "float" | "double" | "size_t"
@@ -1372,6 +1394,16 @@ fn type_signature_token(ty: &IrType) -> String {
             sanitize_symbol_token(&base_model_cpp_type(&ty.cpp_type))
         ),
         IrTypeKind::Callback => format!("callback_{}", sanitize_symbol_token(&ty.cpp_type)),
+        IrTypeKind::FixedArray => {
+            let n = fixed_array_length(&ty.cpp_type).unwrap_or(0);
+            let elem = fixed_array_elem_type(&ty.cpp_type).unwrap_or("unknown");
+            format!("array_{n}_{}", sanitize_symbol_token(elem))
+        }
+        IrTypeKind::FixedModelArray => {
+            let n = fixed_array_length(&ty.cpp_type).unwrap_or(0);
+            let handle = ty.handle.as_deref().unwrap_or("unknown");
+            format!("model_array_{n}_{}", sanitize_symbol_token(handle))
+        }
     }
 }
 
@@ -1467,6 +1499,29 @@ fn raw_safe_model_handle_name(cpp_type: &str) -> Option<String> {
     }
 
     Some(format!("{}Handle", flatten_qualified_cpp_name(&base)))
+}
+
+/// "T[N]" 패턴에서 (elem_type_str, size) 추출. const 접두사 제거 후 처리.
+fn parse_array_type(value: &str) -> Option<(&str, usize)> {
+    let trimmed = value.trim().trim_start_matches("const ").trim();
+    let bracket = trimmed.rfind('[')?;
+    let elem = trimmed[..bracket].trim();
+    let rest = trimmed[bracket + 1..].strip_suffix(']')?;
+    let n: usize = rest.trim().parse().ok()?;
+    if elem.is_empty() || n == 0 {
+        return None;
+    }
+    Some((elem, n))
+}
+
+/// cpp_type에서 배열 크기 추출 (FixedArray / FixedModelArray용)
+pub fn fixed_array_length(cpp_type: &str) -> Option<usize> {
+    parse_array_type(cpp_type).map(|(_, n)| n)
+}
+
+/// cpp_type에서 원소 타입 문자열 추출 (FixedArray용)
+pub fn fixed_array_elem_type(cpp_type: &str) -> Option<&str> {
+    parse_array_type(cpp_type).map(|(t, _)| t)
 }
 
 fn is_char_array_type(value: &str) -> bool {
@@ -1696,5 +1751,73 @@ mod tests {
 
         assert!(serialized_ty.contains("kind: model_value"));
         assert!(serialized_function.contains("kind: constructor"));
+    }
+
+    #[test]
+    fn normalizes_int_array_as_fixed_array() {
+        let callback_names = BTreeSet::new();
+        let ty = normalize_type("int[4]", &callback_names).unwrap();
+        assert_eq!(ty.kind, IrTypeKind::FixedArray);
+        assert_eq!(ty.cpp_type, "int[4]");
+        assert_eq!(ty.c_type, "int*");
+        assert_eq!(ty.handle, None);
+    }
+
+    #[test]
+    fn normalizes_bool_array_as_fixed_array() {
+        let callback_names = BTreeSet::new();
+        let ty = normalize_type("bool[8]", &callback_names).unwrap();
+        assert_eq!(ty.kind, IrTypeKind::FixedArray);
+        assert_eq!(ty.cpp_type, "bool[8]");
+        assert_eq!(ty.c_type, "bool*");
+        assert_eq!(ty.handle, None);
+    }
+
+    #[test]
+    fn normalizes_float_array_as_fixed_array() {
+        let callback_names = BTreeSet::new();
+        let ty = normalize_type("float[3]", &callback_names).unwrap();
+        assert_eq!(ty.kind, IrTypeKind::FixedArray);
+        assert_eq!(ty.cpp_type, "float[3]");
+        assert_eq!(ty.c_type, "float*");
+        assert_eq!(ty.handle, None);
+    }
+
+    #[test]
+    fn normalizes_uint32_t_array_as_fixed_array() {
+        let callback_names = BTreeSet::new();
+        let ty = normalize_type("uint32_t[2]", &callback_names).unwrap();
+        assert_eq!(ty.kind, IrTypeKind::FixedArray);
+        assert_eq!(ty.cpp_type, "uint32_t[2]");
+        assert_eq!(ty.c_type, "uint32_t*");
+        assert_eq!(ty.handle, None);
+    }
+
+    #[test]
+    fn normalizes_model_array_as_fixed_model_array() {
+        let callback_names = BTreeSet::new();
+        let ty = normalize_type("FooModel[3]", &callback_names).unwrap();
+        assert_eq!(ty.kind, IrTypeKind::FixedModelArray);
+        assert_eq!(ty.cpp_type, "FooModel[3]");
+        assert_eq!(ty.c_type, "FooModelHandle**");
+        assert_eq!(ty.handle, Some("FooModelHandle".to_string()));
+    }
+
+    #[test]
+    fn fixed_array_length_extracts_size() {
+        assert_eq!(fixed_array_length("int[4]"), Some(4));
+        assert_eq!(fixed_array_length("bool[8]"), Some(8));
+        assert_eq!(fixed_array_length("float[3]"), Some(3));
+        assert_eq!(fixed_array_length("FooModel[3]"), Some(3));
+        assert_eq!(fixed_array_length("int"), None);
+        assert_eq!(fixed_array_length("int*"), None);
+    }
+
+    #[test]
+    fn fixed_array_elem_type_extracts_elem() {
+        assert_eq!(fixed_array_elem_type("int[4]"), Some("int"));
+        assert_eq!(fixed_array_elem_type("bool[8]"), Some("bool"));
+        assert_eq!(fixed_array_elem_type("float[3]"), Some("float"));
+        assert_eq!(fixed_array_elem_type("int"), None);
     }
 }
