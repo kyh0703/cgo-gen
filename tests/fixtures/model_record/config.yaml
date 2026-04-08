@@ -2,12 +2,12 @@ version: 1
 
 input:
   headers:
-    - include/IsAAMaster.h
+    - include/DataRecord.h
   compile_commands: build/compile_commands.json
 
 output:
   dir: out
 
 naming:
-  prefix: sil
+  prefix: gen
   style: preserve

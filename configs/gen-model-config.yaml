@@ -1,0 +1,17 @@
+version: 1
+
+input:
+  dir: ../tests/fixtures/model_record/include
+  compile_commands: ../tests/fixtures/model_record/build/compile_commands.json
+  clang_args:
+    - -std=c++11
+    - -x
+    - c++
+    - -I../tests/fixtures/model_record/include
+
+output:
+  dir: ./pkg/gen-model
+
+naming:
+  prefix: gen
+  style: preserve

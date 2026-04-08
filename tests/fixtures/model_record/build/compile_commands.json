@@ -1,7 +1,7 @@
 [
   {
-    "directory": "tests/fixtures/isaamaster",
-    "file": "include/IsAAMaster.h",
+    "directory": "tests/fixtures/model_record",
+    "file": "include/DataRecord.h",
     "arguments": [
       "clang++",
       "-std=c++11",
