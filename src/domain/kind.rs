@@ -13,6 +13,10 @@ pub enum IrTypeKind {
     CString,
     #[serde(rename = "fixed_byte_array")]
     FixedByteArray,
+    #[serde(rename = "fixed_array")]
+    FixedArray,
+    #[serde(rename = "fixed_model_array")]
+    FixedModelArray,
     #[serde(rename = "string")]
     String,
     #[serde(rename = "pointer")]

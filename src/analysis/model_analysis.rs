@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use anyhow::{Result, bail};
 
 use crate::{
+    codegen::{go_facade, ir_norm},
     domain::{
         kind::{IrFunctionKind, IrTypeKind},
         model_projection::{ModelProjection, ModelProjectionField},
@@ -154,6 +155,15 @@ fn go_model_field_type(ctx: &PipelineContext, ty: &IrType) -> Option<String> {
     match ty.kind {
         IrTypeKind::ModelValue => Some(format!("*{}", go_model_return_type(ctx, ty))),
         IrTypeKind::FixedByteArray => Some("[]byte".to_string()),
+        IrTypeKind::FixedArray => {
+            let elem = ir_norm::fixed_array_elem_type(&ty.cpp_type)?;
+            let go_elem = go_facade::primitive_go_type_pub(elem)?;
+            Some(format!("[]{go_elem}"))
+        }
+        IrTypeKind::FixedModelArray => {
+            let go_name = go_model_return_type(ctx, ty);
+            Some(format!("[]*{go_name}"))
+        }
         _ => go_type_for_ir(ty).map(str::to_string),
     }
 }
