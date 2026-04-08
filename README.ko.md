@@ -39,27 +39,27 @@
 저장소에서 바로 실행:
 
 ```bash
-cargo run --bin cgo-gen -- check --config cppgo-wrap.yaml
+cargo run --bin cgo-gen -- check --config examples/simple-go/config.yaml
 ```
 
 로컬 CLI로 설치:
 
 ```bash
 cargo install --path .
-cgo-gen check --config cppgo-wrap.yaml
+cgo-gen check --config /path/to/config.yaml
 ```
 
 ## 빠른 시작
 
-루트에 들어 있는 설정 파일이 가장 작은 end-to-end 예제입니다.
+config 파일은 원하는 위치에 두면 됩니다. 저장소 안에서는 `examples/*/config.yaml`이 유지되는 최소 예제입니다. 가장 작은 config 형태는 아래와 같습니다.
 
 ```yaml
 version: 1
 
 input:
   headers:
-    - examples/simple-cpp/include/foo.hpp
-  compile_commands: examples/simple-cpp/build/compile_commands.json
+    - path/to/foo.hpp
+  compile_commands: path/to/compile_commands.json
 
 output:
   dir: gen
@@ -72,9 +72,9 @@ naming:
 주요 명령:
 
 ```bash
-cargo run --bin cgo-gen -- check --config cppgo-wrap.yaml
-cargo run --bin cgo-gen -- ir --config cppgo-wrap.yaml --format yaml
-cargo run --bin cgo-gen -- generate --config cppgo-wrap.yaml --dump-ir
+cargo run --bin cgo-gen -- check --config examples/simple-go/config.yaml
+cargo run --bin cgo-gen -- ir --config examples/simple-go/config.yaml --format yaml
+cargo run --bin cgo-gen -- generate --config examples/simple-go/config.yaml --dump-ir
 ```
 
 예제 프로젝트:
@@ -95,12 +95,12 @@ cgo-gen generate --help
 설치 없이 저장소에서 바로 실행:
 
 ```bash
-cargo run --bin cgo-gen -- check --config cppgo-wrap.yaml
-cargo run --bin cgo-gen -- ir --config cppgo-wrap.yaml --format yaml
-cargo run --bin cgo-gen -- generate --config cppgo-wrap.yaml --dump-ir
+cargo run --bin cgo-gen -- check --config examples/simple-go/config.yaml
+cargo run --bin cgo-gen -- ir --config examples/simple-go/config.yaml --format yaml
+cargo run --bin cgo-gen -- generate --config examples/simple-go/config.yaml --dump-ir
 ```
 
-예제 설정으로 wrapper 생성:
+체크인된 예제 설정으로 wrapper 생성:
 
 ```bash
 cargo run --bin cgo-gen -- generate --config examples/simple-go/config.yaml

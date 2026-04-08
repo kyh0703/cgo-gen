@@ -59,7 +59,7 @@
   - `examples/simple-go`
   - `examples/simple-go-struct`
 - Checks:
-  - `cargo run --bin cgo-gen -- check --config cppgo-wrap.yaml`
+  - `cargo run --bin cgo-gen -- check --config examples/simple-go/config.yaml`
   - `cargo test`
 - Parallel-safe: no
 

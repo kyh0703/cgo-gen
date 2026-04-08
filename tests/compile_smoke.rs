@@ -31,10 +31,39 @@ fn project_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf()
 }
 
+fn write_simple_cpp_config(root: &Path) -> PathBuf {
+    let config_path = root.join("config.yaml");
+    let project_root = project_root();
+    fs::write(
+        &config_path,
+        format!(
+            r#"version: 1
+input:
+  headers:
+    - {}
+  compile_commands: {}
+output:
+  dir: out
+naming:
+  prefix: cgowrap
+  style: snake_case
+"#,
+            project_root
+                .join("examples/simple-cpp/include/foo.hpp")
+                .display(),
+            project_root
+                .join("examples/simple-cpp/build/compile_commands.json")
+                .display()
+        ),
+    )
+    .unwrap();
+    config_path
+}
+
 #[test]
 fn generated_wrapper_compiles_and_runs_against_sample_cpp_library() {
-    let mut config = Config::load("cppgo-wrap.yaml").unwrap();
-    config.output.dir = temp_output_dir("link");
+    let root = temp_output_dir("link");
+    let config = Config::load(write_simple_cpp_config(&root)).unwrap();
     let ctx = generator::prepare_config(&PipelineContext::new(config.clone())).unwrap();
     let parsed = parser::parse(&ctx).unwrap();
     let ir = ir::normalize(&ctx, &parsed).unwrap();
@@ -67,17 +96,17 @@ fn generated_wrapper_compiles_and_runs_against_sample_cpp_library() {
 
     let binary = config.output.dir.join("smoke");
     let compiler = pick_clangxx();
-    let root = project_root();
+    let project_root = project_root();
     let status = Command::new(&compiler)
-        .current_dir(&root)
+        .current_dir(&project_root)
         .arg("-std=c++17")
         .arg(config.output_dir().join(&config.output.source))
-        .arg(root.join("examples/simple-cpp/src/foo.cpp"))
+        .arg(project_root.join("examples/simple-cpp/src/foo.cpp"))
         .arg(&smoke_cpp)
         .arg("-I")
         .arg(config.output_dir())
         .arg("-I")
-        .arg(root.join("examples/simple-cpp/include"))
+        .arg(project_root.join("examples/simple-cpp/include"))
         .arg("-o")
         .arg(&binary)
         .status()

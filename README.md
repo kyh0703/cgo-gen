@@ -44,27 +44,27 @@ This crate is built with `clang-sys` feature `clang_18_0`, so an LLVM/Clang 18 e
 Run directly from the repository:
 
 ```bash
-cargo run --bin cgo-gen -- check --config cppgo-wrap.yaml
+cargo run --bin cgo-gen -- check --config examples/simple-go/config.yaml
 ```
 
 Or install the CLI locally:
 
 ```bash
 cargo install --path .
-cgo-gen check --config cppgo-wrap.yaml
+cgo-gen check --config /path/to/config.yaml
 ```
 
 ## Quick Start
 
-The checked-in root config is a minimal end-to-end example:
+Create a config file anywhere you want. The checked-in examples under `examples/*/config.yaml` are the smallest maintained references. A minimal config looks like this:
 
 ```yaml
 version: 1
 
 input:
   headers:
-    - examples/simple-cpp/include/foo.hpp
-  compile_commands: examples/simple-cpp/build/compile_commands.json
+    - path/to/foo.hpp
+  compile_commands: path/to/compile_commands.json
 
 output:
   dir: gen
@@ -77,10 +77,10 @@ naming:
 Common commands:
 
 ```bash
-cargo run --bin cgo-gen -- check --config cppgo-wrap.yaml
-cargo run --bin cgo-gen -- ir --config cppgo-wrap.yaml --format yaml
-cargo run --bin cgo-gen -- generate --config cppgo-wrap.yaml --dump-ir
-cargo run --bin cgo-gen -- generate --config cppgo-wrap.yaml --go-module example.com/acme/foo
+cargo run --bin cgo-gen -- check --config examples/simple-go/config.yaml
+cargo run --bin cgo-gen -- ir --config examples/simple-go/config.yaml --format yaml
+cargo run --bin cgo-gen -- generate --config examples/simple-go/config.yaml --dump-ir
+cargo run --bin cgo-gen -- generate --config examples/simple-go/config.yaml --go-module example.com/acme/foo
 ```
 
 ## Command Recipes
@@ -96,12 +96,12 @@ cgo-gen generate --help
 Run commands from the repository without installing:
 
 ```bash
-cargo run --bin cgo-gen -- check --config cppgo-wrap.yaml
-cargo run --bin cgo-gen -- ir --config cppgo-wrap.yaml --format yaml
-cargo run --bin cgo-gen -- generate --config cppgo-wrap.yaml --dump-ir
+cargo run --bin cgo-gen -- check --config examples/simple-go/config.yaml
+cargo run --bin cgo-gen -- ir --config examples/simple-go/config.yaml --format yaml
+cargo run --bin cgo-gen -- generate --config examples/simple-go/config.yaml --dump-ir
 ```
 
-Generate wrappers into a custom directory:
+Generate wrappers from the checked-in examples:
 
 ```bash
 cargo run --bin cgo-gen -- generate --config examples/simple-go/config.yaml
