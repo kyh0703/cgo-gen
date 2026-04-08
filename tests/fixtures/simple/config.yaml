@@ -3,7 +3,6 @@ version: 1
 input:
   headers:
     - include/foo.hpp
-  compile_commands: build/compile_commands.json
 
 output:
   dir: out
