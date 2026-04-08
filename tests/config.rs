@@ -464,11 +464,12 @@ output:
 }
 
 #[test]
-fn loads_real_sil_model_config() {
-    let config = Config::load("configs/sil-real-model.yaml").unwrap();
+fn loads_gen_model_config() {
+    let config = Config::load("configs/gen-model-config.yaml").unwrap();
 
-    assert_eq!(config.naming.prefix, "sil");
+    assert_eq!(config.naming.prefix, "gen");
     assert!(config.input.headers.is_empty());
+    assert!(config.input.compile_commands.is_none());
     assert!(
         config
             .input
@@ -480,7 +481,7 @@ fn loads_real_sil_model_config() {
         config
             .output
             .dir
-            .ends_with(Path::new("pkg").join("sil-real-model"))
+            .ends_with(Path::new("pkg").join("gen-model"))
     );
 }
 
