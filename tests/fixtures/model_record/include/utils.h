@@ -1,9 +1,8 @@
 #pragma once
 
 #include <cstring>
+#include "types.h"
 
-#include "iType.h"
-
-inline void iStrCpy(char* dest, NPCSTR src) {
+inline void strCopy(char* dest, NPCSTR src) {
     std::strcpy(dest, src != nullptr ? src : "");
 }
