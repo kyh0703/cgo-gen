@@ -18,7 +18,7 @@ fn generates_go_facade_for_simple_free_function_header() {
     let ctx = generator::prepare_config(&PipelineContext::new(config.clone())).unwrap();
     let parsed = parser::parse(&ctx).unwrap();
     let ir = ir::normalize(&ctx, &parsed).unwrap();
-    generator::generate(&ctx, &ir, true).unwrap();
+    generator::generate(&ctx, &ir, true, &Default::default()).unwrap();
 
     let go_facade = fs::read_to_string(config.output_dir().join(config.go_filename(""))).unwrap();
 
@@ -72,7 +72,7 @@ naming:
     let ctx = generator::prepare_config(&PipelineContext::new(config.clone())).unwrap();
     let parsed = parser::parse(&ctx).unwrap();
     let ir = ir::normalize(&ctx, &parsed).unwrap();
-    generator::generate(&ctx, &ir, true).unwrap();
+    generator::generate(&ctx, &ir, true, &Default::default()).unwrap();
 
     let go_facade = fs::read_to_string(config.output_dir().join(config.go_filename(""))).unwrap();
 
@@ -133,7 +133,7 @@ naming:
     let ctx = generator::prepare_config(&PipelineContext::new(config)).unwrap();
     let parsed = parser::parse(&ctx).unwrap();
     let ir = ir::normalize(&ctx, &parsed).unwrap();
-    let error = generator::generate(&ctx, &ir, true)
+    let error = generator::generate(&ctx, &ir, true, &Default::default())
         .unwrap_err()
         .to_string();
 
@@ -186,7 +186,7 @@ naming:
     let ctx = generator::prepare_config(&PipelineContext::new(config)).unwrap();
     let parsed = parser::parse(&ctx).unwrap();
     let ir = ir::normalize(&ctx, &parsed).unwrap();
-    generator::generate(&ctx, &ir, true).unwrap();
+    generator::generate(&ctx, &ir, true, &Default::default()).unwrap();
 
     let go_facade = fs::read_to_string(root.join("out/media_wrapper.go")).unwrap();
 
@@ -581,7 +581,7 @@ naming:
     let config = prepared.scoped_to_header(facade_header);
     let parsed = parser::parse(&config).unwrap();
     let ir = ir::normalize(&config, &parsed).unwrap();
-    generator::generate(&config, &ir, true).unwrap();
+    generator::generate(&config, &ir, true, &Default::default()).unwrap();
 
     let raw_header = fs::read_to_string(root.join("out/api_wrapper.h")).unwrap();
     let raw_source = fs::read_to_string(root.join("out/api_wrapper.cpp")).unwrap();

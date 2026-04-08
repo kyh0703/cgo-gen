@@ -219,7 +219,7 @@ output:
         .with_go_module(Some("example.com/demo/pkg".to_string()));
     let parsed = parser::parse(&config).unwrap();
     let ir = ir::normalize(&config, &parsed).unwrap();
-    cgo_gen::generator::generate(&config, &ir, false).unwrap();
+    cgo_gen::generator::generate(&config, &ir, false, &Default::default()).unwrap();
 
     let go_mod = fs::read_to_string(root.join("out/go.mod")).unwrap();
     assert_eq!(go_mod, "module example.com/demo/pkg\n\ngo 1.25\n");

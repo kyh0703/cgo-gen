@@ -1481,10 +1481,15 @@ fn go_overload_suffix(function: &IrFunction) -> String {
         .map(|param| go_overload_token(&param.ty))
         .collect::<String>();
     if suffix.is_empty() {
-        suffix = "Void".to_string();
-    }
-    if function.is_const == Some(true) {
-        suffix.push_str("Const");
+        // No params: const version gets the clean name, non-const gets "Mut"
+        if function.is_const != Some(true) {
+            suffix = "Mut".to_string();
+        }
+    } else {
+        // Has params: append "Const" to distinguish const overloads
+        if function.is_const == Some(true) {
+            suffix.push_str("Const");
+        }
     }
     suffix
 }

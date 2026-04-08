@@ -38,7 +38,7 @@ fn generated_wrapper_compiles_and_runs_against_sample_cpp_library() {
     let ctx = generator::prepare_config(&PipelineContext::new(config.clone())).unwrap();
     let parsed = parser::parse(&ctx).unwrap();
     let ir = ir::normalize(&ctx, &parsed).unwrap();
-    generator::generate(&ctx, &ir, true).unwrap();
+    generator::generate(&ctx, &ir, true, &Default::default()).unwrap();
 
     let smoke_cpp = config.output.dir.join("smoke.cpp");
     fs::write(
@@ -143,7 +143,7 @@ output:
     let ctx = generator::prepare_config(&PipelineContext::new(config.clone())).unwrap();
     let parsed = parser::parse(&ctx).unwrap();
     let ir = ir::normalize(&ctx, &parsed).unwrap();
-    generator::generate(&ctx, &ir, true).unwrap();
+    generator::generate(&ctx, &ir, true, &Default::default()).unwrap();
 
     let smoke_cpp = config.output.dir.join("smoke.cpp");
     fs::write(
@@ -226,7 +226,7 @@ output:
     let ctx = generator::prepare_config(&PipelineContext::new(config.clone())).unwrap();
     let parsed = parser::parse(&ctx).unwrap();
     let ir = ir::normalize(&ctx, &parsed).unwrap();
-    generator::generate(&ctx, &ir, true).unwrap();
+    generator::generate(&ctx, &ir, true, &Default::default()).unwrap();
 
     let smoke_cpp = config.output.dir.join("smoke.cpp");
     fs::write(
@@ -303,7 +303,7 @@ output:
     let ctx = generator::prepare_config(&PipelineContext::new(config.clone())).unwrap();
     let parsed = parser::parse(&ctx).unwrap();
     let ir = ir::normalize(&ctx, &parsed).unwrap();
-    generator::generate(&ctx, &ir, true).unwrap();
+    generator::generate(&ctx, &ir, true, &Default::default()).unwrap();
 
     let header = fs::read_to_string(config.output_dir().join(&config.output.header)).unwrap();
     let go_wrapper = fs::read_to_string(config.output_dir().join(config.go_filename(""))).unwrap();
@@ -396,7 +396,7 @@ output:
     let ctx = generator::prepare_config(&PipelineContext::new(config.clone())).unwrap();
     let parsed = parser::parse(&ctx).unwrap();
     let ir = ir::normalize(&ctx, &parsed).unwrap();
-    generator::generate(&ctx, &ir, true).unwrap();
+    generator::generate(&ctx, &ir, true, &Default::default()).unwrap();
 
     let smoke_cpp = config.output.dir.join("smoke.cpp");
     fs::write(
@@ -501,7 +501,7 @@ output:
     let ctx = generator::prepare_config(&PipelineContext::new(config.clone())).unwrap();
     let parsed = parser::parse(&ctx).unwrap();
     let ir = ir::normalize(&ctx, &parsed).unwrap();
-    generator::generate(&ctx, &ir, true).unwrap();
+    generator::generate(&ctx, &ir, true, &Default::default()).unwrap();
 
     let source = fs::read_to_string(config.output_dir().join(&config.output.source)).unwrap();
     assert!(source.contains(
