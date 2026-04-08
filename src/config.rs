@@ -110,7 +110,8 @@ fn resolve_ldflags(flags: &mut Vec<String>, base_dir: &Path) -> Result<()> {
         if arg == "-L" {
             resolved.push(arg.clone());
             if let Some(value) = flags.get(index + 1) {
-                resolved.push(resolve_relative_clang_path_arg(value, base_dir)?);
+                let expanded = expand_env_vars_in_str(value)?;
+                resolved.push(resolve_relative_clang_path_arg(&expanded, base_dir)?);
                 index += 2;
                 continue;
             }
@@ -119,15 +120,16 @@ fn resolve_ldflags(flags: &mut Vec<String>, base_dir: &Path) -> Result<()> {
         }
 
         if let Some(value) = arg.strip_prefix("-L") {
+            let expanded = expand_env_vars_in_str(value)?;
             resolved.push(format!(
                 "-L{}",
-                resolve_relative_clang_path_arg(value, base_dir)?
+                resolve_relative_clang_path_arg(&expanded, base_dir)?
             ));
             index += 1;
             continue;
         }
 
-        resolved.push(expand_clang_arg_env_token(arg)?.unwrap_or_else(|| arg.clone()));
+        resolved.push(expand_env_vars_in_str(arg)?);
         index += 1;
     }
 
@@ -211,6 +213,68 @@ fn expand_clang_arg_env_token(value: &str) -> Result<Option<String>> {
             "environment variable `{name}` referenced in input.clang_args is not valid unicode"
         ),
     }
+}
+
+/// `-L${ICORE_BASE}/lib` 처럼 문자열 중간에 포함된 `${VAR}` / `$(VAR)` 패턴을 모두 치환합니다.
+fn expand_env_vars_in_str(value: &str) -> Result<String> {
+    let mut result = String::with_capacity(value.len());
+    let mut rest = value;
+
+    while let Some(dollar) = rest.find('$') {
+        result.push_str(&rest[..dollar]);
+        rest = &rest[dollar..];
+
+        // ${VAR} 형식
+        if let Some(inner) = rest.strip_prefix("${") {
+            if let Some(end) = inner.find('}') {
+                let name = &inner[..end];
+                if valid_env_name(name).is_some() {
+                    match env::var(name) {
+                        Ok(val) => {
+                            result.push_str(&val);
+                            rest = &inner[end + 1..];
+                            continue;
+                        }
+                        Err(env::VarError::NotPresent) => {
+                            bail!("environment variable `{name}` referenced in input.ldflags is not set")
+                        }
+                        Err(env::VarError::NotUnicode(_)) => bail!(
+                            "environment variable `{name}` referenced in input.ldflags is not valid unicode"
+                        ),
+                    }
+                }
+            }
+        }
+
+        // $(VAR) 형식
+        if let Some(inner) = rest.strip_prefix("$(") {
+            if let Some(end) = inner.find(')') {
+                let name = &inner[..end];
+                if valid_env_name(name).is_some() {
+                    match env::var(name) {
+                        Ok(val) => {
+                            result.push_str(&val);
+                            rest = &inner[end + 1..];
+                            continue;
+                        }
+                        Err(env::VarError::NotPresent) => {
+                            bail!("environment variable `{name}` referenced in input.ldflags is not set")
+                        }
+                        Err(env::VarError::NotUnicode(_)) => bail!(
+                            "environment variable `{name}` referenced in input.ldflags is not valid unicode"
+                        ),
+                    }
+                }
+            }
+        }
+
+        // 치환 못한 $ 는 그대로
+        result.push('$');
+        rest = &rest[1..];
+    }
+
+    result.push_str(rest);
+    Ok(result)
 }
 
 fn parse_clang_arg_env_name(value: &str) -> Option<&str> {
