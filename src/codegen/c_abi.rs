@@ -353,7 +353,7 @@ pub fn render_header(ctx: &PipelineContext, ir: &IrModule) -> String {
         .any(|function| function.returns.kind == IrTypeKind::FixedByteArray)
     {
         out.push_str(&format!(
-            "void {}_byte_array_free(uint8_t* value);\n\n",
+            "static inline void {}_byte_array_free(uint8_t* value) {{ std::free(value); }}\n\n",
             ctx.naming.prefix
         ));
     }
@@ -363,7 +363,7 @@ pub fn render_header(ctx: &PipelineContext, ir: &IrModule) -> String {
     });
     if needs_array_free {
         out.push_str(&format!(
-            "void {}_array_free(void* value);\n\n",
+            "static inline void {}_array_free(void* value) {{ std::free(value); }}\n\n",
             ctx.naming.prefix
         ));
     }
@@ -413,20 +413,7 @@ pub fn render_source(ctx: &PipelineContext, ir: &IrModule) -> String {
         out.push_str(&render_string_free(&ctx));
     }
 
-    if ir
-        .functions
-        .iter()
-        .any(|function| function.returns.kind == IrTypeKind::FixedByteArray)
-    {
-        out.push_str(&render_byte_array_free(&ctx));
-    }
-
-    let needs_array_free = ir.functions.iter().any(|f| {
-        matches!(f.returns.kind, IrTypeKind::FixedArray | IrTypeKind::FixedModelArray)
-    });
-    if needs_array_free {
-        out.push_str(&render_array_free(&ctx));
-    }
+    // array_free helpers are defined as static inline in the header
 
     out
 }
