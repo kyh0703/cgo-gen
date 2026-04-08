@@ -989,16 +989,3 @@ fn render_string_free(ctx: &PipelineContext) -> String {
     )
 }
 
-fn render_byte_array_free(ctx: &PipelineContext) -> String {
-    format!(
-        "static void {}_byte_array_free(uint8_t* value) {{\n    std::free(value);\n}}\n",
-        ctx.naming.prefix
-    )
-}
-
-fn render_array_free(ctx: &PipelineContext) -> String {
-    format!(
-        "static void {}_array_free(void* value) {{\n    std::free(value);\n}}\n",
-        ctx.naming.prefix
-    )
-}
