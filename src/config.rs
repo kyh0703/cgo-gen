@@ -37,6 +37,8 @@ pub struct InputConfig {
     pub clang_args: Vec<String>,
     #[serde(default)]
     pub allow_diagnostics: bool,
+    #[serde(default)]
+    pub ldflags: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,6 +98,41 @@ fn default_prefix() -> String {
 }
 fn default_style() -> String {
     "preserve".to_string()
+}
+
+fn resolve_ldflags(flags: &mut Vec<String>, base_dir: &Path) -> Result<()> {
+    let mut resolved = Vec::with_capacity(flags.len());
+    let mut index = 0;
+
+    while index < flags.len() {
+        let arg = &flags[index];
+
+        if arg == "-L" {
+            resolved.push(arg.clone());
+            if let Some(value) = flags.get(index + 1) {
+                resolved.push(resolve_relative_clang_path_arg(value, base_dir)?);
+                index += 2;
+                continue;
+            }
+            index += 1;
+            continue;
+        }
+
+        if let Some(value) = arg.strip_prefix("-L") {
+            resolved.push(format!(
+                "-L{}",
+                resolve_relative_clang_path_arg(value, base_dir)?
+            ));
+            index += 1;
+            continue;
+        }
+
+        resolved.push(expand_clang_arg_env_token(arg)?.unwrap_or_else(|| arg.clone()));
+        index += 1;
+    }
+
+    *flags = resolved;
+    Ok(())
 }
 
 fn resolve_relative_clang_args(args: &mut Vec<String>, base_dir: &Path) -> Result<()> {
@@ -399,6 +436,7 @@ impl Config {
             resolve_path(compdb, base_dir);
         }
         resolve_relative_clang_args(&mut self.input.clang_args, base_dir)?;
+        resolve_ldflags(&mut self.input.ldflags, base_dir)?;
         if self.output.dir.is_relative() {
             self.output.dir = base_dir.join(&self.output.dir);
         }
