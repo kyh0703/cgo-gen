@@ -61,6 +61,21 @@ fn parses_and_generates_wrapper_for_model_record_fixture() {
             .iter()
             .any(|item| item.name == "gen_DataRecord_SetSlot1_Val")
     );
+    assert!(
+        ir.functions
+            .iter()
+            .any(|item| item.name == "gen_DataRecord_GetTenantId")
+    );
+    assert!(
+        ir.functions
+            .iter()
+            .any(|item| item.name == "gen_DataRecord_GetSlot2_Val")
+    );
+    assert!(
+        ir.functions
+            .iter()
+            .any(|item| item.name == "gen_DataRecord_SetSlot3_Act")
+    );
 
     generator::generate(&ctx, &ir, true, &Default::default()).unwrap();
 
@@ -72,15 +87,31 @@ fn parses_and_generates_wrapper_for_model_record_fixture() {
     assert!(header.contains("typedef struct DataRecordHandle DataRecordHandle;"));
     assert!(header.contains("DataRecordHandle* gen_DataRecord_new(void);"));
     assert!(header.contains("const char* gen_DataRecord_GetName(DataRecordHandle* self);"));
+    assert!(header.contains("uint32_t gen_DataRecord_GetTenantId(DataRecordHandle* self);"));
+    assert!(header.contains("uint32_t gen_DataRecord_GetNodeId(DataRecordHandle* self);"));
     assert!(header.contains(
         "void gen_DataRecord_SetSlot1_Val(DataRecordHandle* self, const char* sVal);"
     ));
+    assert!(header.contains(
+        "const char* gen_DataRecord_GetSlot2_Val(DataRecordHandle* self);"
+    ));
+    assert!(header.contains(
+        "void gen_DataRecord_SetSlot3_Act(DataRecordHandle* self, uint16_t nAct);"
+    ));
     assert!(source.contains("return reinterpret_cast<DataRecordHandle*>(new DataRecord());"));
     assert!(source.contains("reinterpret_cast<DataRecord*>(self)->SetSlot1_Val(sVal);"));
+    assert!(source.contains("reinterpret_cast<DataRecord*>(self)->GetSlot2_Val()"));
+    assert!(
+        source.contains("reinterpret_cast<DataRecord*>(self)->SetSlot3_Act(static_cast<uint16>(nAct));")
+    );
     assert!(go_structs.contains("type DataRecord struct {"));
     assert!(go_structs.contains("func NewDataRecord() (*DataRecord, error) {"));
     assert!(go_structs.contains("func (d *DataRecord) GetName() (string, error) {"));
     assert!(go_structs.contains("func (d *DataRecord) SetSlot1Val(sVal string) {"));
+    assert!(go_structs.contains("func (d *DataRecord) GetTenantId() uint32 {"));
+    assert!(go_structs.contains("func (d *DataRecord) GetSlot2Val() (string, error) {"));
+    assert!(go_structs.contains("func (d *DataRecord) SetSlot3Act(nAct uint16) {"));
+    assert!(!go_structs.contains("func (d *DataRecord) GetSlot1_Val("));
 }
 
 #[test]
@@ -110,14 +141,32 @@ fn generated_wrapper_compiles_and_runs_against_model_record_fixture() {
             gen_DataRecord_SetTenantId(item, 7);
             if (gen_DataRecord_GetTenantId(item) != 7) return 12;
 
+            gen_DataRecord_SetNodeId(item, 99);
+            if (gen_DataRecord_GetNodeId(item) != 99) return 13;
+
             gen_DataRecord_SetName(item, "alice");
-            if (std::strcmp(gen_DataRecord_GetName(item), "alice") != 0) return 13;
+            if (std::strcmp(gen_DataRecord_GetName(item), "alice") != 0) return 14;
+
+            gen_DataRecord_SetCode(item, "alpha");
+            if (std::strcmp(gen_DataRecord_GetCode(item), "alpha") != 0) return 15;
 
             gen_DataRecord_SetSlot1_Act(item, 3);
-            if (gen_DataRecord_GetSlot1_Act(item) != 3) return 14;
+            if (gen_DataRecord_GetSlot1_Act(item) != 3) return 16;
 
             gen_DataRecord_SetSlot1_Val(item, "hello");
-            if (std::strcmp(gen_DataRecord_GetSlot1_Val(item), "hello") != 0) return 15;
+            if (std::strcmp(gen_DataRecord_GetSlot1_Val(item), "hello") != 0) return 17;
+
+            gen_DataRecord_SetSlot2_Act(item, 4);
+            if (gen_DataRecord_GetSlot2_Act(item) != 4) return 18;
+
+            gen_DataRecord_SetSlot2_Val(item, "beta");
+            if (std::strcmp(gen_DataRecord_GetSlot2_Val(item), "beta") != 0) return 19;
+
+            gen_DataRecord_SetSlot3_Act(item, 5);
+            if (gen_DataRecord_GetSlot3_Act(item) != 5) return 20;
+
+            gen_DataRecord_SetSlot3_Val(item, "gamma");
+            if (std::strcmp(gen_DataRecord_GetSlot3_Val(item), "gamma") != 0) return 21;
 
             gen_DataRecord_delete(item);
             return 0;
@@ -167,5 +216,9 @@ fn unified_go_wrapper_renders_model_record_methods() {
     assert!(go_wrapper.contains("type DataRecord struct {"));
     assert!(go_wrapper.contains("func NewDataRecord() (*DataRecord, error) {"));
     assert!(go_wrapper.contains("func (d *DataRecord) GetCode() (string, error) {"));
+    assert!(go_wrapper.contains("func (d *DataRecord) GetSlot1Act() uint16 {"));
+    assert!(go_wrapper.contains("func (d *DataRecord) GetSlot3Val() (string, error) {"));
+    assert!(go_wrapper.contains("func (d *DataRecord) SetSlot2Val(sVal string) {"));
+    assert!(!go_wrapper.contains("func (d *DataRecord) GetSlot1_Act("));
     assert!(go_wrapper.contains("func (d *DataRecord) Close() {"));
 }
