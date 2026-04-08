@@ -307,7 +307,7 @@ pub fn render_header(ctx: &PipelineContext, ir: &IrModule) -> String {
     );
     let mut out = String::new();
     out.push_str(&format!("#ifndef {guard}\n#define {guard}\n\n"));
-    out.push_str("#include <stdbool.h>\n#include <stddef.h>\n#include <stdint.h>\n\n");
+    out.push_str("#include <stdbool.h>\n#include <stddef.h>\n#include <stdint.h>\n#include <stdlib.h>\n\n");
     if ir_uses_struct_timeval(ir) {
         out.push_str("#include <sys/time.h>\n\n");
     }
@@ -353,7 +353,7 @@ pub fn render_header(ctx: &PipelineContext, ir: &IrModule) -> String {
         .any(|function| function.returns.kind == IrTypeKind::FixedByteArray)
     {
         out.push_str(&format!(
-            "static inline void {}_byte_array_free(uint8_t* value) {{ std::free(value); }}\n\n",
+            "static inline void {}_byte_array_free(uint8_t* value) {{ free(value); }}\n\n",
             ctx.naming.prefix
         ));
     }
@@ -363,7 +363,7 @@ pub fn render_header(ctx: &PipelineContext, ir: &IrModule) -> String {
     });
     if needs_array_free {
         out.push_str(&format!(
-            "static inline void {}_array_free(void* value) {{ std::free(value); }}\n\n",
+            "static inline void {}_array_free(void* value) {{ free(value); }}\n\n",
             ctx.naming.prefix
         ));
     }
@@ -984,7 +984,7 @@ fn ir_uses_struct_timeval(ir: &IrModule) -> bool {
 
 fn render_string_free(ctx: &PipelineContext) -> String {
     format!(
-        "void {}_string_free(char* value) {{\n    std::free(value);\n}}\n",
+        "void {}_string_free(char* value) {{\n    free(value);\n}}\n",
         ctx.naming.prefix
     )
 }
