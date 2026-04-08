@@ -1,4 +1,7 @@
-use std::{env, fs, path::Path};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 use cgo_gen::config::Config;
 #[cfg(unix)]
@@ -34,6 +37,77 @@ fn normalize_expected_path(path: &Path) -> String {
     } else {
         value
     }
+}
+
+fn temp_test_dir(label: &str) -> PathBuf {
+    let mut dir = env::temp_dir();
+    dir.push(format!("c_go_config_{label}_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+fn write_directory_example_config() -> PathBuf {
+    let dir = temp_test_dir("directory_example");
+    fs::create_dir_all(dir.join("include")).unwrap();
+    fs::write(
+        dir.join("include/UserProfile.hpp"),
+        "class UserProfile {};",
+    )
+    .unwrap();
+    fs::write(dir.join("include/AdminUser.hpp"), "class AdminUser {};").unwrap();
+
+    let config_path = dir.join("cppgo-wrap.yaml");
+    fs::write(
+        &config_path,
+        r#"
+version: 1
+input:
+  dir: include
+output:
+  dir: pkg/sdk
+naming:
+  prefix: sdk
+  style: preserve
+"#,
+    )
+    .unwrap();
+
+    config_path
+}
+
+fn write_model_record_dir_config() -> PathBuf {
+    let fixture_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/model_record/include")
+        .display()
+        .to_string()
+        .replace('\\', "/");
+    let dir = temp_test_dir("model_record_dir_config");
+    let config_path = dir.join("cppgo-wrap.yaml");
+
+    fs::write(
+        &config_path,
+        format!(
+            r#"
+version: 1
+input:
+  dir: '{fixture_dir}'
+  clang_args:
+    - -std=c++11
+    - -x
+    - c++
+    - '-I{fixture_dir}'
+output:
+  dir: pkg/model-record
+naming:
+  prefix: gen
+  style: preserve
+"#
+        ),
+    )
+    .unwrap();
+
+    config_path
 }
 
 #[test]
@@ -284,34 +358,36 @@ output:
 }
 
 #[test]
-fn loads_sil_wrapper_example_config() {
-    let config = Config::load("configs/sil-wrapper.example.yaml").unwrap();
+fn loads_directory_wrapper_example_config() {
+    let config_path = write_directory_example_config();
+    let config = Config::load(&config_path).unwrap();
 
-    assert_eq!(config.naming.prefix, "sil");
+    assert_eq!(config.naming.prefix, "sdk");
     assert_eq!(
         config.input.dir.as_ref(),
-        Some(&std::path::PathBuf::from("/absolute/path/to/src/IE/SIL"))
+        Some(&config_path.parent().unwrap().join("include").canonicalize().unwrap())
     );
-    assert!(config.output.dir.ends_with("configs/pkg/sil"));
+    assert!(config.output.dir.ends_with(Path::new("pkg").join("sdk")));
 }
 
 #[test]
-fn sil_wrapper_example_scopes_per_header_output_names() {
-    let config = Config::load("configs/sil-wrapper.example.yaml").unwrap();
+fn directory_wrapper_example_scopes_per_header_output_names() {
+    let config_path = write_directory_example_config();
+    let config = Config::load(&config_path).unwrap();
 
     let dir = config.input.dir.as_ref().unwrap();
-    let master = config.scoped_to_header(&dir.join("IsAAMaster.h"));
-    let user = config.scoped_to_header(&dir.join("IsAAUser.h"));
+    let profile = config.scoped_to_header(&dir.join("UserProfile.hpp"));
+    let admin = config.scoped_to_header(&dir.join("AdminUser.hpp"));
 
-    assert_eq!(master.output.header, "is_aa_master_wrapper.h");
-    assert_eq!(master.output.source, "is_aa_master_wrapper.cpp");
-    assert_eq!(master.output.ir, "is_aa_master_wrapper.ir.yaml");
-    assert_eq!(master.go_filename(""), "is_aa_master_wrapper.go");
+    assert_eq!(profile.output.header, "user_profile_wrapper.h");
+    assert_eq!(profile.output.source, "user_profile_wrapper.cpp");
+    assert_eq!(profile.output.ir, "user_profile_wrapper.ir.yaml");
+    assert_eq!(profile.go_filename(""), "user_profile_wrapper.go");
 
-    assert_eq!(user.output.header, "is_aa_user_wrapper.h");
-    assert_eq!(user.output.source, "is_aa_user_wrapper.cpp");
-    assert_eq!(user.output.ir, "is_aa_user_wrapper.ir.yaml");
-    assert_eq!(user.go_filename(""), "is_aa_user_wrapper.go");
+    assert_eq!(admin.output.header, "admin_user_wrapper.h");
+    assert_eq!(admin.output.source, "admin_user_wrapper.cpp");
+    assert_eq!(admin.output.ir, "admin_user_wrapper.ir.yaml");
+    assert_eq!(admin.go_filename(""), "admin_user_wrapper.go");
 }
 
 #[test]
@@ -465,7 +541,7 @@ output:
 
 #[test]
 fn loads_gen_model_config() {
-    let config = Config::load("configs/gen-model-config.yaml").unwrap();
+    let config = Config::load(write_model_record_dir_config()).unwrap();
 
     assert_eq!(config.naming.prefix, "gen");
     assert!(config.input.headers.is_empty());
@@ -481,7 +557,7 @@ fn loads_gen_model_config() {
         config
             .output
             .dir
-            .ends_with(Path::new("pkg").join("gen-model"))
+            .ends_with(Path::new("pkg").join("model-record"))
     );
 }
 

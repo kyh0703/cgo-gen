@@ -19,7 +19,7 @@ created_at: 2026-04-06T12:00:00+09:00
   - `docs/v2/designs/2026-04-03-v2-structure-field-accessors.md`
 - Existing system facts:
   - 현재 `char[33]`, `char[11]`, `char[128]` 같은 배열 필드가 model handle 후보로 잘못 분류되어 `char[33]Handle` 같은 불법 식별자가 생성된다.
-  - 이 오분류는 `gopkg/sil/i_sil_db_data_wrapper.go`의 `*char[33]`와 대응 C/C++ wrapper의 `char[33]Handle` 생성으로 이어져 실제 빌드를 깨뜨린다.
+  - 이 오분류는 generated `*_wrapper.go`의 `*char[33]`와 대응 C/C++ wrapper의 `char[33]Handle` 생성으로 이어져 실제 빌드를 깨뜨린다.
   - 기존 fixture에서는 내부 `char[]` 필드를 public wrapper에서 `const char*`로 노출하는 패턴이 이미 검증되어 있다.
 - User brief:
   - `char` 배열은 문자열로 반환/전달되게 처리하고, 그 기준으로 계획을 세워 `exec-plan`까지 진행한다.

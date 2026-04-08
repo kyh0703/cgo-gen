@@ -8,7 +8,6 @@
 - `docs/ROADMAP.md`
 - `docs/ARCHITECTURE.md`
 - `docs/v2/designs/2026-04-02-v2-raw-output-flattening.md`
-- `docs/v2/research/status/sil-conversion-status.md`
 
 ## Workspace
 - Branch: feat/v2-raw-output-flattening
@@ -44,7 +43,6 @@
   - `tests/model_out_params.rs`
   - `tests/pipeline.rs`
   - `tests/compile_smoke.rs`
-  - `tests/isaamaster_fixture.rs`
   - `tests/config.rs`
 - Read Context:
   - `src/config.rs`

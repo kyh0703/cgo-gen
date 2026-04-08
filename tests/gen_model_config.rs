@@ -15,9 +15,55 @@ fn temp_output_dir(label: &str) -> PathBuf {
     path
 }
 
+fn temp_workspace_dir(label: &str) -> PathBuf {
+    let mut path = env::temp_dir();
+    path.push(format!(
+        "c_go_gen_model_config_workspace_{}_{}",
+        label,
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&path);
+    fs::create_dir_all(&path).unwrap();
+    path
+}
+
+fn write_model_record_dir_config() -> PathBuf {
+    let include_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/model_record/include")
+        .display()
+        .to_string()
+        .replace('\\', "/");
+    let workspace = temp_workspace_dir("dir-only");
+    let config_path = workspace.join("cppgo-wrap.yaml");
+
+    fs::write(
+        &config_path,
+        format!(
+            r#"
+version: 1
+input:
+  dir: '{include_dir}'
+  clang_args:
+    - -std=c++11
+    - -x
+    - c++
+    - '-I{include_dir}'
+output:
+  dir: ./pkg/model-record
+naming:
+  prefix: gen
+  style: preserve
+"#
+        ),
+    )
+    .unwrap();
+
+    config_path
+}
+
 #[test]
 fn gen_model_config_uses_dir_only_input_shape() {
-    let config = Config::load("configs/gen-model-config.yaml").unwrap();
+    let config = Config::load(write_model_record_dir_config()).unwrap();
 
     assert!(config.input.headers.is_empty());
     assert!(config.input.dir.is_some());
@@ -26,7 +72,7 @@ fn gen_model_config_uses_dir_only_input_shape() {
 
 #[test]
 fn gen_model_config_generates_go_wrapper_when_sources_exist() {
-    let config = Config::load("configs/gen-model-config.yaml").unwrap();
+    let config = Config::load(write_model_record_dir_config()).unwrap();
     let header = config
         .input
         .dir

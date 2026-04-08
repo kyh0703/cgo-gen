@@ -18,9 +18,9 @@ created_at: 2026-04-03T16:45:00+09:00
 - Existing system facts:
   - 현재 callback bridge는 `auto <name> = [](...) { ... };` 형태의 lambda 지역 변수를 만든다.
   - 이후 `use_cb ? <lambda_var> : nullptr` 를 그대로 호출 인자로 넘겨 실제 C++ 컴파일에서 타입 불일치가 발생한다.
-  - 실제 실패 예시는 `cgowrap_iSiLib_SetHACallback_bridge(..., bool)` 에서 `SICHACALLBACK` 인자 전달 시 발생한다.
+  - 실제 실패 예시는 `sdk_ApiClient_SetEventCallback_bridge(..., bool)` 에서 named callback typedef 인자 전달 시 발생한다.
 - User brief:
-  - 실제 생성된 `i_si_lib_wrapper.cpp` 에서 `SetHACallback_bridge` 삼항 연산자 타입 오류를 조사하고 수정해달라는 요청.
+  - 실제 생성된 `api_client_wrapper.cpp` 에서 callback bridge 삼항 연산자 타입 오류를 조사하고 수정해달라는 요청.
 
 ## Plan Handoff
 ### Scope for Planning
@@ -30,7 +30,7 @@ created_at: 2026-04-03T16:45:00+09:00
 
 ### Success Criteria
 - generated callback bridge가 `use_cb ? ... : nullptr` 경로에서도 C++ 컴파일 오류를 내지 않는다.
-- `SetHACallback` 같은 named callback typedef bridge가 계속 생성된다.
+- `SetEventCallback` 같은 named callback typedef bridge가 계속 생성된다.
 - 관련 Rust 테스트가 통과한다.
 
 ### Non-Goals

@@ -2,7 +2,7 @@
 
 ## Goal
 
-Support named callback typedefs and callback registration facade APIs in generated IR and Go output so SIL APIs such as `SetHACallback` are no longer skipped.
+Support named callback typedefs and callback registration facade APIs in generated IR and Go output so callback-driven registration APIs such as `SetEventCallback` are no longer skipped.
 
 ## Workspace
 
@@ -18,7 +18,7 @@ Support named callback typedefs and callback registration facade APIs in generat
 - Goal: preserve named callback typedefs in parser/IR and stop skipping declarations that consume those typedefs only because they are callbacks
 - Depends on: none
 - Write Scope: `src/parser.rs`, `src/ir.rs`
-- Read Context: `docs/ARCHITECTURE.md`, `docs/v2/research/status/sil-conversion-status.md`, callback-related tests
+- Read Context: `docs/ARCHITECTURE.md`, callback-related tests
 - Checks: callback typedef fixture normalizes successfully and is no longer recorded as skipped
 - Parallel-safe: no
 

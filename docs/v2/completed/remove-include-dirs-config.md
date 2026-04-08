@@ -42,7 +42,6 @@
 - Write Scope:
   - README.md
   - README.ko.md
-  - configs/...
   - examples/...
   - tests/fixtures/...
   - docs/v2/research/...
@@ -52,9 +51,9 @@
   - docs/v2/designs/2026-04-03-v2-remove-include-dirs-config.md
 - Checks:
   - cargo test
-  - rg -n "input\\.include_dirs" README.md README.ko.md configs examples tests docs/v2/research
+  - rg -n "input\\.include_dirs" README.md README.ko.md examples tests docs/v2/research
 - Parallel-safe: no
 
 ## Notes
 - Preserve relative `-I...`, `-I <path>`, and `-isystem` normalization through `input.clang_args`; do not remove that behavior.
-- If any checked-in config needs include roots after this change, express them explicitly in `input.clang_args`.
+- If any checked-in fixture or example config needs include roots after this change, express them explicitly in `input.clang_args`.

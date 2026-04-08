@@ -60,7 +60,6 @@
 - Write Scope:
   - docs/ARCHITECTURE.md
   - docs/v2/designs/PRODUCT.md
-  - docs/v2/research/status/sil-conversion-status.md
   - 필요 시 현재 active design 문서 중 user-facing naming만 포함한 문서
 - Read Context:
   - docs/v2/designs/2026-04-02-v2-rename-project-to-cgo-gen.md

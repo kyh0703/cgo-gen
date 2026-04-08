@@ -37,7 +37,7 @@ created_at: 2026-04-02T23:40:23+09:00
    - `examples/simple-go/README.md`
    - `examples/simple-go/Makefile`
    - `examples/simple-go-struct/Makefile`
-   - 현재 active docs에서 `c-go` project naming이 남은 문서 (`docs/ARCHITECTURE.md`, `docs/v2/designs/PRODUCT.md`, `docs/v2/research/status/sil-conversion-status.md` 등)
+  - 현재 active docs에서 `c-go` project naming이 남은 문서 (`docs/ARCHITECTURE.md`, `docs/v2/designs/PRODUCT.md` 등)
 
 3. rename에 따른 실행 명령 표기 정리
    - `cargo run --bin c-go` 같은 명령이 계속 유효한지 확인
@@ -78,7 +78,7 @@ created_at: 2026-04-02T23:40:23+09:00
 - Candidate write boundaries:
   - `Cargo.toml`, `Cargo.lock`, `src/main.rs`, `tests/**/*.rs`
   - `README.md`, `README.ko.md`, `examples/**`
-  - `docs/ARCHITECTURE.md`, `docs/v2/designs/PRODUCT.md`, `docs/v2/research/status/sil-conversion-status.md`
+  - `docs/ARCHITECTURE.md`, `docs/v2/designs/PRODUCT.md`
 - Shared files to avoid touching in parallel:
   - `Cargo.toml`
   - `Cargo.lock`

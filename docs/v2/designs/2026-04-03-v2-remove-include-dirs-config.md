@@ -51,7 +51,7 @@ Remove `input.include_dirs` from the public config surface if it is only a thin 
 ### Parallelization Hints
 - Candidate write boundaries:
   - parser/config changes under `src/` and affected tests
-  - docs/example config updates under `README*`, `configs/`, `examples/`, `docs/v2/research/`
+  - docs/example config updates under `README*`, `tests/fixtures/`, `examples/`, `docs/v2/research/`
 - Shared files to avoid touching in parallel:
   - `src/config.rs`
   - `tests/config.rs`

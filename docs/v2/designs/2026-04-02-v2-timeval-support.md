@@ -13,8 +13,8 @@ created_at: 2026-04-02T14:00:00+09:00
 ## Context / Inputs
 - Source docs:
   - 사용자 에러:
-    - `../gopkg/sil/is_sip_trunk_wrapper.go:787:42: expected '{', found timeval`
-    - `../gopkg/sil/is_sip_trunk_wrapper.go:791:18: expected 'IDENT', found 'struct'`
+    - `../gopkg/generated/session_wrapper.go:787:42: expected '{', found timeval`
+    - `../gopkg/generated/session_wrapper.go:791:18: expected 'IDENT', found 'struct'`
 - Existing system facts:
   - 현재 `src/ir.rs`는 primitive, string, known-model 외의 `*` / `&` 타입을 `raw_safe_model_handle_name()` 경유로 `model_pointer` / `model_reference`로 분류할 수 있다.
   - `struct timeval*`가 이 경로로 들어가면 Go 렌더링에서 `*struct timeval` 같은 잘못된 타입 문자열이 나올 수 있다.

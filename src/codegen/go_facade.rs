@@ -2023,8 +2023,8 @@ mod tests {
     fn go_export_name_capitalizes_lowercase_first_letter() {
         assert_eq!(go_export_name("myApi"), "MyApi");
         assert_eq!(go_export_name("thingModel"), "ThingModel");
-        assert_eq!(go_export_name("iSiLib"), "ISiLib");
-        assert_eq!(go_export_name("IsAAMaster"), "IsAAMaster");
+        assert_eq!(go_export_name("iApiClient"), "IApiClient");
+        assert_eq!(go_export_name("UserRecord"), "UserRecord");
     }
 
     #[test]

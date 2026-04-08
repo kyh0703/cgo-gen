@@ -41,7 +41,7 @@
   - optionally `tests/compile_smoke.rs`
 - Read Context:
   - `tests/gen_model_config.rs`
-  - `configs/gen-model-config.yaml`
+  - `tests/fixtures/model_record/include/`
   - `tests/compile_smoke.rs`
 - Checks:
   - `cargo test gen_model_config`

@@ -1,108 +1,74 @@
 # Architecture
 
-`cgo-gen` now targets a raw C ABI layer plus a shared Go package built on top of the native wrapper pipeline.
+`cgo-gen` turns a conservative subset of C/C++ headers into a stable raw C ABI plus optional Go wrappers emitted into the same output package.
 
 ## Core flow
 
 1. Load YAML config.
-2. Parse selected C/C++ headers.
-3. Classify input files by role.
-   - `model`: files that define shared data models, enums, typedefs, or class-to-model projections.
-   - `facade`: files that define shared operational APIs, lifecycle entrypoints, iterators, callbacks, or service-style functions.
-4. Normalize parsed declarations into IR.
+2. Resolve headers, directories, compile commands, and extra clang args.
+3. Parse selected translation units through libclang.
+4. Normalize supported declarations into IR.
 5. Generate raw native wrapper output.
-   - C ABI wrapper headers/sources for C++ classes and functions.
-   - raw type/data bridge artifacts when needed.
-6. Generate upper Go-facing shared output.
-   - handle-backed Go model wrappers from `model` files.
-   - shared Go facade APIs from `facade` files in the same Go package.
-7. Downstream IE process modules consume the shared Go package and keep business logic outside the generated wrapping layer.
+   - C ABI wrapper headers and sources for classes and free functions.
+   - bridge helpers for strings, callbacks, and other supported interop cases.
+6. Generate Go-facing wrapper output when the IR can be rendered safely.
+   - handle-backed model wrappers for supported object types.
+   - facade functions and methods for supported free functions and class APIs.
 
 ## Layer responsibilities
 
 ### Raw layer
-- Lowest-level generated wrapper output.
-- Bridges C++ to stable C ABI.
-- Owns `wrapper.h` / `wrapper.cpp` style artifacts.
-- Emits physical files under `output.dir/`.
-- Hides constructors, destructors, overload-safe symbol suffixing, and other C++-specific details.
+- Bridges C++ declarations to a stable C ABI.
+- Owns `*_wrapper.h` / `*_wrapper.cpp` artifacts.
+- Handles constructors, destructors, overload-safe symbol suffixing, and native ownership edges.
 
-### Shared model layer
-- Built from files classified as `model`.
-- Produces handle-backed Go wrappers, enums, typedef mappings, and class projections.
-- Emits physical files under `output.dir/`.
-- Represents the common native-backed model contracts IE modules should import and reuse.
-
-### Shared facade layer
-- Built from files classified as `facade`.
-- Produces common Go functions/helpers that operate on shared Go model wrappers.
-- Emits physical files under `output.dir/`.
-- Hides raw iteration, callbacks, native error codes, and native calling conventions.
+### Go layer
+- Emits `*_wrapper.go` beside the generated native files.
+- Preserves handle-backed object identity instead of inventing detached DTO copies.
+- Hides C string ownership, callback bridge plumbing, and native calling details behind Go-friendly helpers.
 
 ## Runtime boundaries
 
-The generator now separates file configuration, runtime pipeline state, analysis, and rendering more explicitly.
+The implementation separates persisted configuration, runtime pipeline state, analysis, and rendering:
 
-- `Config` is the persisted file configuration only.
-- `PipelineContext` owns runtime-derived state such as scoped headers, resolved clang args, discovered model types, and analyzed model projections.
-- `domain::kind` owns the serialized IR enums (`IrTypeKind`, `IrFunctionKind`, `FieldAccessKind`) so IR classification is checked at compile time instead of being carried as free-form strings.
-- `domain::model_projection` owns the single shared projection model used by analysis and rendering.
+- `Config` stores only user-authored file configuration.
+- `PipelineContext` owns runtime-derived state such as scoped headers, resolved clang args, and analyzed model metadata.
+- `domain::kind` owns serialized IR enums such as `IrTypeKind`, `IrFunctionKind`, and `FieldAccessKind`.
+- `domain::model_projection` owns shared projection structures reused across analysis and rendering.
 - `parsing` owns libclang parsing and translation-unit collection.
 - `analysis` owns derived model projection analysis.
-- `codegen` owns IR normalization plus C ABI and Go facade rendering.
+- `codegen` owns IR normalization plus raw and Go rendering.
 
-The important enforced boundary is that parsing and IR normalization now require `PipelineContext` directly. Raw `Config` no longer acts as an implicit pipeline input, and renderers consume analyzed pipeline state instead of recomputing it ad hoc.
+The important boundary is that parsing and normalization operate on `PipelineContext`, not on raw config alone. Renderers consume analyzed state instead of recomputing pipeline facts ad hoc.
 
 ## Design principle
 
-The generated wrapping package is not the place for business logic. Its job is to expose a stable, reusable shared SDK over the native SIL surface so DCM/HTD/other IE modules can share the same models and common APIs.
+Generated output should expose a stable interoperability boundary, not business logic. The generator should keep native ownership and calling semantics explicit while still producing wrappers that downstream packages can use directly.
 
-## Facade design direction
+## Facade routing
 
-Facade design is now anchored to the **actual SIL call surface**, not abstract naming alone.
+Facade generation is intentionally type-driven:
 
-Primary reference surface:
-- `src/IE/SIL/iSiLib.h`
-- `iSiLib-ini.h` should also be included once its local path is confirmed
+- if an API uses a known supported model type directly in a pointer or reference position
+- and that usage is safe to preserve as a live native-backed handle
+- then the Go layer should prefer a wrapper that accepts that handle-backed model directly
 
-The key principle is **type-driven facade routing**:
+Examples of the desired shape:
 
-- if a facade API fills a known shared model type
-- and that model appears directly in the signature as an out-parameter
-- then the wrapper layer should prefer generating a Go API that accepts the shared model wrapper directly
+- `bool LoadThing(..., ThingRecord& out)` -> `LoadThing(..., out *ThingRecord) bool`
+- `bool LoadThing(..., ThingRecord* out)` -> `LoadThing(..., out *ThingRecord) bool`
 
-Examples of desired routing:
-- `bool GetAAMaster(..., IsAAMaster& out)` -> `GetAAMaster(..., out *IsAAMaster) bool`
-- `bool GetAAMaster(..., IsAAMaster* out)` -> `GetAAMaster(..., out *IsAAMaster) bool`
+This keeps native mutability and lifetime attached to the same handle instead of fabricating detached return values.
 
-Why wrapper-first `*Model` + raw `bool`:
-- the native object must stay mutable through the original handle
-- preserving the wrapper shape avoids reverse DTO-to-handle reconstruction
-- the raw `bool` semantics stay explicit instead of being reinterpreted by the generator
+## Current implementation note
 
-For the current facade slice, the design now applies **model-aware routing first**:
-- if the API is tied to a known shared model type, it can be routed to handle-backed facade generation
-- if it is not mapped to a known model type, it should remain a regular API when otherwise supported
-- pattern naming alone should not be treated as the primary decision source
-- source implementation details must not be used to infer higher-level helper behavior
-
-## Current implementation note (2026-03-19)
-
-- Raw native wrapper generation is implemented and remains the current stable base layer.
-- A dedicated Go model rendering path now exists beside raw wrapper generation.
-- Current shared-model routing is still intentionally partial:
-  - verified shared model headers can emit Go enum models and auto-project `IsAAMaster`-style getter/setter classes into handle-backed Go wrappers.
-  - supported facade headers can generate phase-1 Go facade wrappers and still do not emit separate Go model files.
-  - generated wrapper and Go files now emit together under `output.dir/`.
-  - the base supported facade surface includes primitive/string free functions plus known-model `Model&` / `Model*` params routed as `*Model` wrappers.
-  - facade class methods preserve raw `bool`/primitive/string returns instead of lifting known-model out-params into DTO-style return values.
-  - unknown non-classified model reference/pointer declarations can now remain in raw wrapper output as opaque handles when the raw renderer can express them safely.
-  - the same unknown model declarations are still filtered out from Go facade/model projection layers unless they map to a verified shared model type.
-  - raw-unsafe by-value object declarations are now skipped at declaration level and recorded in `support.skipped_declarations` instead of aborting the whole header.
-  - known-model Go helpers now enforce `Model&` as non-nil live handles and allow `Model*` to pass `nil` through when requested.
-  - overloaded raw wrapper symbols are now disambiguated deterministically from parameter signatures instead of aborting normalization.
-  - overloaded Go facade exports are also disambiguated for renderable methods such as `GetAAMasterUint32(...)` versus `GetAAMasterString(...)`.
-  - namespaced facade functions that would collide in Go export names are rejected during generation.
-- Typedef/DTO model generation, model-mapped collection facade generation, callback facade generation, and richer type-driven facade lifting beyond the first out-param pattern are not implemented yet.
-- Review note (2026-03-25): the current durable real-SIL evidence still supports keeping `IsAAMaster.h` as the only verified checked-in shared model header. Raw-visible types such as `IsCluster` and `IsCSTASession` remain non-onboarded until a narrower public-model case is proven.
-- Update note (2026-04-06): the codebase layout now follows the current DDD split in implemented form, with `src/parsing/`, `src/codegen/`, `src/analysis/`, `src/domain/`, and `src/pipeline/` carrying the main boundaries above.
+- Raw native wrapper generation is implemented and remains the stable base layer.
+- Generated wrapper files and Go files now emit together under `output.dir/`.
+- Supported free functions and class methods can render Go wrappers for primitive, string, callback, and known-model handle cases.
+- Unknown object reference or pointer declarations can remain in raw output as opaque handles when the raw layer can express them safely.
+- The same unknown declarations stay filtered out from Go-facing layers unless they map to a supported model path.
+- Raw-unsafe by-value object declarations are skipped at declaration level and recorded in `support.skipped_declarations`.
+- Known-model Go helpers enforce non-nil handles for required references and allow nil where pointer semantics permit it.
+- Overloaded raw symbols and Go exports are disambiguated deterministically from parameter signatures.
+- Namespaced facade functions that would collide in exported Go names are rejected during generation.
+- The current source layout follows the implemented domain split under `src/parsing/`, `src/codegen/`, `src/analysis/`, `src/domain/`, and `src/pipeline/`.

@@ -803,12 +803,12 @@ fn renders_next_style_methods_with_reference_cursor_and_handle_backed_model_out_
     fs::create_dir_all(&include_dir).unwrap();
 
     fs::write(
-        include_dir.join("IsWebHook.hpp"),
+        include_dir.join("WebhookRecord.hpp"),
         r#"
-        class IsWebHook {
+        class WebhookRecord {
         public:
-            IsWebHook() = default;
-            ~IsWebHook() = default;
+            WebhookRecord() = default;
+            ~WebhookRecord() = default;
             const char* GetUrl() const;
             void SetUrl(const char* value);
         };
@@ -816,16 +816,16 @@ fn renders_next_style_methods_with_reference_cursor_and_handle_backed_model_out_
     )
     .unwrap();
     fs::write(
-        include_dir.join("ISiLib.hpp"),
+        include_dir.join("ApiClient.hpp"),
         r#"
-        #include "IsWebHook.hpp"
+        #include "WebhookRecord.hpp"
         #include <stdint.h>
 
-        class ISiLib {
+        class ApiClient {
         public:
-            ISiLib() = default;
-            ~ISiLib() = default;
-            bool NextWebHook(int32_t& pos, IsWebHook& out);
+            ApiClient() = default;
+            ~ApiClient() = default;
+            bool NextWebhook(int32_t& pos, WebhookRecord& out);
         };
         "#,
     )
@@ -838,12 +838,12 @@ fn renders_next_style_methods_with_reference_cursor_and_handle_backed_model_out_
 version: 1
 input:
   headers:
-    - include/IsWebHook.hpp
-    - include/ISiLib.hpp
+    - include/WebhookRecord.hpp
+    - include/ApiClient.hpp
 output:
   dir: out
 naming:
-  prefix: sil
+  prefix: sdk
   style: preserve
 "#,
     )
@@ -853,26 +853,26 @@ naming:
     let ctx = PipelineContext::new(config.clone());
     generator::generate_all(&ctx, true).unwrap();
 
-    let go_model = fs::read_to_string(root.join("out/is_web_hook_wrapper.go")).unwrap();
-    let go_facade = fs::read_to_string(root.join("out/i_si_lib_wrapper.go")).unwrap();
-    let raw_source = fs::read_to_string(root.join("out/i_si_lib_wrapper.cpp")).unwrap();
+    let go_model = fs::read_to_string(root.join("out/webhook_record_wrapper.go")).unwrap();
+    let go_facade = fs::read_to_string(root.join("out/api_client_wrapper.go")).unwrap();
+    let raw_source = fs::read_to_string(root.join("out/api_client_wrapper.cpp")).unwrap();
 
-    assert!(go_model.contains("type IsWebHook struct {"));
-    assert!(go_model.contains("ptr *C.IsWebHookHandle"));
-    assert!(go_model.contains("func (i *IsWebHook) SetUrl(value string) {"));
+    assert!(go_model.contains("type WebhookRecord struct {"));
+    assert!(go_model.contains("ptr *C.WebhookRecordHandle"));
+    assert!(go_model.contains("func (w *WebhookRecord) SetUrl(value string) {"));
 
-    assert!(go_facade.contains("func (i *ISiLib) NextWebHook(pos *int32, out *IsWebHook) bool {"));
+    assert!(go_facade.contains("func (a *ApiClient) NextWebhook(pos *int32, out *WebhookRecord) bool {"));
     assert!(go_facade.contains("if pos == nil {"));
     assert!(go_facade.contains("panic(\"pos reference is nil\")"));
     assert!(go_facade.contains("cArg0 := C.int32_t(*pos)"));
     assert!(go_facade.contains(
-        "result := C.sil_ISiLib_NextWebHook(i.ptr, &cArg0, requireIsWebHookHandle(out))"
+        "result := C.sdk_ApiClient_NextWebhook(a.ptr, &cArg0, requireWebhookRecordHandle(out))"
     ));
     assert!(go_facade.contains("*pos = int32(cArg0)"));
     assert!(go_facade.contains("return bool(result)"));
 
     assert!(raw_source.contains(
-        "return reinterpret_cast<ISiLib*>(self)->NextWebHook(*pos, *reinterpret_cast<IsWebHook*>(out));"
+        "return reinterpret_cast<ApiClient*>(self)->NextWebhook(*pos, *reinterpret_cast<WebhookRecord*>(out));"
     ));
 }
 
@@ -889,12 +889,12 @@ fn generates_callback_typedefs_and_facade_bridge_helpers() {
         #pragma once
         #include <stdint.h>
 
-        typedef uint32_t iMoId_t;
-        typedef const char* NPCSTR;
+        typedef uint32_t AppId;
+        typedef const char* AppString;
         typedef int32_t int32;
-        typedef void (*SICHACALLBACK)(iMoId_t nMoId, uint32_t nMsgId, NPCSTR sData, int32 nData);
+        typedef void (*EventCallback)(AppId appId, uint32_t eventId, AppString data, int32 size);
 
-        void SetHACallback(SICHACALLBACK cb);
+        void SetEventCallback(EventCallback cb);
         "#,
     )
     .unwrap();
@@ -910,7 +910,7 @@ input:
 output:
   dir: out
 naming:
-  prefix: sil
+  prefix: sdk
   style: preserve
 "#,
     )
@@ -926,27 +926,27 @@ naming:
     let go_facade = fs::read_to_string(root.join("out/api_wrapper.go")).unwrap();
 
     assert!(ir_dump.contains("callbacks:"));
-    assert!(ir_dump.contains("name: SICHACALLBACK"));
+    assert!(ir_dump.contains("name: EventCallback"));
     assert!(raw_header.contains(
-        "typedef void (*SICHACALLBACK)(unsigned int nMoId, unsigned int nMsgId, const char* sData, int32_t nData);"
+        "typedef void (*EventCallback)(unsigned int appId, unsigned int eventId, const char* data, int32_t size);"
     ));
-    assert!(raw_header.contains("void sil_SetHACallback_bridge(bool use_cb0);"));
+    assert!(raw_header.contains("void sdk_SetEventCallback_bridge(bool use_cb0);"));
 
     assert!(raw_source.contains("extern \"C\" {"));
-    assert!(raw_source.contains("void go_sil_SetHACallback_cb0("));
-    assert!(raw_source.contains("SICHACALLBACK sil_SetHACallback_cb0_trampoline"));
+    assert!(raw_source.contains("void go_sdk_SetEventCallback_cb0("));
+    assert!(raw_source.contains("EventCallback sdk_SetEventCallback_cb0_trampoline"));
     assert!(
         raw_source
-            .contains("sil_SetHACallback(use_cb0 ? sil_SetHACallback_cb0_trampoline : nullptr);")
+            .contains("sdk_SetEventCallback(use_cb0 ? sdk_SetEventCallback_cb0_trampoline : nullptr);")
     );
 
     assert!(go_facade.contains("import \"sync\""));
     assert!(go_facade.contains(
-        "type SICHACALLBACK func(nMoId uint32, nMsgId uint32, sData string, nData int32)"
+        "type EventCallback func(appId uint32, eventId uint32, data string, size int32)"
     ));
-    assert!(go_facade.contains("var sil_SetHACallback_cb0 struct {"));
-    assert!(go_facade.contains("//export go_sil_SetHACallback_cb0"));
-    assert!(go_facade.contains("func SetHACallback(cb SICHACALLBACK) {"));
-    assert!(go_facade.contains("sil_SetHACallback_cb0.fn = cb"));
-    assert!(go_facade.contains("C.sil_SetHACallback_bridge(C.bool(cb != nil))"));
+    assert!(go_facade.contains("var sdk_SetEventCallback_cb0 struct {"));
+    assert!(go_facade.contains("//export go_sdk_SetEventCallback_cb0"));
+    assert!(go_facade.contains("func SetEventCallback(cb EventCallback) {"));
+    assert!(go_facade.contains("sdk_SetEventCallback_cb0.fn = cb"));
+    assert!(go_facade.contains("C.sdk_SetEventCallback_bridge(C.bool(cb != nil))"));
 }

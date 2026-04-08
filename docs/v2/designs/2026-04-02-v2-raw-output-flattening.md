@@ -14,8 +14,7 @@ Flatten generated native wrapper artifacts into the same package output director
 
 - Source docs:
   - `docs/ARCHITECTURE.md`
-  - `docs/v2/designs/wrapping-package-plan.md`
-  - `docs/v2/research/status/sil-conversion-status.md`
+  - `README.md`
 - Existing system facts:
   - raw native artifacts currently emit under `output.dir/raw/`
   - generated Go files currently emit under `output.dir/`
@@ -43,7 +42,7 @@ Flatten generated native wrapper artifacts into the same package output director
 
 ### Non-Goals
 
-- making every currently generated SIL wrapper semantically safe for public consumption in one pass
+- making every currently generated wrapper semantically safe for public consumption in one pass
 - solving all raw-only versus Go-visible boundary decisions
 - introducing DTO/business-layer abstractions for downstream IE modules
 - broad refactors unrelated to output layout and build consumption
