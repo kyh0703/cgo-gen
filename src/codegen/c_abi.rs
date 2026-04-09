@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 
 use crate::{
     analysis::model_analysis,
@@ -162,7 +162,12 @@ fn collect_known_model_types(parsed: &parser::ParsedApi) -> Vec<String> {
         .collect()
 }
 
-pub fn generate(ctx: &PipelineContext, ir: &IrModule, write_ir: bool, global_class_handles: &BTreeSet<String>) -> Result<()> {
+pub fn generate(
+    ctx: &PipelineContext,
+    ir: &IrModule,
+    write_ir: bool,
+    global_class_handles: &BTreeSet<String>,
+) -> Result<()> {
     fs::create_dir_all(ctx.output_dir()).with_context(|| {
         format!(
             "failed to create output dir: {}",
@@ -307,7 +312,9 @@ pub fn render_header(ctx: &PipelineContext, ir: &IrModule) -> String {
     );
     let mut out = String::new();
     out.push_str(&format!("#ifndef {guard}\n#define {guard}\n\n"));
-    out.push_str("#include <stdbool.h>\n#include <stddef.h>\n#include <stdint.h>\n#include <stdlib.h>\n\n");
+    out.push_str(
+        "#include <stdbool.h>\n#include <stddef.h>\n#include <stdint.h>\n#include <stdlib.h>\n\n",
+    );
     if ir_uses_struct_timeval(ir) {
         out.push_str("#include <sys/time.h>\n\n");
     }
@@ -359,7 +366,10 @@ pub fn render_header(ctx: &PipelineContext, ir: &IrModule) -> String {
     }
 
     let needs_array_free = ir.functions.iter().any(|f| {
-        matches!(f.returns.kind, IrTypeKind::FixedArray | IrTypeKind::FixedModelArray)
+        matches!(
+            f.returns.kind,
+            IrTypeKind::FixedArray | IrTypeKind::FixedModelArray
+        )
     });
     if needs_array_free {
         out.push_str(&format!(
@@ -556,7 +566,7 @@ fn render_callable_body(function: &IrFunction, target: &str, arg_start: usize) -
         }
         IrTypeKind::FixedModelArray => {
             let handle = function.returns.handle.as_deref().unwrap_or("");
-            let base_cpp = base_model_cpp_type(&function.returns.cpp_type);
+            let base_cpp = fixed_model_array_elem_cpp_type(&function.returns.cpp_type);
             let n = ir::fixed_array_length(&function.returns.cpp_type).unwrap_or(0);
             format!(
                 "    auto _tmp = {target}({args});\n    {handle}** _r = static_cast<{handle}**>(std::malloc({n} * sizeof({handle}*)));\n    if (_r == nullptr) {{\n        return nullptr;\n    }}\n    for (int _i = 0; _i < {n}; _i++) {{\n        _r[_i] = reinterpret_cast<{handle}*>(new {base_cpp}(_tmp[_i]));\n    }}\n    return _r;\n"
@@ -591,7 +601,7 @@ fn render_field_getter_body(function: &IrFunction, receiver: &str, field_name: &
         }
         IrTypeKind::FixedModelArray => {
             let handle = function.returns.handle.as_deref().unwrap_or("");
-            let base_cpp = base_model_cpp_type(&function.returns.cpp_type);
+            let base_cpp = fixed_model_array_elem_cpp_type(&function.returns.cpp_type);
             let n = ir::fixed_array_length(&function.returns.cpp_type).unwrap_or(0);
             format!(
                 "    {handle}** _r = static_cast<{handle}**>(std::malloc({n} * sizeof({handle}*)));\n    if (_r == nullptr) {{\n        return nullptr;\n    }}\n    for (int _i = 0; _i < {n}; _i++) {{\n        _r[_i] = reinterpret_cast<{handle}*>(new {base_cpp}({receiver}->{field_name}[_i]));\n    }}\n    return _r;\n"
@@ -628,7 +638,7 @@ fn render_field_setter_body(function: &IrFunction, receiver: &str, field_name: &
             "    if (value == nullptr) {{\n        return;\n    }}\n    std::memcpy({receiver}->{field_name}, value, sizeof({receiver}->{field_name}));\n"
         ),
         IrTypeKind::FixedModelArray => {
-            let base_cpp = base_model_cpp_type(&value_param.ty.cpp_type);
+            let base_cpp = fixed_model_array_elem_cpp_type(&value_param.ty.cpp_type);
             let n = ir::fixed_array_length(&value_param.ty.cpp_type).unwrap_or(0);
             format!(
                 "    if (value == nullptr) {{\n        return;\n    }}\n    for (int _i = 0; _i < {n}; _i++) {{\n        {receiver}->{field_name}[_i] = *reinterpret_cast<{base_cpp}*>(value[_i]);\n    }}\n"
@@ -688,7 +698,8 @@ fn render_cpp_arg(ty: IrType, name: &str) -> String {
                 // project-specific type aliases not in scope in the wrapper.
                 let c_base = ty.c_type.trim_end_matches('*').trim();
                 let cpp_base = ty.cpp_type.trim_end_matches('&').trim();
-                if !generator_supported_primitive(cpp_base) && generator_supported_primitive(c_base) {
+                if !generator_supported_primitive(cpp_base) && generator_supported_primitive(c_base)
+                {
                     Some(format!("*reinterpret_cast<{}*>({name})", c_base))
                 } else {
                     None
@@ -965,6 +976,12 @@ fn base_model_cpp_type(value: &str) -> String {
         .to_string()
 }
 
+fn fixed_model_array_elem_cpp_type(cpp_type: &str) -> String {
+    ir::fixed_array_elem_type(cpp_type)
+        .map(base_model_cpp_type)
+        .unwrap_or_else(|| base_model_cpp_type(cpp_type))
+}
+
 fn ir_uses_struct_timeval(ir: &IrModule) -> bool {
     ir.functions
         .iter()
@@ -988,4 +1005,3 @@ fn render_string_free(ctx: &PipelineContext) -> String {
         ctx.naming.prefix
     )
 }
-
