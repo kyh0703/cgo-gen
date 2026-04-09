@@ -215,7 +215,10 @@ fn collect_referenced_opaque_types(opaque_types: &mut Vec<OpaqueType>, functions
             }
             if !matches!(
                 ty.kind,
-                IrTypeKind::ModelReference | IrTypeKind::ModelPointer | IrTypeKind::ModelValue
+                IrTypeKind::ModelReference
+                    | IrTypeKind::ModelPointer
+                    | IrTypeKind::ModelValue
+                    | IrTypeKind::ModelView
             ) {
                 continue;
             }
@@ -1812,6 +1815,76 @@ mod tests {
 
         assert_eq!(ty.kind, IrTypeKind::ModelView);
         assert_eq!(ty.c_type, "ThingModelHandle*");
+    }
+
+    #[test]
+    fn collects_opaque_handles_for_model_view_returns() {
+        let mut opaque_types = Vec::new();
+        let functions = vec![IrFunction {
+            name: "cgowrap_Api_GetThing".to_string(),
+            kind: IrFunctionKind::Method,
+            cpp_name: "Api::GetThing".to_string(),
+            method_of: Some("ApiHandle".to_string()),
+            owner_cpp_type: Some("Api".to_string()),
+            is_const: Some(true),
+            field_accessor: None,
+            returns: IrType {
+                kind: IrTypeKind::ModelView,
+                cpp_type: "ThingModel*".to_string(),
+                c_type: "ThingModelHandle*".to_string(),
+                handle: Some("ThingModelHandle".to_string()),
+            },
+            params: vec![IrParam {
+                name: "self".to_string(),
+                ty: IrType {
+                    kind: IrTypeKind::Opaque,
+                    cpp_type: "const Api*".to_string(),
+                    c_type: "const ApiHandle*".to_string(),
+                    handle: Some("ApiHandle".to_string()),
+                },
+            }],
+        }];
+
+        collect_referenced_opaque_types(&mut opaque_types, &functions);
+
+        assert_eq!(opaque_types.len(), 1);
+        assert_eq!(opaque_types[0].name, "ThingModelHandle");
+        assert_eq!(opaque_types[0].cpp_type, "ThingModel");
+    }
+
+    #[test]
+    fn collects_unknown_return_only_handles_for_model_view_returns() {
+        let mut opaque_types = Vec::new();
+        let functions = vec![IrFunction {
+            name: "cgowrap_CSmManager_GetIosPtr".to_string(),
+            kind: IrFunctionKind::Method,
+            cpp_name: "CSmManager::GetIosPtr".to_string(),
+            method_of: Some("CSmManagerHandle".to_string()),
+            owner_cpp_type: Some("CSmManager".to_string()),
+            is_const: Some(false),
+            field_accessor: None,
+            returns: IrType {
+                kind: IrTypeKind::ModelView,
+                cpp_type: "CIosShm*".to_string(),
+                c_type: "CIosShmHandle*".to_string(),
+                handle: Some("CIosShmHandle".to_string()),
+            },
+            params: vec![IrParam {
+                name: "self".to_string(),
+                ty: IrType {
+                    kind: IrTypeKind::Opaque,
+                    cpp_type: "CSmManager*".to_string(),
+                    c_type: "CSmManagerHandle*".to_string(),
+                    handle: Some("CSmManagerHandle".to_string()),
+                },
+            }],
+        }];
+
+        collect_referenced_opaque_types(&mut opaque_types, &functions);
+
+        assert_eq!(opaque_types.len(), 1);
+        assert_eq!(opaque_types[0].name, "CIosShmHandle");
+        assert_eq!(opaque_types[0].cpp_type, "CIosShm");
     }
 
     #[test]

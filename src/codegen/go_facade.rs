@@ -2433,6 +2433,113 @@ mod tests {
     }
 
     #[test]
+    fn opaque_model_view_return_emits_unknown_opaque_wrapper() {
+        use crate::codegen::ir_norm::{IrModule, OpaqueType, SupportMetadata};
+
+        let self_param = IrParam {
+            name: "self".to_string(),
+            ty: IrType {
+                kind: IrTypeKind::Opaque,
+                cpp_type: "Api*".to_string(),
+                c_type: "ApiHandle*".to_string(),
+                handle: Some("ApiHandle".to_string()),
+            },
+        };
+        let ir = IrModule {
+            version: 1,
+            module: "cgowrap".to_string(),
+            source_headers: vec![],
+            opaque_types: vec![
+                OpaqueType {
+                    name: "ApiHandle".to_string(),
+                    cpp_type: "Api".to_string(),
+                },
+                OpaqueType {
+                    name: "CIosShmHandle".to_string(),
+                    cpp_type: "CIosShm".to_string(),
+                },
+            ],
+            functions: vec![
+                IrFunction {
+                    name: "cgowrap_Api_new".to_string(),
+                    kind: IrFunctionKind::Constructor,
+                    cpp_name: "Api".to_string(),
+                    method_of: Some("ApiHandle".to_string()),
+                    owner_cpp_type: Some("Api".to_string()),
+                    is_const: None,
+                    field_accessor: None,
+                    returns: IrType {
+                        kind: IrTypeKind::Opaque,
+                        cpp_type: "Api*".to_string(),
+                        c_type: "ApiHandle*".to_string(),
+                        handle: Some("ApiHandle".to_string()),
+                    },
+                    params: vec![],
+                },
+                IrFunction {
+                    name: "cgowrap_Api_delete".to_string(),
+                    kind: IrFunctionKind::Destructor,
+                    cpp_name: "~Api".to_string(),
+                    method_of: Some("ApiHandle".to_string()),
+                    owner_cpp_type: Some("Api".to_string()),
+                    is_const: None,
+                    field_accessor: None,
+                    returns: IrType {
+                        kind: IrTypeKind::Void,
+                        cpp_type: "void".to_string(),
+                        c_type: "void".to_string(),
+                        handle: None,
+                    },
+                    params: vec![self_param.clone()],
+                },
+                IrFunction {
+                    name: "cgowrap_Api_GetIos".to_string(),
+                    kind: IrFunctionKind::Method,
+                    cpp_name: "Api::GetIos".to_string(),
+                    method_of: Some("ApiHandle".to_string()),
+                    owner_cpp_type: Some("Api".to_string()),
+                    is_const: Some(true),
+                    field_accessor: None,
+                    returns: IrType {
+                        kind: IrTypeKind::ModelView,
+                        cpp_type: "CIosShm*".to_string(),
+                        c_type: "CIosShmHandle*".to_string(),
+                        handle: Some("CIosShmHandle".to_string()),
+                    },
+                    params: vec![self_param],
+                },
+            ],
+            enums: vec![],
+            callbacks: vec![],
+            support: SupportMetadata {
+                parser_backend: "test".to_string(),
+                notes: vec![],
+                skipped_declarations: vec![],
+            },
+        };
+
+        let files = render_go_facade(
+            &PipelineContext::new(Config::default()),
+            &ir,
+            &BTreeSet::new(),
+        )
+        .unwrap();
+        let contents = &files[0].contents;
+        assert!(
+            contents.contains("type CIosShm struct {\n    ptr *C.CIosShmHandle\n}"),
+            "expected opaque CIosShm wrapper but got:\n{contents}"
+        );
+        assert!(
+            contents.contains("func (a *Api) GetIos() *CIosShm"),
+            "expected GetIos method signature but got:\n{contents}"
+        );
+        assert!(
+            contents.contains("return &CIosShm{ptr: raw}"),
+            "expected opaque CIosShm wrap pattern but got:\n{contents}"
+        );
+    }
+
+    #[test]
     fn model_view_return_uses_leaf_name_for_unknown_model() {
         let config = test_context_with_known_model();
         let ty = model_type(IrTypeKind::ModelView, "UnknownClass");
