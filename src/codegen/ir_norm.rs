@@ -958,7 +958,10 @@ fn normalize_type_with_canonical(
     if let Ok(ty) = normalize_type(trimmed, callback_names) {
         if matches!(
             ty.kind,
-            IrTypeKind::ModelReference | IrTypeKind::ModelPointer | IrTypeKind::ModelValue
+            IrTypeKind::ModelReference
+                | IrTypeKind::ModelPointer
+                | IrTypeKind::ModelValue
+                | IrTypeKind::FixedModelArray
         ) && canonical_trimmed != trimmed
         {
             if let Ok(mut canonical_ty) = normalize_type(canonical_trimmed, callback_names) {
@@ -972,6 +975,7 @@ fn normalize_type_with_canonical(
                         | IrTypeKind::String
                         | IrTypeKind::CString
                         | IrTypeKind::FixedByteArray
+                        | IrTypeKind::FixedArray
                 ) {
                     canonical_ty.cpp_type = trimmed.to_string();
                     return Ok(canonical_ty);
