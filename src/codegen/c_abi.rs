@@ -140,7 +140,11 @@ fn build_pipeline_context(
     parsed: &parser::ParsedApi,
 ) -> Result<PipelineContext> {
     let known_model_types = collect_known_model_types(parsed);
-    let scoped = ctx.clone().with_known_model_types(known_model_types);
+    let preferred_model_aliases = ir::collect_preferred_model_aliases(parsed);
+    let scoped = ctx
+        .clone()
+        .with_known_model_types(known_model_types)
+        .with_preferred_model_aliases(preferred_model_aliases);
     let ir = ir::normalize(&scoped, parsed)?;
     let known_model_projections = model_analysis::collect_known_model_projections(&scoped, &ir)?;
     Ok(scoped.with_known_model_projections(known_model_projections))
@@ -162,7 +166,12 @@ fn collect_known_model_types(parsed: &parser::ParsedApi) -> Vec<String> {
         .collect()
 }
 
-pub fn generate(ctx: &PipelineContext, ir: &IrModule, write_ir: bool, global_class_handles: &BTreeSet<String>) -> Result<()> {
+pub fn generate(
+    ctx: &PipelineContext,
+    ir: &IrModule,
+    write_ir: bool,
+    global_class_handles: &BTreeSet<String>,
+) -> Result<()> {
     fs::create_dir_all(ctx.output_dir()).with_context(|| {
         format!(
             "failed to create output dir: {}",
@@ -307,7 +316,9 @@ pub fn render_header(ctx: &PipelineContext, ir: &IrModule) -> String {
     );
     let mut out = String::new();
     out.push_str(&format!("#ifndef {guard}\n#define {guard}\n\n"));
-    out.push_str("#include <stdbool.h>\n#include <stddef.h>\n#include <stdint.h>\n#include <stdlib.h>\n\n");
+    out.push_str(
+        "#include <stdbool.h>\n#include <stddef.h>\n#include <stdint.h>\n#include <stdlib.h>\n\n",
+    );
     if ir_uses_struct_timeval(ir) {
         out.push_str("#include <sys/time.h>\n\n");
     }
@@ -359,7 +370,10 @@ pub fn render_header(ctx: &PipelineContext, ir: &IrModule) -> String {
     }
 
     let needs_array_free = ir.functions.iter().any(|f| {
-        matches!(f.returns.kind, IrTypeKind::FixedArray | IrTypeKind::FixedModelArray)
+        matches!(
+            f.returns.kind,
+            IrTypeKind::FixedArray | IrTypeKind::FixedModelArray
+        )
     });
     if needs_array_free {
         out.push_str(&format!(
@@ -688,7 +702,8 @@ fn render_cpp_arg(ty: IrType, name: &str) -> String {
                 // project-specific type aliases not in scope in the wrapper.
                 let c_base = ty.c_type.trim_end_matches('*').trim();
                 let cpp_base = ty.cpp_type.trim_end_matches('&').trim();
-                if !generator_supported_primitive(cpp_base) && generator_supported_primitive(c_base) {
+                if !generator_supported_primitive(cpp_base) && generator_supported_primitive(c_base)
+                {
                     Some(format!("*reinterpret_cast<{}*>({name})", c_base))
                 } else {
                     None
@@ -988,4 +1003,3 @@ fn render_string_free(ctx: &PipelineContext) -> String {
         ctx.naming.prefix
     )
 }
-

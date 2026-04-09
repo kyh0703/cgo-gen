@@ -31,7 +31,7 @@ fn build_all_model_projections(
             function
                 .owner_cpp_type
                 .as_deref()
-                .map(|owner| (owner.to_string(), function.name.clone()))
+                .map(|owner| (owner.to_string(), function))
         })
         .collect::<BTreeMap<_, _>>();
     let destructors = ir
@@ -42,7 +42,7 @@ fn build_all_model_projections(
             function
                 .owner_cpp_type
                 .as_deref()
-                .map(|owner| (owner.to_string(), function.name.clone()))
+                .map(|owner| (owner.to_string(), function))
         })
         .collect::<BTreeMap<_, _>>();
 
@@ -81,8 +81,8 @@ fn build_model_projection(
     ctx: &PipelineContext,
     owner: &str,
     class_methods: &[&IrFunction],
-    constructor_symbol: Option<&String>,
-    destructor_symbol: Option<&String>,
+    constructor: Option<&&IrFunction>,
+    destructor: Option<&&IrFunction>,
 ) -> Result<Option<ModelProjection>> {
     let setters = class_methods
         .iter()
@@ -134,19 +134,34 @@ fn build_model_projection(
         return Ok(None);
     }
 
-    let constructor_symbol = constructor_symbol.ok_or_else(|| {
+    let constructor = constructor.ok_or_else(|| {
         anyhow::anyhow!("model projection `{owner}` is missing a constructor wrapper")
     })?;
-    let destructor_symbol = destructor_symbol.ok_or_else(|| {
+    let destructor = destructor.ok_or_else(|| {
         anyhow::anyhow!("model projection `{owner}` is missing a destructor wrapper")
     })?;
+    let handle_name = constructor
+        .returns
+        .handle
+        .clone()
+        .or_else(|| {
+            destructor
+                .params
+                .first()
+                .and_then(|param| param.ty.handle.clone())
+        })
+        .unwrap_or_else(|| format!("{}Handle", flatten_qualified_cpp_name(owner)));
+    let go_name = handle_name
+        .strip_suffix("Handle")
+        .map(go_export_name)
+        .unwrap_or_else(|| go_export_name(&leaf_cpp_name(owner)));
 
     Ok(Some(ModelProjection {
         cpp_type: owner.to_string(),
-        go_name: go_export_name(&leaf_cpp_name(owner)),
-        handle_name: format!("{}Handle", flatten_qualified_cpp_name(owner)),
-        constructor_symbol: constructor_symbol.clone(),
-        destructor_symbol: destructor_symbol.clone(),
+        go_name,
+        handle_name,
+        constructor_symbol: constructor.name.clone(),
+        destructor_symbol: destructor.name.clone(),
         fields,
     }))
 }
@@ -540,5 +555,129 @@ mod tests {
         assert_eq!(projections[0].fields.len(), 2);
         assert_eq!(projections[0].fields[0].go_name, "Value");
         assert_eq!(projections[0].fields[1].go_type, "*ThingModel");
+    }
+
+    #[test]
+    fn projection_handle_name_comes_from_ir_handles_not_owner_name() {
+        let ctx = test_context();
+        let ir = IrModule {
+            version: 1,
+            module: "cgowrap".to_string(),
+            source_headers: vec![],
+            opaque_types: vec![],
+            enums: vec![],
+            callbacks: vec![],
+            support: crate::ir::SupportMetadata {
+                parser_backend: "libclang".to_string(),
+                notes: vec![],
+                skipped_declarations: vec![],
+            },
+            functions: vec![
+                IrFunction {
+                    name: "cgowrap__DCSHISTORY_new".to_string(),
+                    kind: IrFunctionKind::Constructor,
+                    cpp_name: "_DCSHISTORY".to_string(),
+                    method_of: Some("DCSHISTORYHandle".to_string()),
+                    owner_cpp_type: Some("_DCSHISTORY".to_string()),
+                    is_const: None,
+                    field_accessor: None,
+                    returns: IrType {
+                        kind: IrTypeKind::Opaque,
+                        cpp_type: "_DCSHISTORY".to_string(),
+                        c_type: "DCSHISTORYHandle*".to_string(),
+                        handle: Some("DCSHISTORYHandle".to_string()),
+                    },
+                    params: vec![],
+                },
+                IrFunction {
+                    name: "cgowrap__DCSHISTORY_delete".to_string(),
+                    kind: IrFunctionKind::Destructor,
+                    cpp_name: "~_DCSHISTORY".to_string(),
+                    method_of: Some("DCSHISTORYHandle".to_string()),
+                    owner_cpp_type: Some("_DCSHISTORY".to_string()),
+                    is_const: None,
+                    field_accessor: None,
+                    returns: IrType {
+                        kind: IrTypeKind::Void,
+                        cpp_type: "void".to_string(),
+                        c_type: "void".to_string(),
+                        handle: None,
+                    },
+                    params: vec![IrParam {
+                        name: "self".to_string(),
+                        ty: IrType {
+                            kind: IrTypeKind::Opaque,
+                            cpp_type: "_DCSHISTORY*".to_string(),
+                            c_type: "DCSHISTORYHandle*".to_string(),
+                            handle: Some("DCSHISTORYHandle".to_string()),
+                        },
+                    }],
+                },
+                IrFunction {
+                    name: "cgowrap__DCSHISTORY_GetCount".to_string(),
+                    kind: IrFunctionKind::Method,
+                    cpp_name: "_DCSHISTORY::GetCount".to_string(),
+                    method_of: Some("DCSHISTORYHandle".to_string()),
+                    owner_cpp_type: Some("_DCSHISTORY".to_string()),
+                    is_const: Some(true),
+                    field_accessor: None,
+                    returns: IrType {
+                        kind: IrTypeKind::Primitive,
+                        cpp_type: "int".to_string(),
+                        c_type: "int".to_string(),
+                        handle: None,
+                    },
+                    params: vec![IrParam {
+                        name: "self".to_string(),
+                        ty: IrType {
+                            kind: IrTypeKind::Opaque,
+                            cpp_type: "const _DCSHISTORY*".to_string(),
+                            c_type: "const DCSHISTORYHandle*".to_string(),
+                            handle: Some("DCSHISTORYHandle".to_string()),
+                        },
+                    }],
+                },
+                IrFunction {
+                    name: "cgowrap__DCSHISTORY_SetCount".to_string(),
+                    kind: IrFunctionKind::Method,
+                    cpp_name: "_DCSHISTORY::SetCount".to_string(),
+                    method_of: Some("DCSHISTORYHandle".to_string()),
+                    owner_cpp_type: Some("_DCSHISTORY".to_string()),
+                    is_const: Some(false),
+                    field_accessor: None,
+                    returns: IrType {
+                        kind: IrTypeKind::Void,
+                        cpp_type: "void".to_string(),
+                        c_type: "void".to_string(),
+                        handle: None,
+                    },
+                    params: vec![
+                        IrParam {
+                            name: "self".to_string(),
+                            ty: IrType {
+                                kind: IrTypeKind::Opaque,
+                                cpp_type: "_DCSHISTORY*".to_string(),
+                                c_type: "DCSHISTORYHandle*".to_string(),
+                                handle: Some("DCSHISTORYHandle".to_string()),
+                            },
+                        },
+                        IrParam {
+                            name: "value".to_string(),
+                            ty: IrType {
+                                kind: IrTypeKind::Primitive,
+                                cpp_type: "int".to_string(),
+                                c_type: "int".to_string(),
+                                handle: None,
+                            },
+                        },
+                    ],
+                },
+            ],
+        };
+
+        let projections = collect_known_model_projections(&ctx, &ir).unwrap();
+        assert_eq!(projections.len(), 1);
+        assert_eq!(projections[0].handle_name, "DCSHISTORYHandle");
+        assert_eq!(projections[0].go_name, "DCSHISTORY");
     }
 }
