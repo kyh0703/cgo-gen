@@ -530,8 +530,151 @@ output:
     assert!(source.contains(
         "return reinterpret_cast<ChildHandle*>(new Child(reinterpret_cast<const Parent*>(self)->child));"
     ));
-    assert!(source
-        .contains("reinterpret_cast<Parent*>(self)->child = *reinterpret_cast<Child*>(value);"));
+    assert!(
+        source
+            .contains("reinterpret_cast<Parent*>(self)->child = *reinterpret_cast<Child*>(value);")
+    );
     assert!(go_text.contains("func (p *Parent) GetChild() *Child {"));
     assert!(go_text.contains("func (p *Parent) SetChild(value *Child) {"));
+}
+
+#[test]
+fn renders_go_fixed_array_typedef_aliases_with_canonical_unsigned_types() {
+    let root = env::temp_dir().join(format!(
+        "c_go_fixed_array_typedef_alias_{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join("include")).unwrap();
+    fs::write(
+        root.join("include/Api.hpp"),
+        r#"
+        typedef unsigned int ReasonCode;
+        typedef unsigned int SubscribeId;
+
+        struct Info {
+            ReasonCode codes[4];
+            SubscribeId ids[4];
+        };
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("config.yaml"),
+        r#"
+version: 1
+input:
+  headers:
+    - include/Api.hpp
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(root.join("config.yaml")).unwrap();
+    let ctx = generator::prepare_config(&PipelineContext::new(config)).unwrap();
+    let parsed = parser::parse(&ctx).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
+    let header = render_header(&ctx, &ir);
+    let go = render_go_structs(&ctx, &ir).unwrap();
+    let go_text = go
+        .iter()
+        .map(|file| file.contents.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(header.contains("unsigned int* cgowrap_Info_GetCodes(const InfoHandle* self);"));
+    assert!(header.contains("void cgowrap_Info_SetCodes(InfoHandle* self, unsigned int* value);"));
+    assert!(header.contains("unsigned int* cgowrap_Info_GetIds(const InfoHandle* self);"));
+    assert!(header.contains("void cgowrap_Info_SetIds(InfoHandle* self, unsigned int* value);"));
+
+    assert!(go_text.contains("func (i *Info) GetCodes() ([]uint32, error) {"));
+    assert!(go_text.contains("func (i *Info) SetCodes(value []uint32) {"));
+    assert!(go_text.contains("func (i *Info) GetIds() ([]uint32, error) {"));
+    assert!(go_text.contains("func (i *Info) SetIds(value []uint32) {"));
+    assert!(go_text.contains("cSlice := (*[4]C.uint32_t)(unsafe.Pointer(raw))"));
+    assert!(go_text.contains("(*C.uint32_t)(unsafe.Pointer(&value[0]))"));
+    assert!(go_text.contains("result := make([]uint32, 4)"));
+}
+
+#[test]
+fn renders_ipron_reason_and_subscribe_fixed_arrays_as_uint32_slices() {
+    let root = env::temp_dir().join(format!(
+        "c_go_ipron_fixed_array_typedef_alias_{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join("include")).unwrap();
+    fs::write(
+        root.join("include/Api.hpp"),
+        r#"
+        typedef unsigned int tRsnCode;
+        typedef unsigned int tSubscribeId;
+        #define DI_SUBSCR_SCRID_MAX 16
+
+        struct STATTNTM_INFO {
+            tRsnCode NrdRsnCodeSet[64];
+            tRsnCode AcwRsnCodeSet[64];
+        };
+
+        struct SUBSCRIBE_CODE {
+            tSubscribeId SubScrIds[DI_SUBSCR_SCRID_MAX];
+        };
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("config.yaml"),
+        r#"
+version: 1
+input:
+  headers:
+    - include/Api.hpp
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(root.join("config.yaml")).unwrap();
+    let ctx = generator::prepare_config(&PipelineContext::new(config)).unwrap();
+    let parsed = parser::parse(&ctx).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
+    let header = render_header(&ctx, &ir);
+    let go = render_go_structs(&ctx, &ir).unwrap();
+    let go_text = go
+        .iter()
+        .map(|file| file.contents.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(header.contains(
+        "unsigned int* cgowrap_STATTNTM_INFO_GetNrdRsnCodeSet(const STATTNTM_INFOHandle* self);"
+    ));
+    assert!(header.contains(
+        "void cgowrap_STATTNTM_INFO_SetNrdRsnCodeSet(STATTNTM_INFOHandle* self, unsigned int* value);"
+    ));
+    assert!(header.contains(
+        "unsigned int* cgowrap_STATTNTM_INFO_GetAcwRsnCodeSet(const STATTNTM_INFOHandle* self);"
+    ));
+    assert!(header.contains(
+        "void cgowrap_STATTNTM_INFO_SetAcwRsnCodeSet(STATTNTM_INFOHandle* self, unsigned int* value);"
+    ));
+    assert!(header.contains(
+        "unsigned int* cgowrap_SUBSCRIBE_CODE_GetSubScrIds(const SUBSCRIBE_CODEHandle* self);"
+    ));
+    assert!(header.contains(
+        "void cgowrap_SUBSCRIBE_CODE_SetSubScrIds(SUBSCRIBE_CODEHandle* self, unsigned int* value);"
+    ));
+
+    assert!(go_text.contains("func (s *STATTNTMINFO) GetNrdRsnCodeSet() ([]uint32, error) {"));
+    assert!(go_text.contains("func (s *STATTNTMINFO) SetNrdRsnCodeSet(value []uint32) {"));
+    assert!(go_text.contains("func (s *STATTNTMINFO) GetAcwRsnCodeSet() ([]uint32, error) {"));
+    assert!(go_text.contains("func (s *STATTNTMINFO) SetAcwRsnCodeSet(value []uint32) {"));
+    assert!(go_text.contains("func (s *SUBSCRIBECODE) GetSubScrIds() ([]uint32, error) {"));
+    assert!(go_text.contains("func (s *SUBSCRIBECODE) SetSubScrIds(value []uint32) {"));
+    assert!(go_text.contains("cSlice := (*[64]C.uint32_t)(unsafe.Pointer(raw))"));
+    assert!(go_text.contains("cSlice := (*[16]C.uint32_t)(unsafe.Pointer(raw))"));
+    assert!(go_text.contains("(*C.uint32_t)(unsafe.Pointer(&value[0]))"));
 }

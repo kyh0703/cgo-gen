@@ -83,3 +83,150 @@ naming:
     assert_eq!(method.returns.cpp_type, "ResultCode");
     assert_eq!(method.params[1].ty.cpp_type, "ModuleId");
 }
+
+#[test]
+fn resolves_typedef_alias_fixed_array_fields_via_canonical_types() {
+    let root = temp_dir("fixed_array");
+    fs::write(
+        root.join("include/Api.hpp"),
+        r#"
+        typedef unsigned int ReasonCode;
+
+        struct Info {
+            ReasonCode codes[4];
+        };
+        "#,
+    )
+    .unwrap();
+
+    let config_path = root.join("cppgo-wrap.yaml");
+    fs::write(
+        &config_path,
+        r#"
+version: 1
+input:
+  headers:
+    - include/Api.hpp
+output:
+  dir: out
+naming:
+  prefix: cgowrap
+  style: preserve
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(&config_path).unwrap();
+    let ctx = PipelineContext::new(config);
+    let parsed = parser::parse(&ctx).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
+
+    let getter = ir
+        .functions
+        .iter()
+        .find(|item| item.cpp_name == "Info::GetCodes")
+        .unwrap();
+    assert_eq!(getter.returns.cpp_type, "ReasonCode[4]");
+    assert_eq!(getter.returns.c_type, "unsigned int*");
+
+    let setter = ir
+        .functions
+        .iter()
+        .find(|item| item.cpp_name == "Info::SetCodes")
+        .unwrap();
+    assert_eq!(setter.params[1].ty.cpp_type, "ReasonCode[4]");
+    assert_eq!(setter.params[1].ty.c_type, "unsigned int*");
+}
+
+#[test]
+fn resolves_ipron_reason_and_subscribe_fixed_arrays_via_canonical_unsigned_types() {
+    let root = temp_dir("ipron_fixed_array");
+    fs::write(
+        root.join("include/Api.hpp"),
+        r#"
+        typedef unsigned int tRsnCode;
+        typedef unsigned int tSubscribeId;
+        #define DI_SUBSCR_SCRID_MAX 16
+
+        struct STATTNTM_INFO {
+            tRsnCode NrdRsnCodeSet[64];
+            tRsnCode AcwRsnCodeSet[64];
+        };
+
+        struct SUBSCRIBE_CODE {
+            tSubscribeId SubScrIds[DI_SUBSCR_SCRID_MAX];
+        };
+        "#,
+    )
+    .unwrap();
+
+    let config_path = root.join("cppgo-wrap.yaml");
+    fs::write(
+        &config_path,
+        r#"
+version: 1
+input:
+  headers:
+    - include/Api.hpp
+output:
+  dir: out
+naming:
+  prefix: cgowrap
+  style: preserve
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(&config_path).unwrap();
+    let ctx = PipelineContext::new(config);
+    let parsed = parser::parse(&ctx).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
+
+    let nrd_getter = ir
+        .functions
+        .iter()
+        .find(|item| item.cpp_name == "STATTNTM_INFO::GetNrdRsnCodeSet")
+        .unwrap();
+    assert_eq!(nrd_getter.returns.cpp_type, "tRsnCode[64]");
+    assert_eq!(nrd_getter.returns.c_type, "unsigned int*");
+
+    let nrd_setter = ir
+        .functions
+        .iter()
+        .find(|item| item.cpp_name == "STATTNTM_INFO::SetNrdRsnCodeSet")
+        .unwrap();
+    assert_eq!(nrd_setter.params[1].ty.cpp_type, "tRsnCode[64]");
+    assert_eq!(nrd_setter.params[1].ty.c_type, "unsigned int*");
+
+    let acw_getter = ir
+        .functions
+        .iter()
+        .find(|item| item.cpp_name == "STATTNTM_INFO::GetAcwRsnCodeSet")
+        .unwrap();
+    assert_eq!(acw_getter.returns.cpp_type, "tRsnCode[64]");
+    assert_eq!(acw_getter.returns.c_type, "unsigned int*");
+
+    let acw_setter = ir
+        .functions
+        .iter()
+        .find(|item| item.cpp_name == "STATTNTM_INFO::SetAcwRsnCodeSet")
+        .unwrap();
+    assert_eq!(acw_setter.params[1].ty.cpp_type, "tRsnCode[64]");
+    assert_eq!(acw_setter.params[1].ty.c_type, "unsigned int*");
+
+    let subscribe_getter = ir
+        .functions
+        .iter()
+        .find(|item| item.cpp_name == "SUBSCRIBE_CODE::GetSubScrIds")
+        .unwrap();
+    assert_eq!(subscribe_getter.returns.cpp_type, "tSubscribeId[16]");
+    assert_eq!(subscribe_getter.returns.c_type, "unsigned int*");
+
+    let subscribe_setter = ir
+        .functions
+        .iter()
+        .find(|item| item.cpp_name == "SUBSCRIBE_CODE::SetSubScrIds")
+        .unwrap();
+    assert_eq!(subscribe_setter.params[1].ty.cpp_type, "tSubscribeId[16]");
+    assert_eq!(subscribe_setter.params[1].ty.c_type, "unsigned int*");
+}

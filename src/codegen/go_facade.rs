@@ -736,8 +736,7 @@ fn render_callback_call_prep(
             }
             IrTypeKind::FixedArray => {
                 let c_name = format!("cArg{index}");
-                let elem = ir_norm::fixed_array_elem_type(&param.ty.cpp_type).unwrap_or("int32_t");
-                let c_elem = primitive_cgo_cast_type(elem).unwrap_or("C.int32_t");
+                let c_elem = fixed_array_cgo_elem_type(&param.ty);
                 prep.setup_lines.push(format!(
                     "{c_name} := (*{c_elem})(unsafe.Pointer(&{}[0]))",
                     param.name
@@ -818,8 +817,7 @@ fn render_call_prep(config: &PipelineContext, params: &[&ir_norm::IrParam]) -> R
             }
             IrTypeKind::FixedArray => {
                 let c_name = format!("cArg{index}");
-                let elem = ir_norm::fixed_array_elem_type(&param.ty.cpp_type).unwrap_or("int32_t");
-                let c_elem = primitive_cgo_cast_type(elem).unwrap_or("C.int32_t");
+                let c_elem = fixed_array_cgo_elem_type(&param.ty);
                 prep.setup_lines.push(format!(
                     "{c_name} := (*{c_elem})(unsafe.Pointer(&{}[0]))",
                     param.name
@@ -1119,10 +1117,7 @@ fn go_param_type(config: &PipelineContext, ty: &IrType) -> Option<String> {
     match ty.kind {
         IrTypeKind::String | IrTypeKind::CString => Some("string".to_string()),
         IrTypeKind::FixedByteArray => Some("[]byte".to_string()),
-        IrTypeKind::FixedArray => {
-            let elem = ir_norm::fixed_array_elem_type(&ty.cpp_type)?;
-            Some(format!("[]{}", primitive_go_type(elem).unwrap_or("int32")))
-        }
+        IrTypeKind::FixedArray => Some(format!("[]{}", fixed_array_go_elem_type(ty))),
         IrTypeKind::FixedModelArray => {
             let go_name = go_model_return_type(config, ty);
             Some(format!("[]*{go_name}"))
@@ -1213,11 +1208,7 @@ fn go_return_sig(config: &PipelineContext, ty: &IrType) -> String {
         IrTypeKind::Void => String::new(),
         IrTypeKind::String | IrTypeKind::CString => "(string, error)".to_string(),
         IrTypeKind::FixedByteArray => "([]byte, error)".to_string(),
-        IrTypeKind::FixedArray => {
-            let elem = ir_norm::fixed_array_elem_type(&ty.cpp_type).unwrap_or("int32_t");
-            let go_elem = primitive_go_type(elem).unwrap_or("int32");
-            format!("([]{go_elem}, error)")
-        }
+        IrTypeKind::FixedArray => format!("([]{}, error)", fixed_array_go_elem_type(ty)),
         IrTypeKind::FixedModelArray => {
             let go_name = go_model_return_type(config, ty);
             format!("([]*{go_name}, error)")
@@ -1298,9 +1289,8 @@ fn render_go_call_return(
         }
         IrTypeKind::FixedArray => {
             let n = ir_norm::fixed_array_length(&ty.cpp_type).unwrap_or(0);
-            let elem = ir_norm::fixed_array_elem_type(&ty.cpp_type).unwrap_or("int32_t");
-            let go_elem = primitive_go_type(elem).unwrap_or("int32");
-            let c_elem = primitive_cgo_cast_type(elem).unwrap_or("C.int32_t");
+            let go_elem = fixed_array_go_elem_type(ty);
+            let c_elem = fixed_array_cgo_elem_type(ty);
             let mut out = format!("    raw := {call}\n");
             out.push_str(&indented_lines(post_call_lines));
             out.push_str(&format!(
@@ -1438,6 +1428,24 @@ fn primitive_cgo_cast_type(value: &str) -> Option<&'static str> {
         "size_t" => Some("C.size_t"),
         _ => None,
     }
+}
+
+fn fixed_array_c_elem_type(ty: &IrType) -> &str {
+    ty.c_type.trim().trim_end_matches('*').trim()
+}
+
+fn fixed_array_go_elem_type(ty: &IrType) -> &'static str {
+    ir_norm::fixed_array_elem_type(&ty.cpp_type)
+        .and_then(primitive_go_type)
+        .or_else(|| primitive_go_type(fixed_array_c_elem_type(ty)))
+        .unwrap_or("int32")
+}
+
+fn fixed_array_cgo_elem_type(ty: &IrType) -> &'static str {
+    ir_norm::fixed_array_elem_type(&ty.cpp_type)
+        .and_then(primitive_cgo_cast_type)
+        .or_else(|| primitive_cgo_cast_type(fixed_array_c_elem_type(ty)))
+        .unwrap_or("C.int32_t")
 }
 
 fn normalize_type_key(value: &str) -> String {
