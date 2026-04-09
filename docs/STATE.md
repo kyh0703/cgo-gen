@@ -1,8 +1,8 @@
 ---
 current_version: v2
 migration_status: finalized
-active_plan: none
-workspace_status: reset-ready
+active_plan: stable-model-handle-normalization
+workspace_status: in-progress
 ---
 # Documentation State
 
@@ -11,8 +11,8 @@ workspace_status: reset-ready
 - `current_version: v2`
 - active versioned docs live under `docs/v2/`
 - documentation index lives in `AGENTS.md`
-- `active_plan: none`
-- `workspace_status: reset-ready`
+- `active_plan: stable-model-handle-normalization`
+- `workspace_status: in-progress`
 
 ## Canonical layout
 
@@ -28,4 +28,4 @@ workspace_status: reset-ready
 - legacy compatibility folders were removed after migration
 - unresolved mapping notes live in `docs/v2/research/unresolved-mapping-notes.md`
 - previous working documents are treated as archived history
-- current workspace is ready to start the next plan
+- current workspace tracks `docs/v2/plans/stable-model-handle-normalization.md`

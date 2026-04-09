@@ -121,12 +121,18 @@ pub fn normalize(ctx: &PipelineContext, api: &ParsedApi) -> Result<IrModule> {
         .filter(|class| class.is_abstract)
         .map(|class| cpp_qualified(&class.namespace, &class.name))
         .collect::<BTreeSet<_>>();
+    let preferred_model_aliases = if ctx.preferred_model_aliases.is_empty() {
+        collect_preferred_model_aliases(api)
+    } else {
+        ctx.preferred_model_aliases.clone()
+    };
 
     for class in &api.classes {
-        let handle_name = format!("{}Handle", flatten_cpp_name(&class.namespace, &class.name));
+        let qualified = cpp_qualified(&class.namespace, &class.name);
+        let handle_name = stable_class_handle_name(&qualified, &preferred_model_aliases);
         opaque_types.push(OpaqueType {
             name: handle_name.clone(),
-            cpp_type: cpp_qualified(&class.namespace, &class.name),
+            cpp_type: qualified.clone(),
         });
         functions.extend(normalize_class(
             config,
@@ -145,8 +151,7 @@ pub fn normalize(ctx: &PipelineContext, api: &ParsedApi) -> Result<IrModule> {
             &abstract_types,
             &callback_names,
             &mut skipped_declarations,
-        )?
-        {
+        )? {
             functions.push(function);
         }
     }
@@ -222,6 +227,127 @@ fn collect_referenced_opaque_types(opaque_types: &mut Vec<OpaqueType>, functions
             known.insert(handle.clone());
         }
     }
+}
+
+pub fn collect_preferred_model_aliases(api: &ParsedApi) -> BTreeMap<String, String> {
+    let mut aliases = BTreeMap::new();
+
+    for class in &api.classes {
+        for field in &class.fields {
+            record_preferred_model_alias(&mut aliases, &field.ty, &field.canonical_ty);
+        }
+        for constructor in &class.constructors {
+            for param in &constructor.params {
+                record_preferred_model_alias(&mut aliases, &param.ty, &param.canonical_ty);
+            }
+        }
+        for method in &class.methods {
+            record_preferred_model_alias(
+                &mut aliases,
+                &method.return_type,
+                &method.return_canonical_type,
+            );
+            for param in &method.params {
+                record_preferred_model_alias(&mut aliases, &param.ty, &param.canonical_ty);
+            }
+        }
+    }
+
+    for function in &api.functions {
+        record_preferred_model_alias(
+            &mut aliases,
+            &function.return_type,
+            &function.return_canonical_type,
+        );
+        for param in &function.params {
+            record_preferred_model_alias(&mut aliases, &param.ty, &param.canonical_ty);
+        }
+    }
+
+    for callback in &api.callbacks {
+        record_preferred_model_alias(
+            &mut aliases,
+            &callback.return_type,
+            &callback.return_canonical_type,
+        );
+        for param in &callback.params {
+            record_preferred_model_alias(&mut aliases, &param.ty, &param.canonical_ty);
+        }
+    }
+
+    aliases
+}
+
+fn record_preferred_model_alias(
+    aliases: &mut BTreeMap<String, String>,
+    display_type: &str,
+    canonical_type: &str,
+) {
+    let Some(display_base) = model_alias_base_type(display_type) else {
+        return;
+    };
+    let Some(canonical_base) = model_alias_base_type(canonical_type) else {
+        return;
+    };
+    if display_base == canonical_base {
+        return;
+    }
+
+    let preferred = preferred_model_base_name(&display_base, &canonical_base);
+    if preferred == canonical_base {
+        return;
+    }
+
+    aliases.entry(canonical_base).or_insert(preferred);
+}
+
+fn stable_class_handle_name(
+    qualified_cpp_type: &str,
+    aliases: &BTreeMap<String, String>,
+) -> String {
+    let preferred = aliases
+        .get(qualified_cpp_type)
+        .cloned()
+        .unwrap_or_else(|| qualified_cpp_type.to_string());
+    stable_model_handle_name(&preferred)
+}
+
+fn preferred_model_base_name(display_base: &str, canonical_base: &str) -> String {
+    if !display_base.starts_with('_') {
+        display_base.to_string()
+    } else if !canonical_base.starts_with('_') {
+        canonical_base.to_string()
+    } else {
+        display_base.to_string()
+    }
+}
+
+fn stable_model_handle_name(base_cpp_type: &str) -> String {
+    format!("{}Handle", flatten_qualified_cpp_name(base_cpp_type))
+}
+
+fn model_alias_base_type(value: &str) -> Option<String> {
+    let trimmed = value.trim().trim_start_matches("const ").trim();
+    if let Some((elem, _)) = parse_array_type(trimmed) {
+        return model_alias_base_type(elem);
+    }
+
+    let base = base_model_cpp_type(trimmed);
+    if base.is_empty()
+        || base == "void"
+        || base.contains('<')
+        || base.starts_with("std::")
+        || base.starts_with("struct ")
+        || base.contains('[')
+        || base.contains(']')
+        || base.contains('(')
+        || base.contains(')')
+        || is_supported_primitive(&base)
+    {
+        return None;
+    }
+
+    Some(base)
 }
 
 fn assign_unique_function_symbols(functions: &mut [IrFunction]) {
@@ -367,16 +493,16 @@ fn normalize_class(
     });
 
     for method in &class.methods {
-            if let Some(function) = normalize_method(
-                config,
-                class,
-                handle_name,
-                method,
-                abstract_types,
-                callback_names,
-                skipped_declarations,
-            )? {
-                functions.push(function);
+        if let Some(function) = normalize_method(
+            config,
+            class,
+            handle_name,
+            method,
+            abstract_types,
+            callback_names,
+            skipped_declarations,
+        )? {
+            functions.push(function);
         }
     }
 
@@ -776,9 +902,31 @@ fn normalize_callback(
 
 fn sanitize_go_param_name(name: &str) -> String {
     const GO_KEYWORDS: &[&str] = &[
-        "break", "case", "chan", "const", "continue", "default", "defer", "else", "fallthrough",
-        "for", "func", "go", "goto", "if", "import", "interface", "map", "package", "range",
-        "return", "select", "struct", "switch", "type", "var",
+        "break",
+        "case",
+        "chan",
+        "const",
+        "continue",
+        "default",
+        "defer",
+        "else",
+        "fallthrough",
+        "for",
+        "func",
+        "go",
+        "goto",
+        "if",
+        "import",
+        "interface",
+        "map",
+        "package",
+        "range",
+        "return",
+        "select",
+        "struct",
+        "switch",
+        "type",
+        "var",
     ];
     if GO_KEYWORDS.contains(&name) {
         format!("{name}_")
@@ -985,9 +1133,7 @@ fn normalize_type_with_canonical(
                 // of `iKey`) while keeping the original handle/c_type for the C API.
                 if matches!(
                     canonical_ty.kind,
-                    IrTypeKind::ModelValue
-                        | IrTypeKind::ModelReference
-                        | IrTypeKind::ModelPointer
+                    IrTypeKind::ModelValue | IrTypeKind::ModelReference | IrTypeKind::ModelPointer
                 ) {
                     return Ok(IrType {
                         cpp_type: canonical_trimmed.to_string(),
@@ -1580,6 +1726,10 @@ pub fn byte_array_length(cpp_type: &str) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+
+    use crate::parser::{CppFunction, CppParam, ParsedApi};
+
     #[test]
     fn normalizes_struct_timeval_pointer_and_reference_as_external_structs() {
         let callback_names = BTreeSet::new();
@@ -1836,5 +1986,51 @@ mod tests {
         assert_eq!(fixed_array_elem_type("bool[8]"), Some("bool"));
         assert_eq!(fixed_array_elem_type("float[3]"), Some("float"));
         assert_eq!(fixed_array_elem_type("int"), None);
+    }
+
+    #[test]
+    fn collects_public_aliases_for_underscore_backed_models() {
+        let api = ParsedApi {
+            headers: vec![],
+            classes: vec![],
+            enums: vec![],
+            callbacks: vec![],
+            functions: vec![CppFunction {
+                source_header: PathBuf::from("DcsHistory.h"),
+                namespace: vec![],
+                name: "GetLowData".to_string(),
+                return_type: "DCSHISTORY*".to_string(),
+                return_canonical_type: "_DCSHISTORY*".to_string(),
+                return_is_function_pointer: false,
+                params: vec![CppParam {
+                    name: "item".to_string(),
+                    ty: "DCS_HIST_ITEM*".to_string(),
+                    canonical_ty: "_DCS_HIST_ITEM*".to_string(),
+                    is_function_pointer: false,
+                    callback_typedef: None,
+                }],
+            }],
+        };
+
+        let aliases = collect_preferred_model_aliases(&api);
+        assert_eq!(aliases.get("_DCSHISTORY"), Some(&"DCSHISTORY".to_string()));
+        assert_eq!(
+            aliases.get("_DCS_HIST_ITEM"),
+            Some(&"DCS_HIST_ITEM".to_string())
+        );
+    }
+
+    #[test]
+    fn stable_class_handle_name_prefers_public_alias_when_available() {
+        let aliases = BTreeMap::from([("_DCSHISTORY".to_string(), "DCSHISTORY".to_string())]);
+
+        assert_eq!(
+            stable_class_handle_name("_DCSHISTORY", &aliases),
+            "DCSHISTORYHandle"
+        );
+        assert_eq!(
+            stable_class_handle_name("_DCS_HIST_ITEM", &aliases),
+            "_DCS_HIST_ITEMHandle"
+        );
     }
 }
