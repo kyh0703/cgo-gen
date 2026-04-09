@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 
 use crate::{
     analysis::model_analysis,
@@ -570,7 +570,7 @@ fn render_callable_body(function: &IrFunction, target: &str, arg_start: usize) -
         }
         IrTypeKind::FixedModelArray => {
             let handle = function.returns.handle.as_deref().unwrap_or("");
-            let base_cpp = base_model_cpp_type(&function.returns.cpp_type);
+            let base_cpp = fixed_model_array_elem_cpp_type(&function.returns.cpp_type);
             let n = ir::fixed_array_length(&function.returns.cpp_type).unwrap_or(0);
             format!(
                 "    auto _tmp = {target}({args});\n    {handle}** _r = static_cast<{handle}**>(std::malloc({n} * sizeof({handle}*)));\n    if (_r == nullptr) {{\n        return nullptr;\n    }}\n    for (int _i = 0; _i < {n}; _i++) {{\n        _r[_i] = reinterpret_cast<{handle}*>(new {base_cpp}(_tmp[_i]));\n    }}\n    return _r;\n"
@@ -605,7 +605,7 @@ fn render_field_getter_body(function: &IrFunction, receiver: &str, field_name: &
         }
         IrTypeKind::FixedModelArray => {
             let handle = function.returns.handle.as_deref().unwrap_or("");
-            let base_cpp = base_model_cpp_type(&function.returns.cpp_type);
+            let base_cpp = fixed_model_array_elem_cpp_type(&function.returns.cpp_type);
             let n = ir::fixed_array_length(&function.returns.cpp_type).unwrap_or(0);
             format!(
                 "    {handle}** _r = static_cast<{handle}**>(std::malloc({n} * sizeof({handle}*)));\n    if (_r == nullptr) {{\n        return nullptr;\n    }}\n    for (int _i = 0; _i < {n}; _i++) {{\n        _r[_i] = reinterpret_cast<{handle}*>(new {base_cpp}({receiver}->{field_name}[_i]));\n    }}\n    return _r;\n"
@@ -642,7 +642,7 @@ fn render_field_setter_body(function: &IrFunction, receiver: &str, field_name: &
             "    if (value == nullptr) {{\n        return;\n    }}\n    std::memcpy({receiver}->{field_name}, value, sizeof({receiver}->{field_name}));\n"
         ),
         IrTypeKind::FixedModelArray => {
-            let base_cpp = base_model_cpp_type(&value_param.ty.cpp_type);
+            let base_cpp = fixed_model_array_elem_cpp_type(&value_param.ty.cpp_type);
             let n = ir::fixed_array_length(&value_param.ty.cpp_type).unwrap_or(0);
             format!(
                 "    if (value == nullptr) {{\n        return;\n    }}\n    for (int _i = 0; _i < {n}; _i++) {{\n        {receiver}->{field_name}[_i] = *reinterpret_cast<{base_cpp}*>(value[_i]);\n    }}\n"
@@ -978,6 +978,12 @@ fn base_model_cpp_type(value: &str) -> String {
         .trim_end_matches('*')
         .trim()
         .to_string()
+}
+
+fn fixed_model_array_elem_cpp_type(cpp_type: &str) -> String {
+    ir::fixed_array_elem_type(cpp_type)
+        .map(base_model_cpp_type)
+        .unwrap_or_else(|| base_model_cpp_type(cpp_type))
 }
 
 fn ir_uses_struct_timeval(ir: &IrModule) -> bool {

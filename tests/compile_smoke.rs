@@ -7,7 +7,12 @@ use std::{
 use cgo_gen::{config::Config, generator, ir, parser, pipeline::context::PipelineContext};
 
 fn temp_output_dir(label: &str) -> PathBuf {
-    let mut path = env::temp_dir();
+    let mut path = env::var_os("CGO_GEN_TEST_TEMP_ROOT")
+        .map(PathBuf::from)
+        .or_else(|| {
+            env::var_os("CARGO_TARGET_DIR").map(|dir| PathBuf::from(dir).join("compile_smoke"))
+        })
+        .unwrap_or_else(env::temp_dir);
     path.push(format!(
         "c_go_compile_test_{}_{}",
         label,
@@ -359,6 +364,109 @@ output:
             if (std::strcmp(cgowrap_Agent_GetLoginId(agent), "agent-1001") != 0) return 11;
             if (std::strcmp(cgowrap_Agent_GetPbxLoginId(agent), "101") != 0) return 12;
             cgowrap_Agent_delete(agent);
+            return 0;
+        }}
+        "#,
+            config.output.header
+        ),
+    )
+    .unwrap();
+
+    let binary = config.output.dir.join("smoke");
+    let compiler = pick_clangxx();
+    let status = Command::new(&compiler)
+        .current_dir(&root)
+        .arg("-std=c++17")
+        .arg(config.output_dir().join(&config.output.source))
+        .arg(&smoke_cpp)
+        .arg("-I")
+        .arg(config.output_dir())
+        .arg("-I")
+        .arg(root.join("include"))
+        .arg("-o")
+        .arg(&binary)
+        .status()
+        .unwrap();
+
+    assert!(status.success(), "generated wrapper did not compile/link");
+
+    let status = Command::new(&binary).status().unwrap();
+    assert!(status.success(), "generated smoke binary failed: {status}");
+}
+
+#[test]
+fn generated_wrapper_compiles_for_fixed_model_array_field_accessors() {
+    let root = temp_output_dir("fixed_model_array_fields");
+    fs::create_dir_all(root.join("include")).unwrap();
+    fs::write(
+        root.join("include/Holder.hpp"),
+        r#"
+        struct Item {
+            int value;
+        };
+
+        struct Holder {
+            Item items[3];
+        };
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("config.yaml"),
+        r#"
+version: 1
+input:
+  headers:
+    - include/Holder.hpp
+output:
+  dir: out
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(root.join("config.yaml")).unwrap();
+    let ctx = generator::prepare_config(&PipelineContext::new(config.clone())).unwrap();
+    let parsed = parser::parse(&ctx).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
+    generator::generate(&ctx, &ir, true, &Default::default()).unwrap();
+
+    let smoke_cpp = config.output.dir.join("smoke.cpp");
+    fs::write(
+        &smoke_cpp,
+        format!(
+            r#"
+        #include "{}"
+        int main() {{
+            HolderHandle* holder = cgowrap_Holder_new();
+            if (holder == nullptr) return 10;
+
+            ItemHandle* item0 = cgowrap_Item_new();
+            ItemHandle* item1 = cgowrap_Item_new();
+            ItemHandle* item2 = cgowrap_Item_new();
+            if (item0 == nullptr || item1 == nullptr || item2 == nullptr) return 11;
+
+            cgowrap_Item_SetValue(item0, 10);
+            cgowrap_Item_SetValue(item1, 20);
+            cgowrap_Item_SetValue(item2, 30);
+
+            ItemHandle* items[3] = {{ item0, item1, item2 }};
+            cgowrap_Holder_SetItems(holder, items);
+
+            ItemHandle** roundtrip = cgowrap_Holder_GetItems(holder);
+            if (roundtrip == nullptr) return 12;
+            if (cgowrap_Item_GetValue(roundtrip[0]) != 10) return 13;
+            if (cgowrap_Item_GetValue(roundtrip[1]) != 20) return 14;
+            if (cgowrap_Item_GetValue(roundtrip[2]) != 30) return 15;
+
+            cgowrap_Item_delete(roundtrip[0]);
+            cgowrap_Item_delete(roundtrip[1]);
+            cgowrap_Item_delete(roundtrip[2]);
+            free(roundtrip);
+
+            cgowrap_Item_delete(item0);
+            cgowrap_Item_delete(item1);
+            cgowrap_Item_delete(item2);
+            cgowrap_Holder_delete(holder);
             return 0;
         }}
         "#,
