@@ -142,10 +142,23 @@ fn collect_facade_classes<'a>(
         let Some(destructor) = destructors.get(owner).copied() else {
             continue;
         };
+        let handle_name = constructor
+            .and_then(|ctor| ctor.returns.handle.clone())
+            .or_else(|| {
+                destructor
+                    .params
+                    .first()
+                    .and_then(|param| param.ty.handle.clone())
+            })
+            .unwrap_or_else(|| format!("{}Handle", flatten_qualified_cpp_name(owner)));
+        let go_name = handle_name
+            .strip_suffix("Handle")
+            .map(go_export_name)
+            .unwrap_or_else(|| go_export_name(&leaf_cpp_name(owner)));
 
         classes.push(AnalyzedFacadeClass {
-            go_name: go_export_name(&leaf_cpp_name(owner)),
-            handle_name: format!("{}Handle", flatten_qualified_cpp_name(owner)),
+            go_name,
+            handle_name,
             constructor,
             destructor,
             methods,
@@ -256,14 +269,26 @@ fn render_go_facade_file(
         out.push('\n');
     }
 
-    let covered_handles = classes
+    let mut covered_handles = classes
         .iter()
         .map(|class| class.handle_name.as_str())
         .collect::<std::collections::BTreeSet<_>>();
+    covered_handles.extend(
+        config
+            .known_model_projections
+            .iter()
+            .map(|projection| projection.handle_name.as_str()),
+    );
     // Also track Go names used by primary class wrappers to catch cases where a typedef
     // and a class produce the same Go name (e.g. _LegId class → "LegId", LegId opaque → "LegId").
-    let covered_go_names: BTreeSet<String> =
+    let mut covered_go_names: BTreeSet<String> =
         classes.iter().map(|class| class.go_name.clone()).collect();
+    covered_go_names.extend(
+        config
+            .known_model_projections
+            .iter()
+            .map(|projection| projection.go_name.clone()),
+    );
 
     for opaque in opaque_types {
         if covered_handles.contains(opaque.name.as_str()) {
@@ -2127,6 +2152,95 @@ mod tests {
     }
 
     #[test]
+    fn class_wrapper_uses_stable_handle_from_constructor_instead_of_owner_name() {
+        use crate::codegen::ir_norm::{IrModule, OpaqueType, SupportMetadata};
+
+        let handle_name = "DCSHISTORYHandle".to_string();
+        let self_param = IrParam {
+            name: "self".to_string(),
+            ty: IrType {
+                kind: IrTypeKind::Opaque,
+                cpp_type: "_DCSHISTORY*".to_string(),
+                c_type: "DCSHISTORYHandle*".to_string(),
+                handle: Some(handle_name.clone()),
+            },
+        };
+        let ir = IrModule {
+            version: 1,
+            module: "cgowrap".to_string(),
+            source_headers: vec![],
+            opaque_types: vec![OpaqueType {
+                name: handle_name.clone(),
+                cpp_type: "_DCSHISTORY".to_string(),
+            }],
+            functions: vec![
+                IrFunction {
+                    name: "cgowrap__DCSHISTORY_new".to_string(),
+                    kind: IrFunctionKind::Constructor,
+                    cpp_name: "_DCSHISTORY".to_string(),
+                    method_of: Some(handle_name.clone()),
+                    owner_cpp_type: Some("_DCSHISTORY".to_string()),
+                    is_const: None,
+                    field_accessor: None,
+                    returns: IrType {
+                        kind: IrTypeKind::Opaque,
+                        cpp_type: "_DCSHISTORY".to_string(),
+                        c_type: "DCSHISTORYHandle*".to_string(),
+                        handle: Some(handle_name.clone()),
+                    },
+                    params: vec![],
+                },
+                IrFunction {
+                    name: "cgowrap__DCSHISTORY_delete".to_string(),
+                    kind: IrFunctionKind::Destructor,
+                    cpp_name: "~_DCSHISTORY".to_string(),
+                    method_of: Some(handle_name.clone()),
+                    owner_cpp_type: Some("_DCSHISTORY".to_string()),
+                    is_const: None,
+                    field_accessor: None,
+                    returns: IrType {
+                        kind: IrTypeKind::Void,
+                        cpp_type: "void".to_string(),
+                        c_type: "void".to_string(),
+                        handle: None,
+                    },
+                    params: vec![self_param.clone()],
+                },
+                IrFunction {
+                    name: "cgowrap__DCSHISTORY_GetCount".to_string(),
+                    kind: IrFunctionKind::Method,
+                    cpp_name: "_DCSHISTORY::GetCount".to_string(),
+                    method_of: Some(handle_name.clone()),
+                    owner_cpp_type: Some("_DCSHISTORY".to_string()),
+                    is_const: Some(true),
+                    field_accessor: None,
+                    returns: primitive_type("int", "int"),
+                    params: vec![self_param],
+                },
+            ],
+            enums: vec![],
+            callbacks: vec![],
+            support: SupportMetadata {
+                parser_backend: "test".to_string(),
+                notes: vec![],
+                skipped_declarations: vec![],
+            },
+        };
+
+        let files = render_go_facade(
+            &PipelineContext::new(Config::default()),
+            &ir,
+            &BTreeSet::new(),
+        )
+        .unwrap();
+        let contents = &files[0].contents;
+        assert!(
+            contents.contains("type DCSHISTORY struct {\n    ptr *C.DCSHISTORYHandle\n}"),
+            "expected stable public handle in class wrapper but got:\n{contents}"
+        );
+    }
+
+    #[test]
     fn model_view_return_is_supported() {
         let ty = model_type(IrTypeKind::ModelView, "ThingModel");
         let config = test_context_with_known_model();
@@ -2211,6 +2325,225 @@ mod tests {
         assert!(
             code.contains("&ThingModel{ptr: raw}"),
             "expected &ThingModel{{ptr: raw}} but got:\n{code}"
+        );
+    }
+
+    #[test]
+    fn known_model_projection_prevents_duplicate_opaque_and_underscore_handle_casts() {
+        use crate::codegen::ir_norm::{IrModule, OpaqueType, SupportMetadata};
+
+        let config = PipelineContext::new(Config::default()).with_known_model_projections(vec![
+            ModelProjection {
+                cpp_type: "_DCSHISTORY".to_string(),
+                handle_name: "DCSHISTORYHandle".to_string(),
+                go_name: "DCSHISTORY".to_string(),
+                constructor_symbol: "cgowrap__DCSHISTORY_new".to_string(),
+                destructor_symbol: "cgowrap__DCSHISTORY_delete".to_string(),
+                fields: vec![],
+            },
+        ]);
+        let self_param = IrParam {
+            name: "self".to_string(),
+            ty: IrType {
+                kind: IrTypeKind::Opaque,
+                cpp_type: "Api*".to_string(),
+                c_type: "ApiHandle*".to_string(),
+                handle: Some("ApiHandle".to_string()),
+            },
+        };
+        let ir = IrModule {
+            version: 1,
+            module: "cgowrap".to_string(),
+            source_headers: vec![],
+            opaque_types: vec![
+                OpaqueType {
+                    name: "ApiHandle".to_string(),
+                    cpp_type: "Api".to_string(),
+                },
+                OpaqueType {
+                    name: "DCSHISTORYHandle".to_string(),
+                    cpp_type: "_DCSHISTORY".to_string(),
+                },
+            ],
+            functions: vec![
+                IrFunction {
+                    name: "cgowrap_Api_new".to_string(),
+                    kind: IrFunctionKind::Constructor,
+                    cpp_name: "Api".to_string(),
+                    method_of: Some("ApiHandle".to_string()),
+                    owner_cpp_type: Some("Api".to_string()),
+                    is_const: None,
+                    field_accessor: None,
+                    returns: IrType {
+                        kind: IrTypeKind::Opaque,
+                        cpp_type: "Api*".to_string(),
+                        c_type: "ApiHandle*".to_string(),
+                        handle: Some("ApiHandle".to_string()),
+                    },
+                    params: vec![],
+                },
+                IrFunction {
+                    name: "cgowrap_Api_delete".to_string(),
+                    kind: IrFunctionKind::Destructor,
+                    cpp_name: "~Api".to_string(),
+                    method_of: Some("ApiHandle".to_string()),
+                    owner_cpp_type: Some("Api".to_string()),
+                    is_const: None,
+                    field_accessor: None,
+                    returns: IrType {
+                        kind: IrTypeKind::Void,
+                        cpp_type: "void".to_string(),
+                        c_type: "void".to_string(),
+                        handle: None,
+                    },
+                    params: vec![self_param.clone()],
+                },
+                IrFunction {
+                    name: "cgowrap_Api_GetHistory".to_string(),
+                    kind: IrFunctionKind::Method,
+                    cpp_name: "Api::GetHistory".to_string(),
+                    method_of: Some("ApiHandle".to_string()),
+                    owner_cpp_type: Some("Api".to_string()),
+                    is_const: Some(true),
+                    field_accessor: None,
+                    returns: IrType {
+                        kind: IrTypeKind::ModelView,
+                        cpp_type: "_DCSHISTORY*".to_string(),
+                        c_type: "DCSHISTORYHandle*".to_string(),
+                        handle: Some("DCSHISTORYHandle".to_string()),
+                    },
+                    params: vec![self_param],
+                },
+            ],
+            enums: vec![],
+            callbacks: vec![],
+            support: SupportMetadata {
+                parser_backend: "test".to_string(),
+                notes: vec![],
+                skipped_declarations: vec![],
+            },
+        };
+
+        let files = render_go_facade(&config, &ir, &BTreeSet::new()).unwrap();
+        let contents = &files[0].contents;
+        assert!(
+            !contents.contains("type DCSHISTORY struct {"),
+            "unexpected duplicate DCSHISTORY wrapper:\n{contents}"
+        );
+        assert!(
+            contents.contains("return &DCSHISTORY{ptr: raw}"),
+            "expected direct stable-handle wrap but got:\n{contents}"
+        );
+        assert!(
+            !contents.contains("_DCSHISTORYHandle"),
+            "unexpected underscore handle cast in Go facade:\n{contents}"
+        );
+    }
+
+    #[test]
+    fn opaque_model_view_return_emits_unknown_opaque_wrapper() {
+        use crate::codegen::ir_norm::{IrModule, OpaqueType, SupportMetadata};
+
+        let self_param = IrParam {
+            name: "self".to_string(),
+            ty: IrType {
+                kind: IrTypeKind::Opaque,
+                cpp_type: "Api*".to_string(),
+                c_type: "ApiHandle*".to_string(),
+                handle: Some("ApiHandle".to_string()),
+            },
+        };
+        let ir = IrModule {
+            version: 1,
+            module: "cgowrap".to_string(),
+            source_headers: vec![],
+            opaque_types: vec![
+                OpaqueType {
+                    name: "ApiHandle".to_string(),
+                    cpp_type: "Api".to_string(),
+                },
+                OpaqueType {
+                    name: "CIosShmHandle".to_string(),
+                    cpp_type: "CIosShm".to_string(),
+                },
+            ],
+            functions: vec![
+                IrFunction {
+                    name: "cgowrap_Api_new".to_string(),
+                    kind: IrFunctionKind::Constructor,
+                    cpp_name: "Api".to_string(),
+                    method_of: Some("ApiHandle".to_string()),
+                    owner_cpp_type: Some("Api".to_string()),
+                    is_const: None,
+                    field_accessor: None,
+                    returns: IrType {
+                        kind: IrTypeKind::Opaque,
+                        cpp_type: "Api*".to_string(),
+                        c_type: "ApiHandle*".to_string(),
+                        handle: Some("ApiHandle".to_string()),
+                    },
+                    params: vec![],
+                },
+                IrFunction {
+                    name: "cgowrap_Api_delete".to_string(),
+                    kind: IrFunctionKind::Destructor,
+                    cpp_name: "~Api".to_string(),
+                    method_of: Some("ApiHandle".to_string()),
+                    owner_cpp_type: Some("Api".to_string()),
+                    is_const: None,
+                    field_accessor: None,
+                    returns: IrType {
+                        kind: IrTypeKind::Void,
+                        cpp_type: "void".to_string(),
+                        c_type: "void".to_string(),
+                        handle: None,
+                    },
+                    params: vec![self_param.clone()],
+                },
+                IrFunction {
+                    name: "cgowrap_Api_GetIos".to_string(),
+                    kind: IrFunctionKind::Method,
+                    cpp_name: "Api::GetIos".to_string(),
+                    method_of: Some("ApiHandle".to_string()),
+                    owner_cpp_type: Some("Api".to_string()),
+                    is_const: Some(true),
+                    field_accessor: None,
+                    returns: IrType {
+                        kind: IrTypeKind::ModelView,
+                        cpp_type: "CIosShm*".to_string(),
+                        c_type: "CIosShmHandle*".to_string(),
+                        handle: Some("CIosShmHandle".to_string()),
+                    },
+                    params: vec![self_param],
+                },
+            ],
+            enums: vec![],
+            callbacks: vec![],
+            support: SupportMetadata {
+                parser_backend: "test".to_string(),
+                notes: vec![],
+                skipped_declarations: vec![],
+            },
+        };
+
+        let files = render_go_facade(
+            &PipelineContext::new(Config::default()),
+            &ir,
+            &BTreeSet::new(),
+        )
+        .unwrap();
+        let contents = &files[0].contents;
+        assert!(
+            contents.contains("type CIosShm struct {\n    ptr *C.CIosShmHandle\n}"),
+            "expected opaque CIosShm wrapper but got:\n{contents}"
+        );
+        assert!(
+            contents.contains("func (a *Api) GetIos() *CIosShm"),
+            "expected GetIos method signature but got:\n{contents}"
+        );
+        assert!(
+            contents.contains("return &CIosShm{ptr: raw}"),
+            "expected opaque CIosShm wrap pattern but got:\n{contents}"
         );
     }
 

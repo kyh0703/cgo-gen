@@ -227,9 +227,7 @@ output:
     let build_flags = fs::read_to_string(root.join("out/build_flags.go")).unwrap();
     assert!(build_flags.contains("package out"));
     assert!(build_flags.contains("#cgo CFLAGS: -I${SRCDIR}"));
-    assert!(
-        build_flags.contains("#cgo CXXFLAGS: -I${SRCDIR} -I${SDK_INCLUDE} -DMODE=1 -std=c++20")
-    );
+    assert!(build_flags.contains("#cgo CXXFLAGS: -I${SRCDIR} -I${SDK_INCLUDE} -DMODE=1 -std=c++20"));
     assert!(!build_flags.contains("sdk/include"));
     assert!(!build_flags.contains("-Winvalid-offsetof"));
     assert!(!build_flags.contains("-Wall"));
@@ -282,11 +280,8 @@ output:
     assert!(
         header.contains("unsigned int cgowrap_Counter_GetTotalCount(const CounterHandle* self);")
     );
-    assert!(
-        header.contains(
-            "void cgowrap_Counter_SetTotalCount(CounterHandle* self, unsigned int value);"
-        )
-    );
+    assert!(header
+        .contains("void cgowrap_Counter_SetTotalCount(CounterHandle* self, unsigned int value);"));
     assert!(header.contains("int cgowrap_Counter_GetReadOnly(const CounterHandle* self);"));
     assert!(!header.contains("cgowrap_Counter_SetReadOnly"));
 
@@ -297,27 +292,75 @@ output:
 
     assert_eq!(go.len(), 1);
     assert!(go[0].contents.contains("type Counter struct {"));
-    assert!(
-        go[0]
-            .contents
-            .contains("func (c *Counter) GetValue() int {")
-    );
-    assert!(
-        go[0]
-            .contents
-            .contains("func (c *Counter) SetValue(value int) {")
-    );
-    assert!(
-        go[0]
-            .contents
-            .contains("func (c *Counter) GetTotalCount() uint32 {")
-    );
-    assert!(
-        go[0]
-            .contents
-            .contains("func (c *Counter) SetTotalCount(value uint32) {")
-    );
+    assert!(go[0]
+        .contents
+        .contains("func (c *Counter) GetValue() int {"));
+    assert!(go[0]
+        .contents
+        .contains("func (c *Counter) SetValue(value int) {"));
+    assert!(go[0]
+        .contents
+        .contains("func (c *Counter) GetTotalCount() uint32 {"));
+    assert!(go[0]
+        .contents
+        .contains("func (c *Counter) SetTotalCount(value uint32) {"));
     assert!(!go[0].contents.contains("SetReadOnly("));
+}
+
+#[test]
+fn struct_fixed_model_array_fields_render_element_type_in_source() {
+    let root = env::temp_dir().join(format!(
+        "c_go_fixed_model_array_fields_{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join("include")).unwrap();
+    fs::write(
+        root.join("include/Holder.hpp"),
+        r#"
+        struct Item {
+            int value;
+        };
+
+        struct Holder {
+            Item items[3];
+        };
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("config.yaml"),
+        r#"
+version: 1
+input:
+  headers:
+    - include/Holder.hpp
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(root.join("config.yaml")).unwrap();
+    let ctx = generator::prepare_config(&PipelineContext::new(config)).unwrap();
+    let parsed = parser::parse(&ctx).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
+    let header = render_header(&ctx, &ir);
+    let source = render_source(&ctx, &ir);
+
+    assert!(header.contains("ItemHandle** cgowrap_Holder_GetItems(const HolderHandle* self);"));
+    assert!(
+        header.contains("void cgowrap_Holder_SetItems(HolderHandle* self, ItemHandle** value);")
+    );
+
+    assert!(source.contains(
+        "_r[_i] = reinterpret_cast<ItemHandle*>(new Item(reinterpret_cast<const Holder*>(self)->items[_i]));"
+    ));
+    assert!(source.contains(
+        "reinterpret_cast<Holder*>(self)->items[_i] = *reinterpret_cast<Item*>(value[_i]);"
+    ));
+    assert!(!source.contains("new Item[3](reinterpret_cast<const Holder*>(self)->items[_i])"));
+    assert!(!source.contains("reinterpret_cast<Item[3]*>(value[_i])"));
 }
 
 #[test]

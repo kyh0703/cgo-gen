@@ -1,4 +1,4 @@
-use std::{ops::Deref, path::PathBuf};
+use std::{collections::BTreeMap, ops::Deref, path::PathBuf};
 
 use anyhow::Result;
 
@@ -8,6 +8,7 @@ use crate::{config::Config, domain::model_projection::ModelProjection};
 pub struct PipelineContext {
     pub config: Config,
     pub known_model_types: Vec<String>,
+    pub preferred_model_aliases: BTreeMap<String, String>,
     pub known_model_projections: Vec<ModelProjection>,
     pub go_module: Option<String>,
     pub target_header: Option<PathBuf>,
@@ -21,6 +22,7 @@ impl PipelineContext {
             raw_clang_args,
             config,
             known_model_types: vec![],
+            preferred_model_aliases: BTreeMap::new(),
             known_model_projections: vec![],
             go_module: None,
             target_header: None,
@@ -47,6 +49,14 @@ impl PipelineContext {
         self
     }
 
+    pub fn with_preferred_model_aliases(
+        mut self,
+        preferred_model_aliases: BTreeMap<String, String>,
+    ) -> Self {
+        self.preferred_model_aliases = preferred_model_aliases;
+        self
+    }
+
     pub fn with_known_model_projections(
         mut self,
         known_model_projections: Vec<ModelProjection>,
@@ -61,6 +71,7 @@ impl PipelineContext {
         PipelineContext {
             config: scoped_config,
             known_model_types: self.known_model_types.clone(),
+            preferred_model_aliases: self.preferred_model_aliases.clone(),
             known_model_projections: self.known_model_projections.clone(),
             go_module: self.go_module.clone(),
             target_header: Some(header),
