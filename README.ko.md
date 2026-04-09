@@ -123,7 +123,7 @@ make -C examples/simple-go-struct run
 
 현재 제공하는 서브커맨드는 세 가지입니다.
 
-- `generate --config <path> [--dump-ir]`
+- `generate --config <path> [--dump-ir] [--go-module <module-path>]`
 - `ir --config <path> [--output <path>] [--format yaml|json]`
 - `check --config <path>`
 
@@ -141,6 +141,7 @@ make -C examples/simple-go-struct run
 | `input.translation_units` | 명시적 parse entry입니다. 값이 있으면 파싱은 `input.headers`보다 이 목록을 우선 사용합니다. |
 | `input.compile_commands` | `compile_commands.json`에서 compiler flag와 source TU 후보를 읽어옵니다. |
 | `input.clang_args` | 추가 libclang 인자입니다. 상대 `-I...`, `-I <path>`, `-isystem` 경로는 config 파일 기준으로 해석됩니다. `$VAR`, `$(VAR)`, `${VAR}` 형태의 exact env token도 현재 OS environment에서 확장합니다. include root가 필요하면 여기에 `-I...` 토큰으로 직접 적습니다. |
+| `input.ldflags` | 생성되는 `build_flags.go`의 `#cgo LDFLAGS`에 그대로 전달할 링커 플래그입니다. 상대 `-L<path>`, `-L <path>` 경로는 config 파일 기준으로 해석되며, 값 안에 포함된 `${VAR}`, `$(VAR)` env token도 확장됩니다. |
 | `input.allow_diagnostics` | `true`면 libclang diagnostic이 발생한 translation unit을 실패 대신 skip 합니다. |
 | `output.dir` | 출력 디렉터리입니다. 상대 경로는 config 파일 기준입니다. |
 | `output.header` / `output.source` / `output.ir` | 출력 파일명 override입니다. 기본값을 유지하면 single-header 모드에서 `<header_stem>_wrapper.*`로 자동 추론됩니다. |
@@ -189,10 +190,11 @@ naming:
 - free function
 - non-template class
 - constructor / destructor
-- 단순 public method
-- generated wrapper 이름에서의 deterministic overload disambiguation
+- deterministic overload disambiguation을 포함한 public method
+- 지원되는 필드 타입에 대한 public struct field accessor (get / set)
 - `int32`, `uint64`, `size_t` 같은 primitive / fixed-width alias
 - `const char*`, `char*`, `std::string`, `std::string_view`
+- fixed-size C 배열: `unsigned char[N]` (바이트 배열), primitive element 타입의 `T[N]`, model element 타입의 `Model[N]`
 - Go 쪽 primitive pointer / reference write-back
 - 지원되는 API에 연결된 named callback typedef
 - `struct timeval*`, `struct timeval&`
@@ -224,6 +226,8 @@ naming:
 ## External Go Package Metadata
 
 `generate --go-module <module-path>`를 사용하면 `output.dir` 아래에 `go.mod`와 `build_flags.go`를 함께 생성합니다.
-`build_flags.go`는 항상 `#cgo CFLAGS: -I${SRCDIR}`를 포함합니다.
-`#cgo CXXFLAGS`는 raw `input.clang_args`에서 `-I/-isystem`, `-D`, `-std=...`만 반영합니다.
-`input.include_dirs`, `compile_commands.json`, linker flags는 metadata export에 그대로 사용하지 않습니다.
+
+- `build_flags.go`는 항상 `#cgo CFLAGS: -I${SRCDIR}`를 포함합니다.
+- `#cgo CXXFLAGS`는 raw `input.clang_args`에서 `-I/-isystem`, `-D`, `-std=...`만 반영합니다.
+- `input.ldflags`가 설정된 경우 `build_flags.go`에 `#cgo LDFLAGS` 줄도 함께 생성됩니다. 설정하지 않으면 해당 줄은 생략되며 downstream 소비자가 직접 관리합니다.
+- `input.include_dirs`와 `compile_commands.json`은 package metadata export에 직접 사용되지 않습니다.

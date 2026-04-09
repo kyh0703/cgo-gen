@@ -142,7 +142,7 @@ Use `generate --go-module <module-path>` when you want `output.dir` to behave li
 - `build_flags.go` exports `#cgo CXXFLAGS` from raw `input.clang_args` only
 - exported `CXXFLAGS` keep authored spellings where possible and allow only `-I/-isystem`, `-D`, and `-std=...`
 - `input.include_dirs` is ignored for exported package metadata
-- linker flags are not generated; downstream consumers still own `#cgo LDFLAGS`
+- when `input.ldflags` is set, `build_flags.go` also emits `#cgo LDFLAGS` with those values; otherwise the line is omitted and the downstream consumer owns linker flags
 
 ## Configuration Reference
 
@@ -158,6 +158,7 @@ All supported user-facing knobs are YAML config keys. Relative paths are resolve
 | `input.translation_units` | Explicit parse entries. When present, parsing prefers these over `input.headers`. |
 | `input.compile_commands` | Imports compiler flags and source translation unit discovery from `compile_commands.json`. |
 | `input.clang_args` | Extra libclang arguments. Relative `-I...`, `-I <path>`, and `-isystem` paths are resolved from the config file directory. Exact env tokens in the forms `$VAR`, `$(VAR)`, and `${VAR}` are also expanded from the current OS environment. Author include roots here with explicit `-I...` tokens. |
+| `input.ldflags` | Linker flags forwarded into the generated `build_flags.go` as `#cgo LDFLAGS`. Relative `-L<path>` and `-L <path>` entries are resolved from the config file directory. Embedded env tokens such as `${VAR}` and `$(VAR)` inside flag values are also expanded. |
 | `input.allow_diagnostics` | If `true`, translation units that produce libclang diagnostics are skipped instead of failing the run. |
 | `output.dir` | Output directory. Relative paths resolve from the config file directory. |
 | `output.header` / `output.source` / `output.ir` | Optional output filenames. When left at defaults in single-header mode, names are inferred as `<header_stem>_wrapper.*`. |
@@ -206,10 +207,11 @@ When the external project already has a good `compile_commands.json`, prefer tha
 - free functions
 - non-template classes
 - constructors and destructors
-- simple public methods
-- deterministic overload disambiguation in generated wrapper names
+- public methods with deterministic overload disambiguation in generated wrapper names
+- public struct field accessors (get and set) for supported field types
 - primitive scalars and fixed-width aliases such as `int32`, `uint64`, and `size_t`
 - `const char*`, `char*`, `std::string`, and `std::string_view`
+- fixed-size C arrays: `unsigned char[N]` (byte arrays), `T[N]` for primitive element types, and `Model[N]` for model element types
 - primitive pointer and reference write-back in Go
 - named callback typedefs used by supported APIs
 - `struct timeval*` and `struct timeval&`
