@@ -248,7 +248,7 @@ fn render_build_flags(ctx: &PipelineContext) -> String {
 fn exported_cxxflags(ctx: &PipelineContext) -> Vec<String> {
     let mut flags = vec!["-I${SRCDIR}".to_string()];
     let mut index = 0;
-    let raw = ctx.raw_clang_args();
+    let raw = &ctx.input.clang_args;
 
     while index < raw.len() {
         let arg = &raw[index];

@@ -110,7 +110,7 @@ fn resolve_ldflags(flags: &mut Vec<String>, base_dir: &Path) -> Result<()> {
         if arg == "-L" {
             resolved.push(arg.clone());
             if let Some(value) = flags.get(index + 1) {
-                let expanded = expand_env_vars_in_str(value)?;
+                let expanded = expand_env_vars_in_str(value, "input.ldflags")?;
                 resolved.push(resolve_relative_clang_path_arg(&expanded, base_dir)?);
                 index += 2;
                 continue;
@@ -120,7 +120,7 @@ fn resolve_ldflags(flags: &mut Vec<String>, base_dir: &Path) -> Result<()> {
         }
 
         if let Some(value) = arg.strip_prefix("-L") {
-            let expanded = expand_env_vars_in_str(value)?;
+            let expanded = expand_env_vars_in_str(value, "input.ldflags")?;
             resolved.push(format!(
                 "-L{}",
                 resolve_relative_clang_path_arg(&expanded, base_dir)?
@@ -129,7 +129,7 @@ fn resolve_ldflags(flags: &mut Vec<String>, base_dir: &Path) -> Result<()> {
             continue;
         }
 
-        resolved.push(expand_env_vars_in_str(arg)?);
+        resolved.push(expand_env_vars_in_str(arg, "input.ldflags")?);
         index += 1;
     }
 
@@ -173,7 +173,7 @@ fn resolve_relative_clang_args(args: &mut Vec<String>, base_dir: &Path) -> Resul
             continue;
         }
 
-        resolved.push(expand_clang_arg_env_token(arg)?.unwrap_or_else(|| arg.clone()));
+        resolved.push(expand_env_vars_in_str(arg, "input.clang_args")?);
         index += 1;
     }
 
@@ -182,7 +182,7 @@ fn resolve_relative_clang_args(args: &mut Vec<String>, base_dir: &Path) -> Resul
 }
 
 fn resolve_relative_clang_path_arg(value: &str, base_dir: &Path) -> Result<String> {
-    let value = expand_clang_arg_env_token(value)?.unwrap_or_else(|| value.to_string());
+    let value = expand_env_vars_in_str(value, "input.clang_args")?;
 
     if value.is_empty() {
         return Ok(String::new());
@@ -199,24 +199,8 @@ fn resolve_relative_clang_path_arg(value: &str, base_dir: &Path) -> Result<Strin
     ))
 }
 
-fn expand_clang_arg_env_token(value: &str) -> Result<Option<String>> {
-    let Some(name) = parse_clang_arg_env_name(value) else {
-        return Ok(None);
-    };
-
-    match env::var(name) {
-        Ok(expanded) => Ok(Some(expanded)),
-        Err(env::VarError::NotPresent) => {
-            bail!("environment variable `{name}` referenced in input.clang_args is not set")
-        }
-        Err(env::VarError::NotUnicode(_)) => bail!(
-            "environment variable `{name}` referenced in input.clang_args is not valid unicode"
-        ),
-    }
-}
-
-/// `-L${ICORE_BASE}/lib` 처럼 문자열 중간에 포함된 `${VAR}` / `$(VAR)` 패턴을 모두 치환합니다.
-fn expand_env_vars_in_str(value: &str) -> Result<String> {
+/// `-L${ICORE_BASE}/lib` 처럼 문자열 중간에 포함된 `${VAR}` / `$(VAR)` / `$VAR` 패턴을 모두 치환합니다.
+fn expand_env_vars_in_str(value: &str, context: &str) -> Result<String> {
     let mut result = String::with_capacity(value.len());
     let mut rest = value;
 
@@ -236,10 +220,10 @@ fn expand_env_vars_in_str(value: &str) -> Result<String> {
                             continue;
                         }
                         Err(env::VarError::NotPresent) => {
-                            bail!("environment variable `{name}` referenced in input.ldflags is not set")
+                            bail!("environment variable `{name}` referenced in {context} is not set")
                         }
                         Err(env::VarError::NotUnicode(_)) => bail!(
-                            "environment variable `{name}` referenced in input.ldflags is not valid unicode"
+                            "environment variable `{name}` referenced in {context} is not valid unicode"
                         ),
                     }
                 }
@@ -258,12 +242,36 @@ fn expand_env_vars_in_str(value: &str) -> Result<String> {
                             continue;
                         }
                         Err(env::VarError::NotPresent) => {
-                            bail!("environment variable `{name}` referenced in input.ldflags is not set")
+                            bail!("environment variable `{name}` referenced in {context} is not set")
                         }
                         Err(env::VarError::NotUnicode(_)) => bail!(
-                            "environment variable `{name}` referenced in input.ldflags is not valid unicode"
+                            "environment variable `{name}` referenced in {context} is not valid unicode"
                         ),
                     }
+                }
+            }
+        }
+
+        // $VAR 형식
+        {
+            let tail = &rest[1..];
+            let name_len = tail
+                .find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                .unwrap_or(tail.len());
+            let name = &tail[..name_len];
+            if valid_env_name(name).is_some() {
+                match env::var(name) {
+                    Ok(val) => {
+                        result.push_str(&val);
+                        rest = &tail[name_len..];
+                        continue;
+                    }
+                    Err(env::VarError::NotPresent) => {
+                        bail!("environment variable `{name}` referenced in {context} is not set")
+                    }
+                    Err(env::VarError::NotUnicode(_)) => bail!(
+                        "environment variable `{name}` referenced in {context} is not valid unicode"
+                    ),
                 }
             }
         }
@@ -275,26 +283,6 @@ fn expand_env_vars_in_str(value: &str) -> Result<String> {
 
     result.push_str(rest);
     Ok(result)
-}
-
-fn parse_clang_arg_env_name(value: &str) -> Option<&str> {
-    let remainder = value.strip_prefix('$')?;
-
-    if let Some(name) = remainder
-        .strip_prefix('{')
-        .and_then(|inner| inner.strip_suffix('}'))
-    {
-        return valid_env_name(name);
-    }
-
-    if let Some(name) = remainder
-        .strip_prefix('(')
-        .and_then(|inner| inner.strip_suffix(')'))
-    {
-        return valid_env_name(name);
-    }
-
-    valid_env_name(remainder)
 }
 
 fn valid_env_name(value: &str) -> Option<&str> {
