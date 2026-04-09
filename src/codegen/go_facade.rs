@@ -1384,7 +1384,7 @@ fn primitive_go_type(value: &str) -> Option<&'static str> {
         "uint8" | "uint8_t" | "unsignedchar" => Some("uint8"),
         "uint16" | "uint16_t" | "unsignedshort" => Some("uint16"),
         "uint32" | "uint32_t" | "unsignedint" | "unsigned" => Some("uint32"),
-        "int" => Some("int"),
+        "int" => Some("int32"),
         "uint64" | "uint64_t" | "unsignedlong" | "unsignedlonglong" => Some("uint64"),
         "size_t" => Some("uintptr"),
         _ => None,

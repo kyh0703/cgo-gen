@@ -774,13 +774,26 @@ fn normalize_callback(
     })
 }
 
+fn sanitize_go_param_name(name: &str) -> String {
+    const GO_KEYWORDS: &[&str] = &[
+        "break", "case", "chan", "const", "continue", "default", "defer", "else", "fallthrough",
+        "for", "func", "go", "goto", "if", "import", "interface", "map", "package", "range",
+        "return", "select", "struct", "switch", "type", "var",
+    ];
+    if GO_KEYWORDS.contains(&name) {
+        format!("{name}_")
+    } else {
+        name.to_string()
+    }
+}
+
 fn normalize_param(
     config: &Config,
     param: &CppParam,
     callback_names: &BTreeSet<String>,
 ) -> Result<IrParam> {
     Ok(IrParam {
-        name: param.name.clone(),
+        name: sanitize_go_param_name(&param.name),
         ty: normalize_type_with_canonical(config, &param.ty, &param.canonical_ty, callback_names)?,
     })
 }
