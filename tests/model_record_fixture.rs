@@ -89,20 +89,22 @@ fn parses_and_generates_wrapper_for_model_record_fixture() {
     assert!(header.contains("const char* gen_DataRecord_GetName(DataRecordHandle* self);"));
     assert!(header.contains("uint32_t gen_DataRecord_GetTenantId(DataRecordHandle* self);"));
     assert!(header.contains("uint32_t gen_DataRecord_GetNodeId(DataRecordHandle* self);"));
-    assert!(header.contains(
-        "void gen_DataRecord_SetSlot1_Val(DataRecordHandle* self, const char* sVal);"
-    ));
-    assert!(header.contains(
-        "const char* gen_DataRecord_GetSlot2_Val(DataRecordHandle* self);"
-    ));
-    assert!(header.contains(
-        "void gen_DataRecord_SetSlot3_Act(DataRecordHandle* self, uint16_t nAct);"
-    ));
+    assert!(
+        header.contains(
+            "void gen_DataRecord_SetSlot1_Val(DataRecordHandle* self, const char* sVal);"
+        )
+    );
+    assert!(header.contains("const char* gen_DataRecord_GetSlot2_Val(DataRecordHandle* self);"));
+    assert!(
+        header.contains("void gen_DataRecord_SetSlot3_Act(DataRecordHandle* self, uint16_t nAct);")
+    );
     assert!(source.contains("return reinterpret_cast<DataRecordHandle*>(new DataRecord());"));
     assert!(source.contains("reinterpret_cast<DataRecord*>(self)->SetSlot1_Val(sVal);"));
     assert!(source.contains("reinterpret_cast<DataRecord*>(self)->GetSlot2_Val()"));
     assert!(
-        source.contains("reinterpret_cast<DataRecord*>(self)->SetSlot3_Act(static_cast<uint16>(nAct));")
+        source.contains(
+            "reinterpret_cast<DataRecord*>(self)->SetSlot3_Act(static_cast<uint16>(nAct));"
+        )
     );
     assert!(go_structs.contains("type DataRecord struct {"));
     assert!(go_structs.contains("func NewDataRecord() (*DataRecord, error) {"));

@@ -567,10 +567,9 @@ naming:
     )
     .unwrap();
 
-    let prepared = generator::prepare_config(&PipelineContext::new(
-        Config::load(&config_path).unwrap(),
-    ))
-    .unwrap();
+    let prepared =
+        generator::prepare_config(&PipelineContext::new(Config::load(&config_path).unwrap()))
+            .unwrap();
     let facade_header = prepared
         .input
         .headers
@@ -593,14 +592,18 @@ naming:
             .contains("bool cgowrap_Api_GetThing(ApiHandle* self, int id, ThingModelHandle* out);")
     );
     assert!(raw_source.contains("cgowrap_Api_GetThing"));
-    assert!(raw_header.contains(
-        "bool cgowrap_Api_SaveUnknown(ApiHandle* self, UnknownThingHandle* value);"
-    ));
+    assert!(
+        raw_header
+            .contains("bool cgowrap_Api_SaveUnknown(ApiHandle* self, UnknownThingHandle* value);")
+    );
     assert!(raw_source.contains("cgowrap_Api_SaveUnknown"));
     assert!(raw_source.contains("*reinterpret_cast<UnknownThing*>(value)"));
-    assert!(!ir.support.skipped_declarations.iter().any(|item| {
-        item.cpp_name == "Api::SaveUnknown"
-    }));
+    assert!(
+        !ir.support
+            .skipped_declarations
+            .iter()
+            .any(|item| { item.cpp_name == "Api::SaveUnknown" })
+    );
     assert!(ir_yaml.contains("cpp_name: Api::SaveUnknown"));
     assert!(ir_yaml.contains("cpp_name: Api::BuildUnknown"));
     assert!(go_facade.contains("func (a *Api) Count() int32 {"));
@@ -861,7 +864,10 @@ naming:
     assert!(go_model.contains("ptr *C.WebhookRecordHandle"));
     assert!(go_model.contains("func (w *WebhookRecord) SetUrl(value string) {"));
 
-    assert!(go_facade.contains("func (a *ApiClient) NextWebhook(pos *int32, out *WebhookRecord) bool {"));
+    assert!(
+        go_facade
+            .contains("func (a *ApiClient) NextWebhook(pos *int32, out *WebhookRecord) bool {")
+    );
     assert!(go_facade.contains("if pos == nil {"));
     assert!(go_facade.contains("panic(\"pos reference is nil\")"));
     assert!(go_facade.contains("cArg0 := C.int32_t(*pos)"));
@@ -935,10 +941,9 @@ naming:
     assert!(raw_source.contains("extern \"C\" {"));
     assert!(raw_source.contains("void go_sdk_SetEventCallback_cb0("));
     assert!(raw_source.contains("EventCallback sdk_SetEventCallback_cb0_trampoline"));
-    assert!(
-        raw_source
-            .contains("sdk_SetEventCallback(use_cb0 ? sdk_SetEventCallback_cb0_trampoline : nullptr);")
-    );
+    assert!(raw_source.contains(
+        "sdk_SetEventCallback(use_cb0 ? sdk_SetEventCallback_cb0_trampoline : nullptr);"
+    ));
 
     assert!(go_facade.contains("import \"sync\""));
     assert!(go_facade.contains(

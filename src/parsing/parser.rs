@@ -11,10 +11,7 @@ use anyhow::{Result, anyhow, bail};
 use clang_sys::*;
 use serde::Serialize;
 
-use crate::{
-    parsing::compiler,
-    pipeline::context::PipelineContext,
-};
+use crate::{parsing::compiler, pipeline::context::PipelineContext};
 
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct ParsedApi {
@@ -22,6 +19,7 @@ pub struct ParsedApi {
     pub functions: Vec<CppFunction>,
     pub classes: Vec<CppClass>,
     pub enums: Vec<CppEnum>,
+    pub macros: Vec<CppMacroConstant>,
     pub callbacks: Vec<CppCallbackTypedef>,
 }
 
@@ -106,6 +104,13 @@ pub struct CppEnumVariant {
     pub value: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct CppMacroConstant {
+    pub source_header: PathBuf,
+    pub name: String,
+    pub value: String,
+}
+
 impl ParsedApi {
     pub fn filter_to_header(&self, header: &Path) -> Self {
         Self {
@@ -128,6 +133,12 @@ impl ParsedApi {
                 .filter(|item| same_path(&item.source_header, header))
                 .cloned()
                 .collect(),
+            macros: self
+                .macros
+                .iter()
+                .filter(|item| same_path(&item.source_header, header))
+                .cloned()
+                .collect(),
             callbacks: self
                 .callbacks
                 .iter()
@@ -141,6 +152,7 @@ impl ParsedApi {
         self.functions.is_empty()
             && self.classes.is_empty()
             && self.enums.is_empty()
+            && self.macros.is_empty()
             && self.callbacks.is_empty()
     }
 }
@@ -248,6 +260,13 @@ fn dedupe_api(api: &mut ParsedApi) {
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
+    api.macros = api
+        .macros
+        .clone()
+        .into_iter()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
     api.callbacks = api
         .callbacks
         .clone()
@@ -343,6 +362,11 @@ fn collect_entity(
             if let Some(name) = enum_decl_name(cursor) {
                 api.enums
                     .push(parse_enum_with_name(cursor, namespace.to_vec(), name));
+            }
+        }
+        CXCursor_MacroDefinition => {
+            if let Some(item) = parse_macro_definition(cursor) {
+                api.macros.push(item);
             }
         }
         _ => {}
@@ -470,6 +494,25 @@ fn parse_enum_with_name(cursor: CXCursor, namespace: Vec<String>, name: String) 
         name,
         variants,
     }
+}
+
+fn parse_macro_definition(cursor: CXCursor) -> Option<CppMacroConstant> {
+    if unsafe { clang_Cursor_isMacroFunctionLike(cursor) } != 0 {
+        return None;
+    }
+
+    let name = cursor_spelling(cursor)?;
+    let source_header = normalized_cursor_file_path(cursor)?;
+    let tokens = cursor_token_spellings(cursor);
+    let name_index = tokens.iter().position(|token| token == &name)?;
+    let replacement = tokens[name_index + 1..].join("");
+    let value = normalize_macro_integer_literal(&replacement)?;
+
+    Some(CppMacroConstant {
+        source_header,
+        name,
+        value,
+    })
 }
 
 fn parse_callback_typedef(
@@ -767,6 +810,107 @@ fn cursor_spelling(cursor: CXCursor) -> Option<String> {
         None
     } else {
         Some(spelling)
+    }
+}
+
+fn cursor_token_spellings(cursor: CXCursor) -> Vec<String> {
+    unsafe {
+        let translation_unit = clang_Cursor_getTranslationUnit(cursor);
+        if translation_unit.is_null() {
+            return Vec::new();
+        }
+
+        let mut tokens = ptr::null_mut();
+        let mut token_count = 0;
+        clang_tokenize(
+            translation_unit,
+            clang_getCursorExtent(cursor),
+            &mut tokens,
+            &mut token_count,
+        );
+        if tokens.is_null() || token_count == 0 {
+            return Vec::new();
+        }
+
+        let slice = std::slice::from_raw_parts(tokens, token_count as usize);
+        let out = slice
+            .iter()
+            .map(|token| cxstring_to_string(clang_getTokenSpelling(translation_unit, *token)))
+            .collect::<Vec<_>>();
+        clang_disposeTokens(translation_unit, tokens, token_count);
+        out
+    }
+}
+
+fn normalize_macro_integer_literal(value: &str) -> Option<String> {
+    let mut normalized = value.trim();
+    if normalized.is_empty() {
+        return None;
+    }
+
+    while let Some(inner) = strip_wrapping_parentheses(normalized) {
+        normalized = inner.trim();
+    }
+
+    if is_supported_integer_literal(normalized) {
+        Some(normalized.to_string())
+    } else {
+        None
+    }
+}
+
+fn strip_wrapping_parentheses(value: &str) -> Option<&str> {
+    if !value.starts_with('(') || !value.ends_with(')') {
+        return None;
+    }
+
+    let mut depth = 0usize;
+    for (index, ch) in value.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 && index != value.len() - 1 {
+                    return None;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    (depth == 0).then(|| &value[1..value.len() - 1])
+}
+
+fn is_supported_integer_literal(value: &str) -> bool {
+    let value = value
+        .strip_prefix('+')
+        .or_else(|| value.strip_prefix('-'))
+        .unwrap_or(value);
+    if value.is_empty() {
+        return false;
+    }
+
+    let digits_end = value
+        .char_indices()
+        .rfind(|(_, ch)| !matches!(ch, 'u' | 'U' | 'l' | 'L'))
+        .map(|(index, ch)| index + ch.len_utf8())
+        .unwrap_or(0);
+    let (digits, suffix) = value.split_at(digits_end);
+    if digits.is_empty()
+        || suffix
+            .chars()
+            .any(|ch| !matches!(ch, 'u' | 'U' | 'l' | 'L'))
+    {
+        return false;
+    }
+
+    if let Some(hex) = digits
+        .strip_prefix("0x")
+        .or_else(|| digits.strip_prefix("0X"))
+    {
+        !hex.is_empty() && hex.chars().all(|ch| ch.is_ascii_hexdigit())
+    } else {
+        digits.chars().all(|ch| ch.is_ascii_digit())
     }
 }
 

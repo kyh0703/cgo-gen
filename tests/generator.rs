@@ -35,7 +35,11 @@ fn renders_unified_go_wrapper() {
     let go = render_go_structs(&ctx, &ir).unwrap();
     assert_eq!(go.len(), 1);
     assert!(go[0].contents.contains("type FooBar struct {"));
-    assert!(go[0].contents.contains("func Add(lhs int32, rhs int32) int32 {"));
+    assert!(
+        go[0]
+            .contents
+            .contains("func Add(lhs int32, rhs int32) int32 {")
+    );
 }
 
 #[test]
@@ -127,6 +131,79 @@ output:
 }
 
 #[test]
+fn renders_standalone_integer_macros_as_go_constants() {
+    let root = std::env::temp_dir().join(format!("c_go_macro_constants_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("include")).unwrap();
+    std::fs::write(
+        root.join("include/Api.hpp"),
+        r#"
+        #define RTRK_BSRMETHOD_NOTDEFINE        (0)
+        #define RTRK_BSRMETHOD_EWT              (10)
+        #define RTRK_BSRMETHOD_WAITCNT          (20)
+        #define STARTUP_PENDING                 0x01
+        #define MAKE_FLAG(value)                ((value) << 1)
+        "#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("config.yaml"),
+        r#"
+version: 1
+input:
+  headers:
+    - include/Api.hpp
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+
+    let ctx = generator::prepare_config(&PipelineContext::new(
+        Config::load(root.join("config.yaml")).unwrap(),
+    ))
+    .unwrap();
+    let parsed = parser::parse(&ctx).unwrap();
+    assert!(
+        parsed
+            .macros
+            .iter()
+            .any(|item| item.name == "RTRK_BSRMETHOD_NOTDEFINE" && item.value == "0")
+    );
+    assert!(
+        parsed
+            .macros
+            .iter()
+            .any(|item| item.name == "RTRK_BSRMETHOD_EWT" && item.value == "10")
+    );
+    assert!(
+        parsed
+            .macros
+            .iter()
+            .any(|item| item.name == "STARTUP_PENDING" && item.value == "0x01")
+    );
+    assert!(!parsed.macros.iter().any(|item| item.name == "MAKE_FLAG"));
+
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
+    assert!(
+        ir.constants
+            .iter()
+            .any(|item| item.name == "RTRK_BSRMETHOD_WAITCNT" && item.value == "20")
+    );
+
+    let go = render_go_structs(&ctx, &ir).unwrap();
+    assert_eq!(go.len(), 1);
+    let go_text = &go[0].contents;
+    assert!(go_text.contains("const ("));
+    assert!(go_text.contains("RTRK_BSRMETHOD_NOTDEFINE = 0"));
+    assert!(go_text.contains("RTRK_BSRMETHOD_EWT = 10"));
+    assert!(go_text.contains("RTRK_BSRMETHOD_WAITCNT = 20"));
+    assert!(go_text.contains("STARTUP_PENDING = 0x01"));
+    assert!(!go_text.contains("MAKE_FLAG"));
+    assert!(!go_text.contains("import \"C\""));
+}
+
+#[test]
 fn renders_typedef_enum_alias_method_params_as_value_enums() {
     let root =
         std::env::temp_dir().join(format!("c_go_typedef_enum_method_{}", std::process::id()));
@@ -192,7 +269,9 @@ output:
     assert_eq!(use_state.params[1].ty.kind, IrTypeKind::Enum);
     assert_eq!(echo_state.returns.kind, IrTypeKind::Enum);
     assert!(header.contains("bool cgowrap_Api_UseState(const ApiHandle* self, int64_t value);"));
-    assert!(header.contains("int64_t cgowrap_Api_EchoState(const ApiHandle* self, int64_t value);"));
+    assert!(
+        header.contains("int64_t cgowrap_Api_EchoState(const ApiHandle* self, int64_t value);")
+    );
     assert!(!header.contains("StateHandle"));
     assert!(!source.contains("StateHandle"));
     assert!(
@@ -368,8 +447,11 @@ output:
     assert!(
         header.contains("unsigned int cgowrap_Counter_GetTotalCount(const CounterHandle* self);")
     );
-    assert!(header
-        .contains("void cgowrap_Counter_SetTotalCount(CounterHandle* self, unsigned int value);"));
+    assert!(
+        header.contains(
+            "void cgowrap_Counter_SetTotalCount(CounterHandle* self, unsigned int value);"
+        )
+    );
     assert!(header.contains("int cgowrap_Counter_GetReadOnly(const CounterHandle* self);"));
     assert!(!header.contains("cgowrap_Counter_SetReadOnly"));
 
@@ -380,18 +462,26 @@ output:
 
     assert_eq!(go.len(), 1);
     assert!(go[0].contents.contains("type Counter struct {"));
-    assert!(go[0]
-        .contents
-        .contains("func (c *Counter) GetValue() int32 {"));
-    assert!(go[0]
-        .contents
-        .contains("func (c *Counter) SetValue(value int32) {"));
-    assert!(go[0]
-        .contents
-        .contains("func (c *Counter) GetTotalCount() uint32 {"));
-    assert!(go[0]
-        .contents
-        .contains("func (c *Counter) SetTotalCount(value uint32) {"));
+    assert!(
+        go[0]
+            .contents
+            .contains("func (c *Counter) GetValue() int32 {")
+    );
+    assert!(
+        go[0]
+            .contents
+            .contains("func (c *Counter) SetValue(value int32) {")
+    );
+    assert!(
+        go[0]
+            .contents
+            .contains("func (c *Counter) GetTotalCount() uint32 {")
+    );
+    assert!(
+        go[0]
+            .contents
+            .contains("func (c *Counter) SetTotalCount(value uint32) {")
+    );
     assert!(!go[0].contents.contains("SetReadOnly("));
 }
 

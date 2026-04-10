@@ -8,8 +8,8 @@ pub use crate::domain::kind::{FieldAccessKind, IrFunctionKind, IrTypeKind};
 use crate::{
     config::Config,
     parser::{
-        CppCallbackTypedef, CppClass, CppConstructor, CppEnum, CppField, CppFunction, CppMethod,
-        CppParam, ParsedApi,
+        CppCallbackTypedef, CppClass, CppConstructor, CppEnum, CppField, CppFunction,
+        CppMacroConstant, CppMethod, CppParam, ParsedApi,
     },
     pipeline::context::PipelineContext,
 };
@@ -22,6 +22,7 @@ pub struct IrModule {
     pub opaque_types: Vec<OpaqueType>,
     pub functions: Vec<IrFunction>,
     pub enums: Vec<IrEnum>,
+    pub constants: Vec<IrMacroConstant>,
     pub callbacks: Vec<IrCallback>,
     pub support: SupportMetadata,
 }
@@ -93,6 +94,12 @@ pub struct IrEnumVariant {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct IrMacroConstant {
+    pub name: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct SupportMetadata {
     pub parser_backend: String,
     pub notes: Vec<String>,
@@ -112,6 +119,7 @@ pub fn normalize(ctx: &PipelineContext, api: &ParsedApi) -> Result<IrModule> {
     let mut opaque_types = Vec::new();
     let mut functions = Vec::new();
     let mut enums = Vec::new();
+    let mut constants = Vec::new();
     let mut callbacks = Vec::new();
     let mut skipped_declarations = Vec::new();
     let callback_names = callback_name_set(api);
@@ -166,6 +174,9 @@ pub fn normalize(ctx: &PipelineContext, api: &ParsedApi) -> Result<IrModule> {
     for item in &api.enums {
         enums.push(normalize_enum(item));
     }
+    for item in &api.macros {
+        constants.push(normalize_macro_constant(item));
+    }
     for callback in &api.callbacks {
         callbacks.push(normalize_callback(
             config,
@@ -187,6 +198,7 @@ pub fn normalize(ctx: &PipelineContext, api: &ParsedApi) -> Result<IrModule> {
         opaque_types,
         functions,
         enums,
+        constants,
         callbacks,
         support: SupportMetadata {
             parser_backend: "libclang".to_string(),
@@ -576,8 +588,7 @@ fn normalize_struct_fields(
             &field.canonical_ty,
             callback_names,
             known_enum_types,
-        )
-        else {
+        ) else {
             continue;
         };
         if field_ty.kind != IrTypeKind::Primitive
@@ -918,6 +929,13 @@ fn normalize_enum(item: &CppEnum) -> IrEnum {
     }
 }
 
+fn normalize_macro_constant(item: &CppMacroConstant) -> IrMacroConstant {
+    IrMacroConstant {
+        name: item.name.clone(),
+        value: item.value.clone(),
+    }
+}
+
 fn normalize_callback(
     config: &Config,
     callback: &CppCallbackTypedef,
@@ -1138,8 +1156,7 @@ fn is_raw_unsafe_by_value_param_type(
         canonical,
         callback_names,
         known_enum_types,
-    )
-    {
+    ) {
         let _ = ty;
         return false;
     }
@@ -1204,7 +1221,10 @@ fn known_enum_type_name(value: &str, known_enum_types: &BTreeSet<String>) -> Opt
 
 fn enum_base_cpp_type(value: &str) -> String {
     let base = base_model_cpp_type(value);
-    base.strip_prefix("enum ").unwrap_or(&base).trim().to_string()
+    base.strip_prefix("enum ")
+        .unwrap_or(&base)
+        .trim()
+        .to_string()
 }
 
 fn enum_value_type(cpp_type: &str) -> IrType {
@@ -1897,15 +1917,14 @@ mod tests {
     #[test]
     fn rejects_by_value_type_when_only_canonical_form_is_pointer() {
         let callback_names = BTreeSet::new();
-        let result =
-            normalize_type_with_canonical(
-                &Config::default(),
-                "MTime",
-                "MTime*",
-                &callback_names,
-                &BTreeSet::new(),
-            )
-                .unwrap();
+        let result = normalize_type_with_canonical(
+            &Config::default(),
+            "MTime",
+            "MTime*",
+            &callback_names,
+            &BTreeSet::new(),
+        )
+        .unwrap();
 
         assert_eq!(result.kind, IrTypeKind::ModelValue);
         assert_eq!(result.c_type, "MTimeHandle*");
@@ -2207,6 +2226,7 @@ mod tests {
             headers: vec![],
             classes: vec![],
             enums: vec![],
+            macros: vec![],
             callbacks: vec![],
             functions: vec![CppFunction {
                 source_header: PathBuf::from("DcsHistory.h"),
