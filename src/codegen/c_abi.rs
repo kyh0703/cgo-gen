@@ -140,10 +140,12 @@ fn build_pipeline_context(
     parsed: &parser::ParsedApi,
 ) -> Result<PipelineContext> {
     let known_model_types = collect_known_model_types(parsed);
+    let known_enum_types = collect_known_enum_types(parsed);
     let preferred_model_aliases = ir::collect_preferred_model_aliases(parsed);
     let scoped = ctx
         .clone()
         .with_known_model_types(known_model_types)
+        .with_known_enum_types(known_enum_types)
         .with_preferred_model_aliases(preferred_model_aliases);
     let ir = ir::normalize(&scoped, parsed)?;
     let known_model_projections = model_analysis::collect_known_model_projections(&scoped, &ir)?;
@@ -159,6 +161,22 @@ fn collect_known_model_types(parsed: &parser::ParsedApi) -> Vec<String> {
                 class.name.clone()
             } else {
                 format!("{}::{}", class.namespace.join("::"), class.name)
+            }
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+fn collect_known_enum_types(parsed: &parser::ParsedApi) -> Vec<String> {
+    parsed
+        .enums
+        .iter()
+        .map(|item| {
+            if item.namespace.is_empty() {
+                item.name.clone()
+            } else {
+                format!("{}::{}", item.namespace.join("::"), item.name)
             }
         })
         .collect::<BTreeSet<_>>()
@@ -555,6 +573,10 @@ fn render_callable_body(function: &IrFunction, target: &str, arg_start: usize) -
     let args = call_args(function, arg_start);
     match function.returns.kind {
         IrTypeKind::Void => format!("    {}({});\n", target, args),
+        IrTypeKind::Enum => format!(
+            "    return static_cast<{}>({}({}));\n",
+            function.returns.c_type, target, args
+        ),
         IrTypeKind::String => format!(
             "    std::string result = {}({});\n    char* buffer = static_cast<char*>(std::malloc(result.size() + 1));\n    if (buffer == nullptr) {{\n        return nullptr;\n    }}\n    std::memcpy(buffer, result.c_str(), result.size() + 1);\n    return buffer;\n",
             target, args
@@ -594,6 +616,10 @@ fn render_callable_body(function: &IrFunction, target: &str, arg_start: usize) -
 
 fn render_field_getter_body(function: &IrFunction, receiver: &str, field_name: &str) -> String {
     match function.returns.kind {
+        IrTypeKind::Enum => format!(
+            "    return static_cast<{}>({receiver}->{field_name});\n",
+            function.returns.c_type
+        ),
         IrTypeKind::FixedByteArray => format!(
             "    uint8_t* _r = static_cast<uint8_t*>(std::malloc(sizeof({receiver}->{field_name})));\n    if (_r == nullptr) {{\n        return nullptr;\n    }}\n    std::memcpy(_r, {receiver}->{field_name}, sizeof({receiver}->{field_name}));\n    return _r;\n"
         ),
@@ -625,6 +651,10 @@ fn render_field_setter_body(function: &IrFunction, receiver: &str, field_name: &
         return format!("    {receiver}->{} = value;\n", field_name);
     };
     match value_param.ty.kind {
+        IrTypeKind::Enum => format!(
+            "    {receiver}->{field_name} = static_cast<{}>(value);\n",
+            value_param.ty.cpp_type
+        ),
         IrTypeKind::CString => {
             let Some(length) = char_array_length(&value_param.ty.cpp_type) else {
                 return format!("    {receiver}->{} = value;\n", field_name);
@@ -683,6 +713,7 @@ fn call_args(function: &IrFunction, start: usize) -> String {
 
 fn render_cpp_arg(ty: IrType, name: &str) -> String {
     match ty.kind {
+        IrTypeKind::Enum => format!("static_cast<{}>({name})", ty.cpp_type.trim()),
         IrTypeKind::Primitive if ty.cpp_type != ty.c_type => {
             // Use the C++ alias name only for known generator aliases (e.g. uint32, int32).
             // For unknown project-specific typedefs (e.g. iChLeg_t) that are not in scope

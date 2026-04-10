@@ -127,6 +127,92 @@ output:
 }
 
 #[test]
+fn renders_typedef_enum_alias_method_params_as_value_enums() {
+    let root =
+        std::env::temp_dir().join(format!("c_go_typedef_enum_method_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("include")).unwrap();
+    std::fs::write(
+        root.join("include/Api.hpp"),
+        r#"
+        typedef enum _State {
+            StateDisabled = 0,
+            StateEnabled = 1,
+        } State;
+
+        class Api {
+        public:
+            Api() = default;
+            ~Api() = default;
+            bool UseState(State value) const { return value == StateEnabled; }
+            State EchoState(State value) const { return value; }
+        };
+        "#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("config.yaml"),
+        r#"
+version: 1
+input:
+  headers:
+    - include/Api.hpp
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+
+    let ctx = generator::prepare_config(&PipelineContext::new(
+        Config::load(root.join("config.yaml")).unwrap(),
+    ))
+    .unwrap();
+    let parsed = parser::parse(&ctx).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
+    let header = render_header(&ctx, &ir);
+    let source = render_source(&ctx, &ir);
+    let go = render_go_structs(&ctx, &ir).unwrap();
+    let go_text = go
+        .iter()
+        .map(|file| file.contents.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let use_state = ir
+        .functions
+        .iter()
+        .find(|function| function.cpp_name == "Api::UseState")
+        .unwrap();
+    let echo_state = ir
+        .functions
+        .iter()
+        .find(|function| function.cpp_name == "Api::EchoState")
+        .unwrap();
+
+    assert_eq!(use_state.params[1].ty.kind, IrTypeKind::Enum);
+    assert_eq!(echo_state.returns.kind, IrTypeKind::Enum);
+    assert!(header.contains("bool cgowrap_Api_UseState(const ApiHandle* self, int64_t value);"));
+    assert!(header.contains("int64_t cgowrap_Api_EchoState(const ApiHandle* self, int64_t value);"));
+    assert!(!header.contains("StateHandle"));
+    assert!(!source.contains("StateHandle"));
+    assert!(
+        source.contains("UseState(static_cast<_State>(value))")
+            || source.contains("UseState(static_cast<enum _State>(value))")
+    );
+    assert!(
+        source.contains("return static_cast<int64_t>(reinterpret_cast<const Api*>(self)->EchoState(static_cast<_State>(value)));")
+            || source.contains("return static_cast<int64_t>(reinterpret_cast<const Api*>(self)->EchoState(static_cast<enum _State>(value)));")
+    );
+
+    assert!(go_text.contains("type _State int64"));
+    assert!(go_text.contains("func (a *Api) UseState(value _State) bool {"));
+    assert!(go_text.contains("result := C.cgowrap_Api_UseState(a.ptr, C.int64_t(value))"));
+    assert!(go_text.contains("func (a *Api) EchoState(value _State) _State {"));
+    assert!(go_text.contains("return _State(C.cgowrap_Api_EchoState(a.ptr, C.int64_t(value)))"));
+    assert!(!go_text.contains("type State struct {"));
+}
+
+#[test]
 fn normalizes_primitive_alias_pointer_and_reference_c_types_in_header() {
     let root =
         std::env::temp_dir().join(format!("c_go_alias_pointer_header_{}", std::process::id()));

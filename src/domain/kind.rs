@@ -9,6 +9,8 @@ pub enum IrTypeKind {
     Void,
     #[serde(rename = "primitive")]
     Primitive,
+    #[serde(rename = "enum")]
+    Enum,
     #[serde(rename = "c_string")]
     CString,
     #[serde(rename = "fixed_byte_array")]

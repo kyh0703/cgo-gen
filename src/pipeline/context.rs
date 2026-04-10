@@ -8,6 +8,7 @@ use crate::{config::Config, domain::model_projection::ModelProjection};
 pub struct PipelineContext {
     pub config: Config,
     pub known_model_types: Vec<String>,
+    pub known_enum_types: Vec<String>,
     pub preferred_model_aliases: BTreeMap<String, String>,
     pub known_model_projections: Vec<ModelProjection>,
     pub go_module: Option<String>,
@@ -22,6 +23,7 @@ impl PipelineContext {
             raw_clang_args,
             config,
             known_model_types: vec![],
+            known_enum_types: vec![],
             preferred_model_aliases: BTreeMap::new(),
             known_model_projections: vec![],
             go_module: None,
@@ -49,6 +51,11 @@ impl PipelineContext {
         self
     }
 
+    pub fn with_known_enum_types(mut self, known_enum_types: Vec<String>) -> Self {
+        self.known_enum_types = known_enum_types;
+        self
+    }
+
     pub fn with_preferred_model_aliases(
         mut self,
         preferred_model_aliases: BTreeMap<String, String>,
@@ -71,6 +78,7 @@ impl PipelineContext {
         PipelineContext {
             config: scoped_config,
             known_model_types: self.known_model_types.clone(),
+            known_enum_types: self.known_enum_types.clone(),
             preferred_model_aliases: self.preferred_model_aliases.clone(),
             known_model_projections: self.known_model_projections.clone(),
             go_module: self.go_module.clone(),
@@ -99,6 +107,35 @@ impl PipelineContext {
         })
     }
 
+    pub fn is_known_enum_type(&self, cpp_type: &str) -> bool {
+        let base = enum_cpp_type_name(cpp_type);
+        self.known_enum_types.iter().any(|candidate| {
+            let normalized = enum_cpp_type_name(candidate);
+            normalized == base
+                || normalized.rsplit("::").next().unwrap_or(&normalized) == base
+                || base.rsplit("::").next().unwrap_or(&base) == normalized
+        })
+    }
+
+    pub fn known_enum_go_type(&self, cpp_type: &str) -> Option<String> {
+        let base = enum_cpp_type_name(cpp_type);
+        self.known_enum_types
+            .iter()
+            .find(|candidate| {
+                let normalized = enum_cpp_type_name(candidate);
+                normalized == base
+                    || normalized.rsplit("::").next().unwrap_or(&normalized) == base
+                    || base.rsplit("::").next().unwrap_or(&base) == normalized
+            })
+            .map(|candidate| {
+                enum_cpp_type_name(candidate)
+                    .rsplit("::")
+                    .next()
+                    .unwrap_or(candidate)
+                    .to_string()
+            })
+    }
+
     pub fn raw_clang_args(&self) -> &[String] {
         &self.raw_clang_args
     }
@@ -125,4 +162,9 @@ fn base_cpp_type_name(value: &str) -> String {
         .trim_end_matches('*')
         .trim()
         .to_string()
+}
+
+fn enum_cpp_type_name(value: &str) -> String {
+    let base = base_cpp_type_name(value);
+    base.strip_prefix("enum ").unwrap_or(&base).trim().to_string()
 }

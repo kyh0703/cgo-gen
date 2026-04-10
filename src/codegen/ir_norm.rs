@@ -115,6 +115,11 @@ pub fn normalize(ctx: &PipelineContext, api: &ParsedApi) -> Result<IrModule> {
     let mut callbacks = Vec::new();
     let mut skipped_declarations = Vec::new();
     let callback_names = callback_name_set(api);
+    let known_enum_types = if ctx.known_enum_types.is_empty() {
+        collect_known_enum_types(api)
+    } else {
+        ctx.known_enum_types.iter().cloned().collect()
+    };
     let abstract_types = api
         .classes
         .iter()
@@ -140,6 +145,7 @@ pub fn normalize(ctx: &PipelineContext, api: &ParsedApi) -> Result<IrModule> {
             &handle_name,
             &abstract_types,
             &callback_names,
+            &known_enum_types,
             &mut skipped_declarations,
         )?);
     }
@@ -150,6 +156,7 @@ pub fn normalize(ctx: &PipelineContext, api: &ParsedApi) -> Result<IrModule> {
             function,
             &abstract_types,
             &callback_names,
+            &known_enum_types,
             &mut skipped_declarations,
         )? {
             functions.push(function);
@@ -160,7 +167,12 @@ pub fn normalize(ctx: &PipelineContext, api: &ParsedApi) -> Result<IrModule> {
         enums.push(normalize_enum(item));
     }
     for callback in &api.callbacks {
-        callbacks.push(normalize_callback(config, callback, &callback_names)?);
+        callbacks.push(normalize_callback(
+            config,
+            callback,
+            &callback_names,
+            &known_enum_types,
+        )?);
     }
 
     collect_referenced_opaque_types(&mut opaque_types, &functions);
@@ -279,6 +291,13 @@ pub fn collect_preferred_model_aliases(api: &ParsedApi) -> BTreeMap<String, Stri
     }
 
     aliases
+}
+
+fn collect_known_enum_types(api: &ParsedApi) -> BTreeSet<String> {
+    api.enums
+        .iter()
+        .map(|item| cpp_qualified(&item.namespace, &item.name))
+        .collect()
 }
 
 fn record_preferred_model_alias(
@@ -422,6 +441,7 @@ fn normalize_class(
     handle_name: &str,
     abstract_types: &BTreeSet<String>,
     callback_names: &BTreeSet<String>,
+    known_enum_types: &BTreeSet<String>,
     skipped_declarations: &mut Vec<SkippedDeclaration>,
 ) -> Result<Vec<IrFunction>> {
     let mut functions = Vec::new();
@@ -459,6 +479,7 @@ fn normalize_class(
                 handle_name,
                 constructor,
                 callback_names,
+                known_enum_types,
                 skipped_declarations,
             )? {
                 functions.push(function);
@@ -503,6 +524,7 @@ fn normalize_class(
             method,
             abstract_types,
             callback_names,
+            known_enum_types,
             skipped_declarations,
         )? {
             functions.push(function);
@@ -515,6 +537,7 @@ fn normalize_class(
             class,
             handle_name,
             callback_names,
+            known_enum_types,
         )?);
     }
 
@@ -526,6 +549,7 @@ fn normalize_struct_fields(
     class: &CppClass,
     handle_name: &str,
     callback_names: &BTreeSet<String>,
+    known_enum_types: &BTreeSet<String>,
 ) -> Result<Vec<IrFunction>> {
     let qualified = cpp_qualified(&class.namespace, &class.name);
     let existing_methods = class
@@ -546,12 +570,18 @@ fn normalize_struct_fields(
             continue;
         }
 
-        let Ok(field_ty) =
-            normalize_type_with_canonical(config, &field.ty, &field.canonical_ty, callback_names)
+        let Ok(field_ty) = normalize_type_with_canonical(
+            config,
+            &field.ty,
+            &field.canonical_ty,
+            callback_names,
+            known_enum_types,
+        )
         else {
             continue;
         };
         if field_ty.kind != IrTypeKind::Primitive
+            && field_ty.kind != IrTypeKind::Enum
             && field_ty.kind != IrTypeKind::ModelValue
             && field_ty.kind != IrTypeKind::CString
             && field_ty.kind != IrTypeKind::FixedByteArray
@@ -694,6 +724,7 @@ fn normalize_constructor(
     handle_name: &str,
     constructor: &CppConstructor,
     callback_names: &BTreeSet<String>,
+    known_enum_types: &BTreeSet<String>,
     skipped_declarations: &mut Vec<SkippedDeclaration>,
 ) -> Result<Option<IrFunction>> {
     let qualified = cpp_qualified(&class.namespace, &class.name);
@@ -721,7 +752,7 @@ fn normalize_constructor(
         params: constructor
             .params
             .iter()
-            .map(|param| normalize_param(config, param, callback_names))
+            .map(|param| normalize_param(config, param, callback_names, known_enum_types))
             .collect::<Result<Vec<_>>>()?,
     }))
 }
@@ -733,6 +764,7 @@ fn normalize_method(
     method: &CppMethod,
     abstract_types: &BTreeSet<String>,
     callback_names: &BTreeSet<String>,
+    known_enum_types: &BTreeSet<String>,
     skipped_declarations: &mut Vec<SkippedDeclaration>,
 ) -> Result<Option<IrFunction>> {
     let qualified = cpp_qualified(&class.namespace, &class.name);
@@ -760,6 +792,7 @@ fn normalize_method(
         Some((&method.return_type, &method.return_canonical_type)),
         &method.params,
         callback_names,
+        known_enum_types,
     ) {
         skipped_declarations.push(SkippedDeclaration { cpp_name, reason });
         return Ok(None);
@@ -786,7 +819,7 @@ fn normalize_method(
         method
             .params
             .iter()
-            .map(|param| normalize_param(config, param, callback_names))
+            .map(|param| normalize_param(config, param, callback_names, known_enum_types))
             .collect::<Result<Vec<_>>>()?,
     );
     Ok(Some(IrFunction {
@@ -803,6 +836,7 @@ fn normalize_method(
             &method.return_canonical_type,
             abstract_types,
             callback_names,
+            known_enum_types,
         )?,
         params,
     }))
@@ -813,6 +847,7 @@ fn normalize_function(
     function: &CppFunction,
     abstract_types: &BTreeSet<String>,
     callback_names: &BTreeSet<String>,
+    known_enum_types: &BTreeSet<String>,
     skipped_declarations: &mut Vec<SkippedDeclaration>,
 ) -> Result<Option<IrFunction>> {
     let cpp_name = cpp_qualified(&function.namespace, &function.name);
@@ -839,6 +874,7 @@ fn normalize_function(
         Some((&function.return_type, &function.return_canonical_type)),
         &function.params,
         callback_names,
+        known_enum_types,
     ) {
         skipped_declarations.push(SkippedDeclaration { cpp_name, reason });
         return Ok(None);
@@ -857,11 +893,12 @@ fn normalize_function(
             &function.return_canonical_type,
             abstract_types,
             callback_names,
+            known_enum_types,
         )?,
         params: function
             .params
             .iter()
-            .map(|param| normalize_param(config, param, callback_names))
+            .map(|param| normalize_param(config, param, callback_names, known_enum_types))
             .collect::<Result<Vec<_>>>()?,
     }))
 }
@@ -885,6 +922,7 @@ fn normalize_callback(
     config: &Config,
     callback: &CppCallbackTypedef,
     callback_names: &BTreeSet<String>,
+    known_enum_types: &BTreeSet<String>,
 ) -> Result<IrCallback> {
     Ok(IrCallback {
         name: callback.name.clone(),
@@ -894,11 +932,12 @@ fn normalize_callback(
             &callback.return_type,
             &callback.return_canonical_type,
             callback_names,
+            known_enum_types,
         )?,
         params: callback
             .params
             .iter()
-            .map(|param| normalize_param(config, param, callback_names))
+            .map(|param| normalize_param(config, param, callback_names, known_enum_types))
             .collect::<Result<Vec<_>>>()?,
     })
 }
@@ -942,10 +981,17 @@ fn normalize_param(
     config: &Config,
     param: &CppParam,
     callback_names: &BTreeSet<String>,
+    known_enum_types: &BTreeSet<String>,
 ) -> Result<IrParam> {
     Ok(IrParam {
         name: sanitize_go_param_name(&param.name),
-        ty: normalize_type_with_canonical(config, &param.ty, &param.canonical_ty, callback_names)?,
+        ty: normalize_type_with_canonical(
+            config,
+            &param.ty,
+            &param.canonical_ty,
+            callback_names,
+            known_enum_types,
+        )?,
     })
 }
 
@@ -955,8 +1001,15 @@ fn normalize_return_type_with_canonical(
     canonical_type: &str,
     abstract_types: &BTreeSet<String>,
     callback_names: &BTreeSet<String>,
+    known_enum_types: &BTreeSet<String>,
 ) -> Result<IrType> {
-    let mut ty = normalize_type_with_canonical(config, cpp_type, canonical_type, callback_names)?;
+    let mut ty = normalize_type_with_canonical(
+        config,
+        cpp_type,
+        canonical_type,
+        callback_names,
+        known_enum_types,
+    )?;
     if matches!(
         ty.kind,
         IrTypeKind::ModelReference | IrTypeKind::ModelPointer
@@ -1006,11 +1059,12 @@ fn raw_unsafe_by_value_reason(
     return_type: Option<(&str, &str)>,
     params: &[CppParam],
     callback_names: &BTreeSet<String>,
+    known_enum_types: &BTreeSet<String>,
 ) -> Option<String> {
     let mut issues = Vec::new();
 
     if let Some((display, canonical)) = return_type
-        && is_raw_unsafe_by_value_return_type(display, canonical, callback_names)
+        && is_raw_unsafe_by_value_return_type(display, canonical, callback_names, known_enum_types)
     {
         issues.push(format!(
             "return type `{}` uses a raw-unsafe by-value object type",
@@ -1019,7 +1073,12 @@ fn raw_unsafe_by_value_reason(
     }
 
     for param in params {
-        if is_raw_unsafe_by_value_param_type(&param.ty, &param.canonical_ty, callback_names) {
+        if is_raw_unsafe_by_value_param_type(
+            &param.ty,
+            &param.canonical_ty,
+            callback_names,
+            known_enum_types,
+        ) {
             issues.push(format!(
                 "parameter `{}` type `{}` uses a raw-unsafe by-value object type",
                 param.name,
@@ -1035,8 +1094,16 @@ fn is_raw_unsafe_by_value_return_type(
     display: &str,
     canonical: &str,
     callback_names: &BTreeSet<String>,
+    known_enum_types: &BTreeSet<String>,
 ) -> bool {
-    if normalize_type_with_canonical(&Config::default(), display, canonical, callback_names).is_ok()
+    if normalize_type_with_canonical(
+        &Config::default(),
+        display,
+        canonical,
+        callback_names,
+        known_enum_types,
+    )
+    .is_ok()
     {
         return false;
     }
@@ -1060,12 +1127,18 @@ fn is_raw_unsafe_by_value_param_type(
     display: &str,
     canonical: &str,
     callback_names: &BTreeSet<String>,
+    known_enum_types: &BTreeSet<String>,
 ) -> bool {
     let display = display.trim();
     let canonical = canonical.trim();
 
-    if let Ok(ty) =
-        normalize_type_with_canonical(&Config::default(), display, canonical, callback_names)
+    if let Ok(ty) = normalize_type_with_canonical(
+        &Config::default(),
+        display,
+        canonical,
+        callback_names,
+        known_enum_types,
+    )
     {
         let _ = ty;
         return false;
@@ -1098,14 +1171,65 @@ fn format_type_for_reason(display: &str, canonical: &str) -> String {
     }
 }
 
+fn resolved_enum_cpp_type(
+    display: &str,
+    canonical: &str,
+    known_enum_types: &BTreeSet<String>,
+) -> Option<String> {
+    if raw_type_shape(display) != "value" {
+        return None;
+    }
+
+    if known_enum_type_name(display, known_enum_types).is_some() {
+        return Some(display.trim().to_string());
+    }
+
+    if known_enum_type_name(canonical, known_enum_types).is_some() {
+        return Some(canonical.trim().to_string());
+    }
+
+    None
+}
+
+fn known_enum_type_name(value: &str, known_enum_types: &BTreeSet<String>) -> Option<String> {
+    let base = enum_base_cpp_type(value);
+    known_enum_types.iter().find_map(|candidate| {
+        let normalized = enum_base_cpp_type(candidate);
+        (normalized == base
+            || normalized.rsplit("::").next().unwrap_or(&normalized) == base
+            || base.rsplit("::").next().unwrap_or(&base) == normalized)
+            .then(|| candidate.clone())
+    })
+}
+
+fn enum_base_cpp_type(value: &str) -> String {
+    let base = base_model_cpp_type(value);
+    base.strip_prefix("enum ").unwrap_or(&base).trim().to_string()
+}
+
+fn enum_value_type(cpp_type: &str) -> IrType {
+    IrType {
+        kind: IrTypeKind::Enum,
+        cpp_type: cpp_type.to_string(),
+        c_type: "int64_t".to_string(),
+        handle: None,
+    }
+}
+
 fn normalize_type_with_canonical(
     _config: &Config,
     cpp_type: &str,
     canonical_type: &str,
     callback_names: &BTreeSet<String>,
+    known_enum_types: &BTreeSet<String>,
 ) -> Result<IrType> {
     let trimmed = cpp_type.trim();
     let canonical_trimmed = canonical_type.trim();
+    if let Some(enum_cpp_type) =
+        resolved_enum_cpp_type(trimmed, canonical_trimmed, known_enum_types)
+    {
+        return Ok(enum_value_type(&enum_cpp_type));
+    }
     if let Ok(ty) = normalize_type(trimmed, callback_names) {
         if matches!(
             ty.kind,
@@ -1509,6 +1633,10 @@ pub(crate) fn overload_suffix(function: &IrFunction) -> String {
 fn type_signature_token(ty: &IrType) -> String {
     match ty.kind {
         IrTypeKind::Primitive | IrTypeKind::Void => sanitize_symbol_token(&ty.cpp_type),
+        IrTypeKind::Enum => format!(
+            "enum_{}",
+            sanitize_symbol_token(&enum_base_cpp_type(&ty.cpp_type))
+        ),
         IrTypeKind::CString => {
             if ty.cpp_type.contains("const")
                 || matches!(ty.cpp_type.as_str(), "NPCSTR" | "NPSTRC" | "NPCSTRC")
@@ -1756,6 +1884,7 @@ mod tests {
             "timeval*",
             "struct timeval*",
             &callback_names,
+            &BTreeSet::new(),
         )
         .unwrap();
 
@@ -1769,7 +1898,13 @@ mod tests {
     fn rejects_by_value_type_when_only_canonical_form_is_pointer() {
         let callback_names = BTreeSet::new();
         let result =
-            normalize_type_with_canonical(&Config::default(), "MTime", "MTime*", &callback_names)
+            normalize_type_with_canonical(
+                &Config::default(),
+                "MTime",
+                "MTime*",
+                &callback_names,
+                &BTreeSet::new(),
+            )
                 .unwrap();
 
         assert_eq!(result.kind, IrTypeKind::ModelValue);
@@ -1784,6 +1919,7 @@ mod tests {
             "TD_IE_CALL",
             "TD_IE_CALL&",
             &callback_names,
+            &BTreeSet::new(),
         )
         .unwrap();
 
@@ -1797,7 +1933,8 @@ mod tests {
         assert!(!is_raw_unsafe_by_value_param_type(
             "MTime",
             "MTime",
-            &callback_names
+            &callback_names,
+            &BTreeSet::new(),
         ));
     }
 
@@ -1810,6 +1947,7 @@ mod tests {
             "ThingModel*",
             &BTreeSet::new(),
             &callback_names,
+            &BTreeSet::new(),
         )
         .unwrap();
 
@@ -1897,6 +2035,7 @@ mod tests {
             "DBHandler*",
             &abstract_types,
             &callback_names,
+            &BTreeSet::new(),
         )
         .unwrap();
 
@@ -1949,6 +2088,7 @@ mod tests {
             "uuid_t",
             "unsigned char[16]",
             &callback_names,
+            &BTreeSet::new(),
         )
         .unwrap();
         assert_eq!(ty.kind, IrTypeKind::FixedByteArray);

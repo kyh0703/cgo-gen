@@ -1,13 +1,21 @@
-use std::{env, fs, path::PathBuf};
+use std::{
+    env, fs,
+    path::PathBuf,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 use cgo_gen::{config::Config, generator, ir, parser, pipeline::context::PipelineContext};
 
+static UNIQUE_SUFFIX: AtomicUsize = AtomicUsize::new(0);
+
 fn temp_output_dir(label: &str) -> PathBuf {
     let mut path = env::temp_dir();
+    let unique = UNIQUE_SUFFIX.fetch_add(1, Ordering::Relaxed);
     path.push(format!(
-        "c_go_gen_model_config_{}_{}",
+        "c_go_gen_model_config_{}_{}_{}",
         label,
-        std::process::id()
+        std::process::id(),
+        unique
     ));
     let _ = fs::remove_dir_all(&path);
     path.push("gen");
@@ -17,10 +25,12 @@ fn temp_output_dir(label: &str) -> PathBuf {
 
 fn temp_workspace_dir(label: &str) -> PathBuf {
     let mut path = env::temp_dir();
+    let unique = UNIQUE_SUFFIX.fetch_add(1, Ordering::Relaxed);
     path.push(format!(
-        "c_go_gen_model_config_workspace_{}_{}",
+        "c_go_gen_model_config_workspace_{}_{}_{}",
         label,
-        std::process::id()
+        std::process::id(),
+        unique
     ));
     let _ = fs::remove_dir_all(&path);
     fs::create_dir_all(&path).unwrap();
