@@ -22,7 +22,7 @@ pub struct GeneratedGoFile {
 struct AnalyzedFacadeClass<'a> {
     go_name: String,
     handle_name: String,
-    constructor: Option<&'a IrFunction>,
+    constructors: Vec<&'a IrFunction>,
     destructor: &'a IrFunction,
     methods: Vec<&'a IrFunction>,
 }
@@ -102,17 +102,20 @@ fn collect_facade_classes<'a>(
         }
     }
 
-    let constructors = ir
+    let mut constructors_by_owner = BTreeMap::<&str, Vec<&IrFunction>>::new();
+    for function in ir
         .functions
         .iter()
         .filter(|function| function.kind == IrFunctionKind::Constructor)
-        .filter_map(|function| {
-            function
-                .owner_cpp_type
-                .as_deref()
-                .map(|owner| (owner, function))
-        })
-        .collect::<BTreeMap<_, _>>();
+    {
+        let Some(owner) = function.owner_cpp_type.as_deref() else {
+            continue;
+        };
+        constructors_by_owner
+            .entry(owner)
+            .or_default()
+            .push(function);
+    }
     let destructors = ir
         .functions
         .iter()
@@ -129,20 +132,21 @@ fn collect_facade_classes<'a>(
     for (owner, methods) in methods_by_owner {
         ensure_unique_method_exports(owner, &methods)?;
 
-        let constructor = constructors.get(owner).copied();
-        if let Some(ctor) = constructor {
-            if !ctor
-                .params
-                .iter()
-                .all(|param| go_param_supported(config, &param.ty))
-            {
-                continue;
-            }
-        }
         let Some(destructor) = destructors.get(owner).copied() else {
             continue;
         };
-        let handle_name = constructor
+        let constructors = constructors_by_owner
+            .get(owner)
+            .into_iter()
+            .flat_map(|constructors| constructors.iter().copied())
+            .filter(|ctor| {
+                ctor.params
+                    .iter()
+                    .all(|param| go_param_supported(config, &param.ty))
+            })
+            .collect::<Vec<_>>();
+        let handle_name = constructors
+            .first()
             .and_then(|ctor| ctor.returns.handle.clone())
             .or_else(|| {
                 destructor
@@ -159,7 +163,7 @@ fn collect_facade_classes<'a>(
         classes.push(AnalyzedFacadeClass {
             go_name,
             handle_name,
-            constructor,
+            constructors,
             destructor,
             methods,
         });
@@ -178,7 +182,7 @@ fn render_go_facade_file(
 ) -> String {
     let package_name = go_package_name(&config.output.dir);
     let requires_cgo = !functions.is_empty() || !classes.is_empty();
-    let requires_errors = classes.iter().any(|class| class.constructor.is_some())
+    let requires_errors = classes.iter().any(|class| !class.constructors.is_empty())
         || functions.iter().any(|function| {
             matches!(
                 function.returns.kind,
@@ -206,7 +210,7 @@ fn render_go_facade_file(
                     | IrTypeKind::FixedModelArray
             )
     }) || classes.iter().any(|class| {
-        class.constructor.iter().any(|ctor| {
+        class.constructors.iter().any(|ctor| {
             has_string_params(ctor.params.iter())
                 || has_pointer_params(ctor.params.iter())
                 || has_byte_array_params(ctor.params.iter())
@@ -308,8 +312,16 @@ fn render_go_facade_file(
     for class in classes {
         out.push_str(&render_facade_class(class));
         out.push('\n');
-        if let Some(_) = class.constructor {
-            out.push_str(&render_facade_constructor(config, class));
+        let constructor_names = go_constructor_export_names(class);
+        for (constructor, constructor_name) in
+            class.constructors.iter().zip(constructor_names.iter())
+        {
+            out.push_str(&render_facade_constructor(
+                config,
+                class,
+                constructor,
+                constructor_name,
+            ));
             out.push('\n');
         }
         out.push_str(&render_facade_close(class));
@@ -480,17 +492,19 @@ fn render_facade_class(class: &AnalyzedFacadeClass<'_>) -> String {
     )
 }
 
-fn render_facade_constructor(config: &PipelineContext, class: &AnalyzedFacadeClass<'_>) -> String {
-    let constructor = class
-        .constructor
-        .expect("render_facade_constructor called without constructor");
+fn render_facade_constructor(
+    config: &PipelineContext,
+    class: &AnalyzedFacadeClass<'_>,
+    constructor: &IrFunction,
+    constructor_name: &str,
+) -> String {
     let constructor_params = constructor.params.iter().collect::<Vec<_>>();
     let params = render_param_list(config, &constructor_params);
     let prep = render_call_prep(config, &constructor_params);
 
     let mut out = format!(
-        "func New{}({}) (*{}, error) {{\n",
-        class.go_name, params, class.go_name
+        "func {constructor_name}({params}) (*{}, error) {{\n",
+        class.go_name
     );
     for line in prep.setup_lines {
         out.push_str("    ");
@@ -1485,6 +1499,87 @@ fn go_export_name(value: &str) -> String {
     out
 }
 
+fn go_constructor_export_names(class: &AnalyzedFacadeClass<'_>) -> Vec<String> {
+    let base_names = class
+        .constructors
+        .iter()
+        .map(|constructor| go_constructor_base_export_name(class, constructor))
+        .collect::<Vec<_>>();
+    let mut base_counts = BTreeMap::<String, usize>::new();
+    for base in &base_names {
+        *base_counts.entry(base.clone()).or_insert(0) += 1;
+    }
+
+    let mut used_names = BTreeMap::<String, usize>::new();
+    class
+        .constructors
+        .iter()
+        .zip(base_names)
+        .map(|(constructor, base)| {
+            let mut name = base.clone();
+            if base_counts.get(&base).copied().unwrap_or(0) > 1 {
+                let suffix = go_constructor_overload_suffix(constructor);
+                if !suffix.is_empty() {
+                    name.push_str(&suffix);
+                }
+            }
+
+            let count = used_names.entry(name.clone()).or_insert(0);
+            *count += 1;
+            if *count > 1 {
+                name.push_str(&count.to_string());
+            }
+            name
+        })
+        .collect()
+}
+
+fn go_constructor_base_export_name(
+    class: &AnalyzedFacadeClass<'_>,
+    constructor: &IrFunction,
+) -> String {
+    let base = format!("New{}", class.go_name);
+    if class.constructors.len() <= 1 || constructor.params.is_empty() {
+        return base;
+    }
+    if is_copy_constructor(constructor) {
+        return format!("{base}FromCopy");
+    }
+
+    let param_names = constructor
+        .params
+        .iter()
+        .map(|param| go_export_name(&sanitize_go_token(&param.name)))
+        .collect::<String>();
+    if param_names.is_empty() {
+        base
+    } else {
+        format!("{base}With{param_names}")
+    }
+}
+
+fn is_copy_constructor(constructor: &IrFunction) -> bool {
+    if constructor.kind != IrFunctionKind::Constructor || constructor.params.len() != 1 {
+        return false;
+    }
+    let Some(owner) = constructor.owner_cpp_type.as_deref() else {
+        return false;
+    };
+    let param_ty = &constructor.params[0].ty;
+    matches!(
+        param_ty.kind,
+        IrTypeKind::ModelReference | IrTypeKind::ModelPointer | IrTypeKind::ModelValue
+    ) && base_model_cpp_type(&param_ty.cpp_type) == base_model_cpp_type(owner)
+}
+
+fn go_constructor_overload_suffix(constructor: &IrFunction) -> String {
+    constructor
+        .params
+        .iter()
+        .map(|param| go_overload_token(&param.ty))
+        .collect()
+}
+
 fn go_facade_export_name(function: &IrFunction) -> String {
     let base = go_export_name(&leaf_cpp_name(&function.cpp_name));
     if !has_disambiguated_raw_overload_suffix(function) {
@@ -1750,7 +1845,7 @@ fn ir_uses_struct_timeval(functions: &[&IrFunction], classes: &[AnalyzedFacadeCl
         })
         .chain(classes.iter().flat_map(|class| {
             class
-                .constructor
+                .constructors
                 .iter()
                 .flat_map(|ctor| {
                     std::iter::once(&ctor.returns)
@@ -2242,6 +2337,330 @@ mod tests {
     }
 
     #[test]
+    fn render_go_facade_emits_all_overloaded_constructors_with_explicit_names() {
+        use crate::codegen::ir_norm::{IrModule, OpaqueType, SupportMetadata};
+
+        let handle_name = "WidgetHandle".to_string();
+        let self_param = IrParam {
+            name: "self".to_string(),
+            ty: IrType {
+                kind: IrTypeKind::Opaque,
+                cpp_type: "Widget*".to_string(),
+                c_type: "WidgetHandle*".to_string(),
+                handle: Some(handle_name.clone()),
+            },
+        };
+        let ir = IrModule {
+            version: 1,
+            module: "cgowrap".to_string(),
+            source_headers: vec![],
+            opaque_types: vec![OpaqueType {
+                name: handle_name.clone(),
+                cpp_type: "Widget".to_string(),
+            }],
+            functions: vec![
+                IrFunction {
+                    name: "cgowrap_Widget_new__void".to_string(),
+                    kind: IrFunctionKind::Constructor,
+                    cpp_name: "Widget".to_string(),
+                    method_of: Some(handle_name.clone()),
+                    owner_cpp_type: Some("Widget".to_string()),
+                    is_const: None,
+                    field_accessor: None,
+                    returns: IrType {
+                        kind: IrTypeKind::Opaque,
+                        cpp_type: "Widget".to_string(),
+                        c_type: "WidgetHandle*".to_string(),
+                        handle: Some(handle_name.clone()),
+                    },
+                    params: vec![],
+                },
+                IrFunction {
+                    name: "cgowrap_Widget_new__int".to_string(),
+                    kind: IrFunctionKind::Constructor,
+                    cpp_name: "Widget".to_string(),
+                    method_of: Some(handle_name.clone()),
+                    owner_cpp_type: Some("Widget".to_string()),
+                    is_const: None,
+                    field_accessor: None,
+                    returns: IrType {
+                        kind: IrTypeKind::Opaque,
+                        cpp_type: "Widget".to_string(),
+                        c_type: "WidgetHandle*".to_string(),
+                        handle: Some(handle_name.clone()),
+                    },
+                    params: vec![IrParam {
+                        name: "nItemMax".to_string(),
+                        ty: primitive_type("int", "int"),
+                    }],
+                },
+                IrFunction {
+                    name: "cgowrap_Widget_new__model_ref_widget".to_string(),
+                    kind: IrFunctionKind::Constructor,
+                    cpp_name: "Widget".to_string(),
+                    method_of: Some(handle_name.clone()),
+                    owner_cpp_type: Some("Widget".to_string()),
+                    is_const: None,
+                    field_accessor: None,
+                    returns: IrType {
+                        kind: IrTypeKind::Opaque,
+                        cpp_type: "Widget".to_string(),
+                        c_type: "WidgetHandle*".to_string(),
+                        handle: Some(handle_name.clone()),
+                    },
+                    params: vec![IrParam {
+                        name: "copy".to_string(),
+                        ty: model_type(IrTypeKind::ModelReference, "Widget"),
+                    }],
+                },
+                IrFunction {
+                    name: "cgowrap_Widget_delete".to_string(),
+                    kind: IrFunctionKind::Destructor,
+                    cpp_name: "~Widget".to_string(),
+                    method_of: Some(handle_name.clone()),
+                    owner_cpp_type: Some("Widget".to_string()),
+                    is_const: None,
+                    field_accessor: None,
+                    returns: IrType {
+                        kind: IrTypeKind::Void,
+                        cpp_type: "void".to_string(),
+                        c_type: "void".to_string(),
+                        handle: None,
+                    },
+                    params: vec![self_param.clone()],
+                },
+                IrFunction {
+                    name: "cgowrap_Widget_GetSize".to_string(),
+                    kind: IrFunctionKind::Method,
+                    cpp_name: "Widget::GetSize".to_string(),
+                    method_of: Some(handle_name),
+                    owner_cpp_type: Some("Widget".to_string()),
+                    is_const: Some(true),
+                    field_accessor: None,
+                    returns: primitive_type("int", "int"),
+                    params: vec![self_param],
+                },
+            ],
+            enums: vec![],
+            callbacks: vec![],
+            support: SupportMetadata {
+                parser_backend: "test".to_string(),
+                notes: vec![],
+                skipped_declarations: vec![],
+            },
+        };
+
+        let files = render_go_facade(
+            &PipelineContext::new(Config::default()),
+            &ir,
+            &BTreeSet::new(),
+        )
+        .unwrap();
+        let contents = &files[0].contents;
+        assert!(
+            contents.contains("func NewWidget() (*Widget, error) {"),
+            "expected zero-arg constructor but got:\n{contents}"
+        );
+        assert!(
+            contents.contains("func NewWidgetWithNItemMax(nItemMax int32) (*Widget, error) {"),
+            "expected named int constructor but got:\n{contents}"
+        );
+        assert!(
+            contents.contains("func NewWidgetFromCopy(copy *Widget) (*Widget, error) {"),
+            "expected copy constructor name but got:\n{contents}"
+        );
+    }
+
+    #[test]
+    fn constructor_names_disambiguate_same_param_name_overloads() {
+        let handle_name = "WidgetHandle".to_string();
+        let constructor_int = IrFunction {
+            name: "cgowrap_Widget_new__int".to_string(),
+            kind: IrFunctionKind::Constructor,
+            cpp_name: "Widget".to_string(),
+            method_of: Some(handle_name.clone()),
+            owner_cpp_type: Some("Widget".to_string()),
+            is_const: None,
+            field_accessor: None,
+            returns: IrType {
+                kind: IrTypeKind::Opaque,
+                cpp_type: "Widget".to_string(),
+                c_type: "WidgetHandle*".to_string(),
+                handle: Some(handle_name.clone()),
+            },
+            params: vec![IrParam {
+                name: "value".to_string(),
+                ty: primitive_type("int", "int"),
+            }],
+        };
+        let constructor_double = IrFunction {
+            name: "cgowrap_Widget_new__double".to_string(),
+            kind: IrFunctionKind::Constructor,
+            cpp_name: "Widget".to_string(),
+            method_of: Some(handle_name.clone()),
+            owner_cpp_type: Some("Widget".to_string()),
+            is_const: None,
+            field_accessor: None,
+            returns: IrType {
+                kind: IrTypeKind::Opaque,
+                cpp_type: "Widget".to_string(),
+                c_type: "WidgetHandle*".to_string(),
+                handle: Some(handle_name.clone()),
+            },
+            params: vec![IrParam {
+                name: "value".to_string(),
+                ty: primitive_type("double", "double"),
+            }],
+        };
+        let destructor = IrFunction {
+            name: "cgowrap_Widget_delete".to_string(),
+            kind: IrFunctionKind::Destructor,
+            cpp_name: "~Widget".to_string(),
+            method_of: Some("WidgetHandle".to_string()),
+            owner_cpp_type: Some("Widget".to_string()),
+            is_const: None,
+            field_accessor: None,
+            returns: IrType {
+                kind: IrTypeKind::Void,
+                cpp_type: "void".to_string(),
+                c_type: "void".to_string(),
+                handle: None,
+            },
+            params: vec![],
+        };
+        let class = AnalyzedFacadeClass {
+            go_name: "Widget".to_string(),
+            handle_name,
+            constructors: vec![&constructor_int, &constructor_double],
+            destructor: &destructor,
+            methods: vec![],
+        };
+
+        let names = go_constructor_export_names(&class);
+        assert_eq!(
+            names,
+            vec!["NewWidgetWithValueInt32", "NewWidgetWithValueFloat64"]
+        );
+    }
+
+    #[test]
+    fn unsupported_constructor_does_not_drop_supported_constructors() {
+        use crate::codegen::ir_norm::{IrModule, OpaqueType, SupportMetadata};
+
+        let handle_name = "WidgetHandle".to_string();
+        let self_param = IrParam {
+            name: "self".to_string(),
+            ty: IrType {
+                kind: IrTypeKind::Opaque,
+                cpp_type: "Widget*".to_string(),
+                c_type: "WidgetHandle*".to_string(),
+                handle: Some(handle_name.clone()),
+            },
+        };
+        let ir = IrModule {
+            version: 1,
+            module: "cgowrap".to_string(),
+            source_headers: vec![],
+            opaque_types: vec![OpaqueType {
+                name: handle_name.clone(),
+                cpp_type: "Widget".to_string(),
+            }],
+            functions: vec![
+                IrFunction {
+                    name: "cgowrap_Widget_new__void".to_string(),
+                    kind: IrFunctionKind::Constructor,
+                    cpp_name: "Widget".to_string(),
+                    method_of: Some(handle_name.clone()),
+                    owner_cpp_type: Some("Widget".to_string()),
+                    is_const: None,
+                    field_accessor: None,
+                    returns: IrType {
+                        kind: IrTypeKind::Opaque,
+                        cpp_type: "Widget".to_string(),
+                        c_type: "WidgetHandle*".to_string(),
+                        handle: Some(handle_name.clone()),
+                    },
+                    params: vec![],
+                },
+                IrFunction {
+                    name: "cgowrap_Widget_new__opaque".to_string(),
+                    kind: IrFunctionKind::Constructor,
+                    cpp_name: "Widget".to_string(),
+                    method_of: Some(handle_name.clone()),
+                    owner_cpp_type: Some("Widget".to_string()),
+                    is_const: None,
+                    field_accessor: None,
+                    returns: IrType {
+                        kind: IrTypeKind::Opaque,
+                        cpp_type: "Widget".to_string(),
+                        c_type: "WidgetHandle*".to_string(),
+                        handle: Some(handle_name.clone()),
+                    },
+                    params: vec![IrParam {
+                        name: "raw".to_string(),
+                        ty: IrType {
+                            kind: IrTypeKind::Opaque,
+                            cpp_type: "InternalHandle".to_string(),
+                            c_type: "InternalHandle*".to_string(),
+                            handle: Some("InternalHandle".to_string()),
+                        },
+                    }],
+                },
+                IrFunction {
+                    name: "cgowrap_Widget_delete".to_string(),
+                    kind: IrFunctionKind::Destructor,
+                    cpp_name: "~Widget".to_string(),
+                    method_of: Some(handle_name.clone()),
+                    owner_cpp_type: Some("Widget".to_string()),
+                    is_const: None,
+                    field_accessor: None,
+                    returns: IrType {
+                        kind: IrTypeKind::Void,
+                        cpp_type: "void".to_string(),
+                        c_type: "void".to_string(),
+                        handle: None,
+                    },
+                    params: vec![self_param.clone()],
+                },
+                IrFunction {
+                    name: "cgowrap_Widget_GetSize".to_string(),
+                    kind: IrFunctionKind::Method,
+                    cpp_name: "Widget::GetSize".to_string(),
+                    method_of: Some(handle_name),
+                    owner_cpp_type: Some("Widget".to_string()),
+                    is_const: Some(true),
+                    field_accessor: None,
+                    returns: primitive_type("int", "int"),
+                    params: vec![self_param],
+                },
+            ],
+            enums: vec![],
+            callbacks: vec![],
+            support: SupportMetadata {
+                parser_backend: "test".to_string(),
+                notes: vec![],
+                skipped_declarations: vec![],
+            },
+        };
+
+        let files = render_go_facade(
+            &PipelineContext::new(Config::default()),
+            &ir,
+            &BTreeSet::new(),
+        )
+        .unwrap();
+        let contents = &files[0].contents;
+        assert!(
+            contents.contains("func NewWidget() (*Widget, error) {"),
+            "expected supported constructor to remain but got:\n{contents}"
+        );
+        assert!(
+            !contents.contains("NewWidgetWithRaw"),
+            "unexpected unsupported constructor facade in:\n{contents}"
+        );
+    }
+
+    #[test]
     fn class_wrapper_uses_stable_handle_from_constructor_instead_of_owner_name() {
         use crate::codegen::ir_norm::{IrModule, OpaqueType, SupportMetadata};
 
@@ -2399,7 +2818,7 @@ mod tests {
         let class = AnalyzedFacadeClass {
             go_name: "Api".to_string(),
             handle_name: "ApiHandle".to_string(),
-            constructor: Some(&constructor),
+            constructors: vec![&constructor],
             destructor: &destructor,
             methods: vec![&function],
         };

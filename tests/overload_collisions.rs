@@ -1,7 +1,8 @@
 use cgo_gen::{
     config::Config,
-    generator::{render_header, render_source},
-    ir, parser, pipeline::context::PipelineContext,
+    generator::{render_go_structs, render_header, render_source},
+    ir, parser,
+    pipeline::context::PipelineContext,
 };
 
 #[test]
@@ -109,5 +110,58 @@ output:
         ir.functions
             .iter()
             .any(|item| item.name == "cgowrap_Widget_new__int")
+    );
+}
+
+#[test]
+fn renders_go_facade_for_overloaded_constructors_with_explicit_names() {
+    let root = std::env::temp_dir().join(format!("c_go_overload_ctor_go_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("include")).unwrap();
+    std::fs::write(
+        root.join("include/Widget.hpp"),
+        r#"
+        class Widget {
+        public:
+            Widget() {}
+            Widget(int nItemMax) {}
+            Widget(const Widget& copy) {}
+            int Size() const { return 0; }
+        };
+        "#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("config.yaml"),
+        r#"
+version: 1
+input:
+  headers:
+    - include/Widget.hpp
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(root.join("config.yaml")).unwrap();
+    let ctx = PipelineContext::new(config);
+    let parsed = parser::parse(&ctx).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
+    let go_files = render_go_structs(&ctx, &ir).unwrap();
+    assert_eq!(go_files.len(), 1, "expected one Go facade file");
+    let go = &go_files[0].contents;
+
+    assert!(
+        go.contains("func NewWidget() (*Widget, error) {"),
+        "expected zero-arg Go constructor but got:\n{go}"
+    );
+    assert!(
+        go.contains("func NewWidgetWithNItemMax(nItemMax int32) (*Widget, error) {"),
+        "expected named int Go constructor but got:\n{go}"
+    );
+    assert!(
+        go.contains("func NewWidgetFromCopy(copy *Widget) (*Widget, error) {"),
+        "expected copy Go constructor but got:\n{go}"
     );
 }
