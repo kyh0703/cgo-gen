@@ -157,9 +157,9 @@ naming:
     let facade_go = fs::read_to_string(output_dir.join("facade_thing_wrapper.go")).unwrap();
 
     assert!(model_go.contains("type ModelThing struct {"));
-    assert!(model_go.contains("func (m *ModelThing) GetValue() int {"));
+    assert!(model_go.contains("func (m *ModelThing) GetValue() int32 {"));
     assert!(facade_go.contains("type FacadeThing struct {"));
-    assert!(facade_go.contains("func (f *FacadeThing) GetCount() int {"));
+    assert!(facade_go.contains("func (f *FacadeThing) GetCount() int32 {"));
 }
 
 #[test]

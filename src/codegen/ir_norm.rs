@@ -1472,7 +1472,7 @@ fn symbol_name(config: &Config, namespace: &[String], owner: &str, tail: &str) -
     parts.join("_")
 }
 
-fn overload_suffix(function: &IrFunction) -> String {
+pub(crate) fn overload_suffix(function: &IrFunction) -> String {
     let params = if function.method_of.is_some()
         && matches!(
             function.kind,

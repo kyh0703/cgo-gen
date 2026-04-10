@@ -55,9 +55,9 @@ naming:
 
     assert!(go.contains("type ThingModel struct {"));
     assert!(go.contains("func NewThingModel() (*ThingModel, error) {"));
-    assert!(go.contains("func (t *ThingModel) GetValue() int {"));
-    assert!(go.contains("func (t *ThingModel) SetValue(value int) {"));
-    assert!(go.contains("func (t *ThingModel) Clear() int {"));
+    assert!(go.contains("func (t *ThingModel) GetValue() int32 {"));
+    assert!(go.contains("func (t *ThingModel) SetValue(value int32) {"));
+    assert!(go.contains("func (t *ThingModel) Clear() int32 {"));
 }
 
 #[test]
@@ -113,10 +113,10 @@ naming:
     let model_go = fs::read_to_string(root.join("gen/thing_model_wrapper.go")).unwrap();
     let api_go = fs::read_to_string(root.join("gen/api_wrapper.go")).unwrap();
 
-    assert!(model_go.contains("func (t *ThingModel) GetValue() int {"));
-    assert!(model_go.contains("func (t *ThingModel) SetValue(value int) {"));
-    assert!(api_go.contains("func (a *Api) GetThing(id int, out *ThingModel) bool {"));
-    assert!(api_go.contains("func (a *Api) GetThingPtr(id int, out *ThingModel) bool {"));
+    assert!(model_go.contains("func (t *ThingModel) GetValue() int32 {"));
+    assert!(model_go.contains("func (t *ThingModel) SetValue(value int32) {"));
+    assert!(api_go.contains("func (a *Api) GetThing(id int32, out *ThingModel) bool {"));
+    assert!(api_go.contains("func (a *Api) GetThingPtr(id int32, out *ThingModel) bool {"));
     assert!(api_go.contains("requireThingModelHandle(out)"));
     assert!(api_go.contains("optionalThingModelHandle(out)"));
 }
