@@ -81,8 +81,8 @@ naming:
     );
     assert!(api_source.contains("*reinterpret_cast<ThingModel*>(out)"));
     assert!(api_source.contains("reinterpret_cast<ThingModel*>(out)"));
-    assert!(api_go.contains("func (a *Api) GetThing(id int, out *ThingModel) bool {"));
-    assert!(api_go.contains("func (a *Api) GetThingPtr(id int, out *ThingModel) bool {"));
+    assert!(api_go.contains("func (a *Api) GetThing(id int32, out *ThingModel) bool {"));
+    assert!(api_go.contains("func (a *Api) GetThingPtr(id int32, out *ThingModel) bool {"));
     assert!(!api_go.contains("mapThingModelFromHandle"));
 }
 

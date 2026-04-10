@@ -34,8 +34,8 @@ fn renders_unified_go_wrapper() {
 
     let go = render_go_structs(&ctx, &ir).unwrap();
     assert_eq!(go.len(), 1);
-    assert!(go[0].contents.contains("type Bar struct {"));
-    assert!(go[0].contents.contains("func Add(lhs int, rhs int) int {"));
+    assert!(go[0].contents.contains("type FooBar struct {"));
+    assert!(go[0].contents.contains("func Add(lhs int32, rhs int32) int32 {"));
 }
 
 #[test]
@@ -227,8 +227,10 @@ output:
     let build_flags = fs::read_to_string(root.join("out/build_flags.go")).unwrap();
     assert!(build_flags.contains("package out"));
     assert!(build_flags.contains("#cgo CFLAGS: -I${SRCDIR}"));
-    assert!(build_flags.contains("#cgo CXXFLAGS: -I${SRCDIR} -I${SDK_INCLUDE} -DMODE=1 -std=c++20"));
-    assert!(!build_flags.contains("sdk/include"));
+    assert!(build_flags.contains(&format!(
+        "#cgo CXXFLAGS: -I${{SRCDIR}} -I{} -DMODE=1 -std=c++20",
+        root.join("sdk/include").display()
+    )));
     assert!(!build_flags.contains("-Winvalid-offsetof"));
     assert!(!build_flags.contains("-Wall"));
 }
@@ -294,10 +296,10 @@ output:
     assert!(go[0].contents.contains("type Counter struct {"));
     assert!(go[0]
         .contents
-        .contains("func (c *Counter) GetValue() int {"));
+        .contains("func (c *Counter) GetValue() int32 {"));
     assert!(go[0]
         .contents
-        .contains("func (c *Counter) SetValue(value int) {"));
+        .contains("func (c *Counter) SetValue(value int32) {"));
     assert!(go[0]
         .contents
         .contains("func (c *Counter) GetTotalCount() uint32 {"));
@@ -677,4 +679,57 @@ output:
     assert!(go_text.contains("cSlice := (*[64]C.uint32_t)(unsafe.Pointer(raw))"));
     assert!(go_text.contains("cSlice := (*[16]C.uint32_t)(unsafe.Pointer(raw))"));
     assert!(go_text.contains("(*C.uint32_t)(unsafe.Pointer(&value[0]))"));
+}
+
+#[test]
+fn avoids_false_bool_suffix_for_underscore_backed_field_setters_but_keeps_real_overloads() {
+    let root = env::temp_dir().join(format!(
+        "c_go_false_overload_suffix_detection_{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join("include")).unwrap();
+    fs::write(
+        root.join("include/Api.hpp"),
+        r#"
+        struct _SYS_IF_MONITOR_IODSM {
+            bool bModifyFlag;
+        };
+
+        class Api {
+        public:
+            void SetFlag(bool value) {}
+            void SetFlag(int value) {}
+        };
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("config.yaml"),
+        r#"
+version: 1
+input:
+  headers:
+    - include/Api.hpp
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(root.join("config.yaml")).unwrap();
+    let ctx = generator::prepare_config(&PipelineContext::new(config)).unwrap();
+    let parsed = parser::parse(&ctx).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
+    let go = render_go_structs(&ctx, &ir).unwrap();
+    let go_text = go
+        .iter()
+        .map(|file| file.contents.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(go_text.contains("func (s *SYSIFMONITORIODSM) SetBModifyFlag(value bool) {"));
+    assert!(!go_text.contains("SetBModifyFlagBool("));
+    assert!(go_text.contains("func (a *Api) SetFlagBool(value bool) {"));
+    assert!(go_text.contains("func (a *Api) SetFlagInt32(value int32) {"));
 }

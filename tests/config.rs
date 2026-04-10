@@ -1,6 +1,7 @@
 use std::{
     env, fs,
     path::{Path, PathBuf},
+    sync::atomic::{AtomicUsize, Ordering},
 };
 
 use cgo_gen::config::Config;
@@ -39,9 +40,15 @@ fn normalize_expected_path(path: &Path) -> String {
     }
 }
 
+static TEMP_DIR_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
 fn temp_test_dir(label: &str) -> PathBuf {
     let mut dir = env::temp_dir();
-    dir.push(format!("c_go_config_{label}_{}", std::process::id()));
+    dir.push(format!(
+        "c_go_config_{label}_{}_{}",
+        std::process::id(),
+        TEMP_DIR_COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     dir

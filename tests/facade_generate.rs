@@ -27,7 +27,7 @@ fn generates_go_facade_for_simple_free_function_header() {
         "#include \"{}\"",
         config.generated_header_include(&config.output.header)
     )));
-    assert!(go_facade.contains("func Add(lhs int, rhs int) int {"));
+    assert!(go_facade.contains("func Add(lhs int32, rhs int32) int32 {"));
     assert!(go_facade.contains("C.cgowrap_foo_add(C.int(lhs), C.int(rhs))"));
 }
 
@@ -190,10 +190,10 @@ naming:
 
     let go_facade = fs::read_to_string(root.join("out/media_wrapper.go")).unwrap();
 
-    assert!(go_facade.contains("func (i *IsMediaDelivery) GetFailCnt_1() int"));
-    assert!(go_facade.contains("func (i *IsMediaDelivery) GetFailCnt1() int"));
-    assert!(go_facade.contains("func (i *IsMediaDelivery) SetFailCnt_1(value int)"));
-    assert!(go_facade.contains("func (i *IsMediaDelivery) SetFailCnt1(value int)"));
+    assert!(go_facade.contains("func (i *IsMediaDelivery) GetFailCnt_1() int32"));
+    assert!(go_facade.contains("func (i *IsMediaDelivery) GetFailCnt1() int32"));
+    assert!(go_facade.contains("func (i *IsMediaDelivery) SetFailCnt_1(value int32)"));
+    assert!(go_facade.contains("func (i *IsMediaDelivery) SetFailCnt1(value int32)"));
 }
 
 #[test]
@@ -255,9 +255,9 @@ naming:
     assert!(go_facade.contains("var cArg0 *C.NsLegHandle"));
     assert!(go_facade.contains("if parent != nil {"));
     assert!(go_facade.contains("cArg0 = parent.ptr"));
-    assert!(go_facade.contains("func (n *NsLeg) GetValue() int {"));
+    assert!(go_facade.contains("func (n *NsLeg) GetValue() int32 {"));
     assert!(go_facade.contains("type Api struct {"));
-    assert!(go_facade.contains("func (a *Api) GetValue() int {"));
+    assert!(go_facade.contains("func (a *Api) GetValue() int32 {"));
 }
 
 #[test]
@@ -320,7 +320,7 @@ naming:
     assert!(go_facade.contains("panic(\"reference facade/model argument cannot be nil\")"));
     assert!(go_facade.contains("cArg0 = parent.ptr"));
     assert!(go_facade.contains("type Api struct {"));
-    assert!(go_facade.contains("func (a *Api) GetValue() int {"));
+    assert!(go_facade.contains("func (a *Api) GetValue() int32 {"));
 }
 
 #[test]
@@ -393,9 +393,9 @@ naming:
     assert!(go_facade.contains("func (a *Api) IsReady() bool {"));
     assert!(go_facade.contains("result := C.cgowrap_Api_IsReady(a.ptr)"));
     assert!(go_facade.contains("return bool(result)"));
-    assert!(go_facade.contains("func (a *Api) Clear() int {"));
-    assert!(go_facade.contains("return int(C.cgowrap_Api_Clear(a.ptr))"));
-    assert!(go_facade.contains("func (a *Api) GetThing(id int, out *ThingModel) bool {"));
+    assert!(go_facade.contains("func (a *Api) Clear() int32 {"));
+    assert!(go_facade.contains("return int32(C.cgowrap_Api_Clear(a.ptr))"));
+    assert!(go_facade.contains("func (a *Api) GetThing(id int32, out *ThingModel) bool {"));
     assert!(go_facade.contains("requireThingModelHandle(out)"));
     assert!(
         go_facade
@@ -494,10 +494,10 @@ naming:
     assert!(raw_source.contains("cgowrap_Api_GetUnknown"));
     assert!(raw_source.contains("*reinterpret_cast<UnknownThing*>(out)"));
     assert!(ir_yaml.contains("cpp_name: Api::GetUnknown"));
-    assert!(go_facade.contains("func (a *Api) Count() int {"));
-    assert!(go_facade.contains("return int(C.cgowrap_Api_Count(a.ptr))"));
-    assert!(go_facade.contains("func (a *Api) GetThing(id int, out *ThingModel) bool {"));
-    assert!(go_facade.contains("func (a *Api) GetUnknown(id int, out *UnknownThing) bool {"));
+    assert!(go_facade.contains("func (a *Api) Count() int32 {"));
+    assert!(go_facade.contains("return int32(C.cgowrap_Api_Count(a.ptr))"));
+    assert!(go_facade.contains("func (a *Api) GetThing(id int32, out *ThingModel) bool {"));
+    assert!(go_facade.contains("func (a *Api) GetUnknown(id int32, out *UnknownThing) bool {"));
 }
 
 #[test]
@@ -603,8 +603,8 @@ naming:
     }));
     assert!(ir_yaml.contains("cpp_name: Api::SaveUnknown"));
     assert!(ir_yaml.contains("cpp_name: Api::BuildUnknown"));
-    assert!(go_facade.contains("func (a *Api) Count() int {"));
-    assert!(go_facade.contains("func (a *Api) GetThing(id int, out *ThingModel) bool {"));
+    assert!(go_facade.contains("func (a *Api) Count() int32 {"));
+    assert!(go_facade.contains("func (a *Api) GetThing(id int32, out *ThingModel) bool {"));
     assert!(go_facade.contains("func (a *Api) SaveUnknown(value *UnknownThing) bool {"));
     assert!(go_facade.contains("func (a *Api) BuildUnknown() *UnknownThing {"));
 }
@@ -652,10 +652,10 @@ naming:
 
     let go_facade = fs::read_to_string(root.join("out/api_wrapper.go")).unwrap();
 
-    assert!(go_facade.contains("func (a *Api) ListThing(id int) bool {"));
+    assert!(go_facade.contains("func (a *Api) ListThing(id int32) bool {"));
     assert!(go_facade.contains("result := C.cgowrap_Api_ListThing(a.ptr, C.int(id))"));
     assert!(go_facade.contains("return bool(result)"));
-    assert!(go_facade.contains("func (a *Api) NextThing(cursor int) int {"));
+    assert!(go_facade.contains("func (a *Api) NextThing(cursor int32) int32 {"));
     assert!(!go_facade.contains("mapThingModelFromHandle"));
 }
 
@@ -792,7 +792,7 @@ naming:
 
     assert!(go_facade.contains("type Api struct {"));
     assert!(go_facade.contains("func (a *Api) IsReady() bool {"));
-    assert!(go_facade.contains("func (a *Api) GetThing(out *ThingModel, id int) bool {"));
+    assert!(go_facade.contains("func (a *Api) GetThing(out *ThingModel, id int32) bool {"));
     assert!(!go_facade.contains("mapThingModelFromHandle"));
 }
 

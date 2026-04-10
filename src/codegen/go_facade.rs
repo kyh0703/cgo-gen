@@ -1487,7 +1487,7 @@ fn go_export_name(value: &str) -> String {
 
 fn go_facade_export_name(function: &IrFunction) -> String {
     let base = go_export_name(&leaf_cpp_name(&function.cpp_name));
-    if !function.name.contains("__") {
+    if !has_disambiguated_raw_overload_suffix(function) {
         return base;
     }
 
@@ -1496,11 +1496,27 @@ fn go_facade_export_name(function: &IrFunction) -> String {
 
 fn go_method_export_name(function: &IrFunction) -> String {
     let base = go_export_name(method_name(function));
-    if !function.name.contains("__") {
+    if !has_disambiguated_raw_overload_suffix(function) {
         return base;
     }
 
     format!("{base}{}", go_overload_suffix(function))
+}
+
+fn has_disambiguated_raw_overload_suffix(function: &IrFunction) -> bool {
+    let raw_suffix = ir_norm::overload_suffix(function);
+    let Some((_, tail)) = function.name.rsplit_once("__") else {
+        return false;
+    };
+
+    if tail == raw_suffix {
+        return true;
+    }
+
+    let Some(rest) = tail.strip_prefix(&format!("{raw_suffix}_")) else {
+        return false;
+    };
+    !rest.is_empty() && rest.chars().all(|ch| ch.is_ascii_digit())
 }
 
 fn go_overload_suffix(function: &IrFunction) -> String {
@@ -2059,6 +2075,80 @@ mod tests {
         assert_eq!(go_export_name("thingModel"), "ThingModel");
         assert_eq!(go_export_name("iApiClient"), "IApiClient");
         assert_eq!(go_export_name("UserRecord"), "UserRecord");
+    }
+
+    #[test]
+    fn false_double_underscore_from_owner_name_does_not_trigger_go_overload_suffix() {
+        let function = IrFunction {
+            name: "cgowrap__SYS_IF_MONITOR_IODSM_SetBModifyFlag".to_string(),
+            kind: IrFunctionKind::Method,
+            cpp_name: "_SYS_IF_MONITOR_IODSM::SetBModifyFlag".to_string(),
+            method_of: Some("SYS_IF_MONITOR_IODSMHandle".to_string()),
+            owner_cpp_type: Some("_SYS_IF_MONITOR_IODSM".to_string()),
+            is_const: Some(false),
+            field_accessor: None,
+            returns: IrType {
+                kind: IrTypeKind::Void,
+                cpp_type: "void".to_string(),
+                c_type: "void".to_string(),
+                handle: None,
+            },
+            params: vec![
+                IrParam {
+                    name: "self".to_string(),
+                    ty: IrType {
+                        kind: IrTypeKind::Opaque,
+                        cpp_type: "_SYS_IF_MONITOR_IODSM*".to_string(),
+                        c_type: "SYS_IF_MONITOR_IODSMHandle*".to_string(),
+                        handle: Some("SYS_IF_MONITOR_IODSMHandle".to_string()),
+                    },
+                },
+                IrParam {
+                    name: "value".to_string(),
+                    ty: primitive_type("bool", "bool"),
+                },
+            ],
+        };
+
+        assert!(!has_disambiguated_raw_overload_suffix(&function));
+        assert_eq!(go_method_export_name(&function), "SetBModifyFlag");
+    }
+
+    #[test]
+    fn explicit_raw_overload_suffix_still_triggers_go_overload_suffix() {
+        let function = IrFunction {
+            name: "cgowrap_Api_SetFlag__bool_mut".to_string(),
+            kind: IrFunctionKind::Method,
+            cpp_name: "Api::SetFlag".to_string(),
+            method_of: Some("ApiHandle".to_string()),
+            owner_cpp_type: Some("Api".to_string()),
+            is_const: Some(false),
+            field_accessor: None,
+            returns: IrType {
+                kind: IrTypeKind::Void,
+                cpp_type: "void".to_string(),
+                c_type: "void".to_string(),
+                handle: None,
+            },
+            params: vec![
+                IrParam {
+                    name: "self".to_string(),
+                    ty: IrType {
+                        kind: IrTypeKind::Opaque,
+                        cpp_type: "Api*".to_string(),
+                        c_type: "ApiHandle*".to_string(),
+                        handle: Some("ApiHandle".to_string()),
+                    },
+                },
+                IrParam {
+                    name: "value".to_string(),
+                    ty: primitive_type("bool", "bool"),
+                },
+            ],
+        };
+
+        assert!(has_disambiguated_raw_overload_suffix(&function));
+        assert_eq!(go_method_export_name(&function), "SetFlagBool");
     }
 
     #[test]
