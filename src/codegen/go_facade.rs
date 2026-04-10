@@ -1136,7 +1136,7 @@ fn go_param_type(config: &PipelineContext, ty: &IrType) -> Option<String> {
             let go_name = go_model_return_type(config, ty);
             Some(format!("[]*{go_name}"))
         }
-        IrTypeKind::Primitive => go_type_for_ir(ty).map(str::to_string),
+        IrTypeKind::Primitive | IrTypeKind::Enum => go_value_type(config, ty),
         IrTypeKind::Reference => go_type_for_reference(ty).map(|go_type| format!("*{go_type}")),
         IrTypeKind::Pointer => {
             let base = ty.cpp_type.trim_end_matches('*').trim();
@@ -1175,6 +1175,7 @@ fn go_return_supported(_config: &PipelineContext, ty: &IrType) -> bool {
                 | IrTypeKind::FixedByteArray
                 | IrTypeKind::FixedArray
                 | IrTypeKind::FixedModelArray
+                | IrTypeKind::Enum
         )
         || (ty.kind == IrTypeKind::Primitive && go_type_for_ir(ty).is_some())
         || (ty.kind == IrTypeKind::Pointer && go_pointer_return_type(ty).is_some())
@@ -1236,7 +1237,7 @@ fn go_return_sig(config: &PipelineContext, ty: &IrType) -> String {
                 format!("*{model_ret}")
             }
         }
-        _ => go_type_for_ir(ty).unwrap_or("int32").to_string(),
+        _ => go_value_type(config, ty).unwrap_or_else(|| "int32".to_string()),
     }
 }
 
@@ -1346,7 +1347,7 @@ fn render_go_call_return(
             out
         }
         _ => {
-            let go_type = go_type_for_ir(ty).unwrap();
+            let go_type = go_value_type(config, ty).unwrap();
             let mut out = String::new();
             if go_type == "bool" {
                 out.push_str(&format!("    result := {call}\n"));
@@ -1373,11 +1374,19 @@ fn zero_value_for_go_type(go_type: &str) -> &'static str {
 fn go_type_for_ir(ty: &IrType) -> Option<&'static str> {
     match ty.kind {
         IrTypeKind::String | IrTypeKind::CString => Some("string"),
+        IrTypeKind::Enum => Some("int64"),
         IrTypeKind::Primitive => {
             primitive_go_type(&ty.cpp_type).or_else(|| primitive_go_type(&ty.c_type))
         }
         _ => None,
     }
+}
+
+fn go_value_type(config: &PipelineContext, ty: &IrType) -> Option<String> {
+    if ty.kind == IrTypeKind::Enum {
+        return config.known_enum_go_type(&ty.cpp_type);
+    }
+    go_type_for_ir(ty).map(str::to_string)
 }
 
 fn go_type_for_reference(ty: &IrType) -> Option<&'static str> {
@@ -1643,6 +1652,7 @@ fn go_overload_token(ty: &IrType) -> String {
     match ty.kind {
         IrTypeKind::Callback => format!("{}Callback", go_export_name(&leaf_cpp_name(&ty.cpp_type))),
         IrTypeKind::String | IrTypeKind::CString => string_overload_token(ty),
+        IrTypeKind::Enum => go_export_name(&sanitize_go_token(&enum_base_cpp_type(&ty.cpp_type))),
         IrTypeKind::Primitive => primitive_overload_token(ty),
         IrTypeKind::ExternStructReference => extern_struct_overload_token(ty, "Ref"),
         IrTypeKind::ExternStructPointer => extern_struct_overload_token(ty, "Ptr"),
@@ -1829,6 +1839,11 @@ fn base_model_cpp_type(value: &str) -> String {
         .trim_end_matches('*')
         .trim()
         .to_string()
+}
+
+fn enum_base_cpp_type(value: &str) -> String {
+    let base = base_model_cpp_type(value);
+    base.strip_prefix("enum ").unwrap_or(&base).trim().to_string()
 }
 
 fn extern_struct_go_type(ty: &IrType) -> Option<String> {

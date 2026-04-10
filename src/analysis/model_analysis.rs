@@ -168,6 +168,7 @@ fn build_model_projection(
 
 fn go_model_field_type(ctx: &PipelineContext, ty: &IrType) -> Option<String> {
     match ty.kind {
+        IrTypeKind::Enum => ctx.known_enum_go_type(&ty.cpp_type).or_else(|| go_type_for_ir(ty).map(str::to_string)),
         IrTypeKind::ModelValue => Some(format!("*{}", go_model_return_type(ctx, ty))),
         IrTypeKind::FixedByteArray => Some("[]byte".to_string()),
         IrTypeKind::FixedArray => {
@@ -243,6 +244,7 @@ fn go_type_for_ir(ty: &IrType) -> Option<&'static str> {
     match ty.kind {
         IrTypeKind::String | IrTypeKind::CString => Some("string"),
         IrTypeKind::FixedByteArray => Some("[]byte"),
+        IrTypeKind::Enum => Some("int64"),
         IrTypeKind::Primitive => {
             primitive_go_type(&ty.cpp_type).or_else(|| primitive_go_type(&ty.c_type))
         }
