@@ -7,11 +7,12 @@ pub use crate::domain::kind::{FieldAccessKind, IrFunctionKind, IrTypeKind};
 
 use crate::{
     config::Config,
+    domain::kind::RecordKind,
     parser::{
         CppCallbackTypedef, CppClass, CppConstructor, CppEnum, CppField, CppFunction, CppMethod,
         CppParam, ParsedApi,
     },
-    pipeline::context::PipelineContext,
+    pipeline::context::{KnownRecordType, PipelineContext},
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -107,7 +108,8 @@ pub struct SkippedDeclaration {
 }
 
 pub fn normalize(ctx: &PipelineContext, api: &ParsedApi) -> Result<IrModule> {
-    let config = &ctx.config;
+    let normalization_ctx = derive_normalization_context(ctx, api);
+    let config = &normalization_ctx.config;
     let module = config.naming.prefix.clone();
     let mut opaque_types = Vec::new();
     let mut functions = Vec::new();
@@ -115,10 +117,10 @@ pub fn normalize(ctx: &PipelineContext, api: &ParsedApi) -> Result<IrModule> {
     let mut callbacks = Vec::new();
     let mut skipped_declarations = Vec::new();
     let callback_names = callback_name_set(api);
-    let known_enum_types = if ctx.known_enum_types.is_empty() {
+    let known_enum_types = if normalization_ctx.known_enum_types.is_empty() {
         collect_known_enum_types(api)
     } else {
-        ctx.known_enum_types.iter().cloned().collect()
+        normalization_ctx.known_enum_types.iter().cloned().collect()
     };
     let abstract_types = api
         .classes
@@ -126,10 +128,10 @@ pub fn normalize(ctx: &PipelineContext, api: &ParsedApi) -> Result<IrModule> {
         .filter(|class| class.is_abstract)
         .map(|class| cpp_qualified(&class.namespace, &class.name))
         .collect::<BTreeSet<_>>();
-    let preferred_model_aliases = if ctx.preferred_model_aliases.is_empty() {
+    let preferred_model_aliases = if normalization_ctx.preferred_model_aliases.is_empty() {
         collect_preferred_model_aliases(api)
     } else {
-        ctx.preferred_model_aliases.clone()
+        normalization_ctx.preferred_model_aliases.clone()
     };
 
     for class in &api.classes {
@@ -139,13 +141,14 @@ pub fn normalize(ctx: &PipelineContext, api: &ParsedApi) -> Result<IrModule> {
             name: handle_name.clone(),
             cpp_type: qualified.clone(),
         });
-        functions.extend(normalize_class(
+        functions.extend(normalize_record(
             config,
             class,
             &handle_name,
             &abstract_types,
             &callback_names,
             &known_enum_types,
+            Some(&normalization_ctx),
             &mut skipped_declarations,
         )?);
     }
@@ -157,6 +160,7 @@ pub fn normalize(ctx: &PipelineContext, api: &ParsedApi) -> Result<IrModule> {
             &abstract_types,
             &callback_names,
             &known_enum_types,
+            Some(&normalization_ctx),
             &mut skipped_declarations,
         )? {
             functions.push(function);
@@ -172,6 +176,7 @@ pub fn normalize(ctx: &PipelineContext, api: &ParsedApi) -> Result<IrModule> {
             callback,
             &callback_names,
             &known_enum_types,
+            Some(&normalization_ctx),
         )?);
     }
 
@@ -291,6 +296,38 @@ pub fn collect_preferred_model_aliases(api: &ParsedApi) -> BTreeMap<String, Stri
     }
 
     aliases
+}
+
+fn derive_normalization_context(ctx: &PipelineContext, api: &ParsedApi) -> PipelineContext {
+    let known_model_types = if ctx.known_model_types.is_empty() {
+        api.classes
+            .iter()
+            .filter(|class| !class.is_struct)
+            .map(|class| cpp_qualified(&class.namespace, &class.name))
+            .collect()
+    } else {
+        ctx.known_model_types.clone()
+    };
+    let known_record_types = if ctx.known_record_types.is_empty() {
+        api.classes
+            .iter()
+            .map(|class| KnownRecordType {
+                cpp_type: cpp_qualified(&class.namespace, &class.name),
+                kind: if class.is_struct {
+                    RecordKind::Struct
+                } else {
+                    RecordKind::Class
+                },
+                layout: class.layout,
+            })
+            .collect()
+    } else {
+        ctx.known_record_types.clone()
+    };
+
+    ctx.clone()
+        .with_known_model_types(known_model_types)
+        .with_known_record_types(known_record_types)
 }
 
 fn collect_known_enum_types(api: &ParsedApi) -> BTreeSet<String> {
@@ -435,41 +472,162 @@ fn ensure_unique_function_symbols(functions: &[IrFunction]) -> Result<()> {
     bail!("overload collision detected after suffix assignment: {message}")
 }
 
-fn normalize_class(
+fn normalize_record(
     config: &Config,
     class: &CppClass,
     handle_name: &str,
     abstract_types: &BTreeSet<String>,
     callback_names: &BTreeSet<String>,
     known_enum_types: &BTreeSet<String>,
+    record_ctx: Option<&PipelineContext>,
+    skipped_declarations: &mut Vec<SkippedDeclaration>,
+) -> Result<Vec<IrFunction>> {
+    if class.is_struct {
+        normalize_cpp_struct(
+            config,
+            class,
+            handle_name,
+            abstract_types,
+            callback_names,
+            known_enum_types,
+            record_ctx,
+            skipped_declarations,
+        )
+    } else {
+        normalize_cpp_class(
+            config,
+            class,
+            handle_name,
+            abstract_types,
+            callback_names,
+            known_enum_types,
+            record_ctx,
+            skipped_declarations,
+        )
+    }
+}
+
+fn normalize_cpp_class(
+    config: &Config,
+    class: &CppClass,
+    handle_name: &str,
+    abstract_types: &BTreeSet<String>,
+    callback_names: &BTreeSet<String>,
+    known_enum_types: &BTreeSet<String>,
+    record_ctx: Option<&PipelineContext>,
     skipped_declarations: &mut Vec<SkippedDeclaration>,
 ) -> Result<Vec<IrFunction>> {
     let mut functions = Vec::new();
     let qualified = cpp_qualified(&class.namespace, &class.name);
 
+    functions.extend(normalize_class_lifecycle(
+        config,
+        class,
+        handle_name,
+        &qualified,
+        callback_names,
+        known_enum_types,
+        record_ctx,
+        skipped_declarations,
+    )?);
+
+    for method in &class.methods {
+        if let Some(function) = normalize_method(
+            config,
+            class,
+            handle_name,
+            method,
+            abstract_types,
+            callback_names,
+            known_enum_types,
+            record_ctx,
+            skipped_declarations,
+        )? {
+            functions.push(function);
+        }
+    }
+
+    Ok(functions)
+}
+
+fn normalize_cpp_struct(
+    config: &Config,
+    class: &CppClass,
+    handle_name: &str,
+    abstract_types: &BTreeSet<String>,
+    callback_names: &BTreeSet<String>,
+    known_enum_types: &BTreeSet<String>,
+    record_ctx: Option<&PipelineContext>,
+    skipped_declarations: &mut Vec<SkippedDeclaration>,
+) -> Result<Vec<IrFunction>> {
+    let mut functions = Vec::new();
+    let qualified = cpp_qualified(&class.namespace, &class.name);
+
+    functions.extend(normalize_struct_lifecycle(
+        config,
+        class,
+        handle_name,
+        &qualified,
+        callback_names,
+        known_enum_types,
+        record_ctx,
+        skipped_declarations,
+    )?);
+
+    for method in &class.methods {
+        if let Some(function) = normalize_method(
+            config,
+            class,
+            handle_name,
+            method,
+            abstract_types,
+            callback_names,
+            known_enum_types,
+            record_ctx,
+            skipped_declarations,
+        )? {
+            functions.push(function);
+        }
+    }
+
+    functions.extend(normalize_struct_fields(
+        config,
+        class,
+        handle_name,
+        callback_names,
+        known_enum_types,
+        record_ctx,
+    )?);
+
+    Ok(functions)
+}
+
+fn normalize_class_lifecycle(
+    config: &Config,
+    class: &CppClass,
+    handle_name: &str,
+    qualified: &str,
+    callback_names: &BTreeSet<String>,
+    known_enum_types: &BTreeSet<String>,
+    record_ctx: Option<&PipelineContext>,
+    skipped_declarations: &mut Vec<SkippedDeclaration>,
+) -> Result<Vec<IrFunction>> {
+    let mut functions = Vec::new();
+
     if class.is_abstract {
         skipped_declarations.push(SkippedDeclaration {
-            cpp_name: qualified.clone(),
+            cpp_name: qualified.to_string(),
             reason: "abstract class: has pure virtual methods; constructor wrapper omitted"
                 .to_string(),
         });
     } else if class.constructors.is_empty() {
-        functions.push(IrFunction {
-            name: symbol_name(config, &class.namespace, &class.name, "new"),
-            kind: IrFunctionKind::Constructor,
-            cpp_name: qualified.clone(),
-            method_of: Some(handle_name.to_string()),
-            owner_cpp_type: Some(qualified.clone()),
-            is_const: None,
-            field_accessor: None,
-            returns: IrType {
-                kind: IrTypeKind::Opaque,
-                cpp_type: qualified.clone(),
-                c_type: format!("{handle_name}*"),
-                handle: Some(handle_name.to_string()),
-            },
-            params: Vec::new(),
-        });
+        functions.push(make_default_owned_record_constructor(
+            config,
+            &class.namespace,
+            &class.name,
+            qualified,
+            handle_name,
+        ));
     } else {
         let initial_len = functions.len();
         for constructor in &class.constructors {
@@ -480,6 +638,7 @@ fn normalize_class(
                 constructor,
                 callback_names,
                 known_enum_types,
+                record_ctx,
                 skipped_declarations,
             )? {
                 functions.push(function);
@@ -492,16 +651,116 @@ fn normalize_class(
         }
     }
 
-    functions.push(IrFunction {
+    functions.push(make_owned_record_destructor(
+        config,
+        class,
+        qualified,
+        handle_name,
+    ));
+
+    Ok(functions)
+}
+
+fn normalize_struct_lifecycle(
+    config: &Config,
+    class: &CppClass,
+    handle_name: &str,
+    qualified: &str,
+    callback_names: &BTreeSet<String>,
+    known_enum_types: &BTreeSet<String>,
+    record_ctx: Option<&PipelineContext>,
+    skipped_declarations: &mut Vec<SkippedDeclaration>,
+) -> Result<Vec<IrFunction>> {
+    let mut functions = Vec::new();
+
+    if class.is_abstract {
+        skipped_declarations.push(SkippedDeclaration {
+            cpp_name: qualified.to_string(),
+            reason: "abstract struct: has pure virtual methods; constructor wrapper omitted"
+                .to_string(),
+        });
+    } else if class.constructors.is_empty() {
+        functions.push(make_default_owned_record_constructor(
+            config,
+            &class.namespace,
+            &class.name,
+            qualified,
+            handle_name,
+        ));
+    } else {
+        let initial_len = functions.len();
+        for constructor in &class.constructors {
+            if let Some(function) = normalize_constructor(
+                config,
+                class,
+                handle_name,
+                constructor,
+                callback_names,
+                known_enum_types,
+                record_ctx,
+                skipped_declarations,
+            )? {
+                functions.push(function);
+            }
+        }
+        if functions.len() == initial_len {
+            bail!(
+                "struct {qualified} declares constructors, but none were eligible for wrapper generation; refusing to synthesize a default constructor"
+            );
+        }
+    }
+
+    functions.push(make_owned_record_destructor(
+        config,
+        class,
+        qualified,
+        handle_name,
+    ));
+
+    Ok(functions)
+}
+
+fn make_default_owned_record_constructor(
+    config: &Config,
+    namespace: &[String],
+    owner_name: &str,
+    qualified: &str,
+    handle_name: &str,
+) -> IrFunction {
+    IrFunction {
+        name: symbol_name(config, namespace, owner_name, "new"),
+        kind: IrFunctionKind::Constructor,
+        cpp_name: qualified.to_string(),
+        method_of: Some(handle_name.to_string()),
+        owner_cpp_type: Some(qualified.to_string()),
+        is_const: None,
+        field_accessor: None,
+        returns: IrType {
+            kind: IrTypeKind::Opaque,
+            cpp_type: qualified.to_string(),
+            c_type: format!("{handle_name}*"),
+            handle: Some(handle_name.to_string()),
+        },
+        params: Vec::new(),
+    }
+}
+
+fn make_owned_record_destructor(
+    config: &Config,
+    class: &CppClass,
+    qualified: &str,
+    handle_name: &str,
+) -> IrFunction {
+    IrFunction {
         name: symbol_name(config, &class.namespace, &class.name, "delete"),
         kind: IrFunctionKind::Destructor,
         cpp_name: if class.has_destructor {
-            format!("~{}", qualified)
+            format!("~{qualified}")
         } else {
-            qualified.clone()
+            qualified.to_string()
         },
         method_of: Some(handle_name.to_string()),
-        owner_cpp_type: Some(qualified.clone()),
+        owner_cpp_type: Some(qualified.to_string()),
         is_const: None,
         field_accessor: None,
         returns: primitive_type("void"),
@@ -509,39 +768,12 @@ fn normalize_class(
             name: "self".to_string(),
             ty: IrType {
                 kind: IrTypeKind::Opaque,
-                cpp_type: format!("{}*", qualified),
+                cpp_type: format!("{qualified}*"),
                 c_type: format!("{handle_name}*"),
                 handle: Some(handle_name.to_string()),
             },
         }],
-    });
-
-    for method in &class.methods {
-        if let Some(function) = normalize_method(
-            config,
-            class,
-            handle_name,
-            method,
-            abstract_types,
-            callback_names,
-            known_enum_types,
-            skipped_declarations,
-        )? {
-            functions.push(function);
-        }
     }
-
-    if class.is_struct {
-        functions.extend(normalize_struct_fields(
-            config,
-            class,
-            handle_name,
-            callback_names,
-            known_enum_types,
-        )?);
-    }
-
-    Ok(functions)
 }
 
 fn normalize_struct_fields(
@@ -550,6 +782,7 @@ fn normalize_struct_fields(
     handle_name: &str,
     callback_names: &BTreeSet<String>,
     known_enum_types: &BTreeSet<String>,
+    record_ctx: Option<&PipelineContext>,
 ) -> Result<Vec<IrFunction>> {
     let qualified = cpp_qualified(&class.namespace, &class.name);
     let existing_methods = class
@@ -570,12 +803,13 @@ fn normalize_struct_fields(
             continue;
         }
 
-        let Ok(field_ty) = normalize_type_with_canonical(
+        let Ok(field_ty) = normalize_type_with_canonical_in_context(
             config,
             &field.ty,
             &field.canonical_ty,
             callback_names,
             known_enum_types,
+            record_ctx,
         )
         else {
             continue;
@@ -725,6 +959,7 @@ fn normalize_constructor(
     constructor: &CppConstructor,
     callback_names: &BTreeSet<String>,
     known_enum_types: &BTreeSet<String>,
+    record_ctx: Option<&PipelineContext>,
     skipped_declarations: &mut Vec<SkippedDeclaration>,
 ) -> Result<Option<IrFunction>> {
     let qualified = cpp_qualified(&class.namespace, &class.name);
@@ -752,7 +987,15 @@ fn normalize_constructor(
         params: constructor
             .params
             .iter()
-            .map(|param| normalize_param(config, param, callback_names, known_enum_types))
+            .map(|param| {
+                normalize_param(
+                    config,
+                    param,
+                    callback_names,
+                    known_enum_types,
+                    record_ctx,
+                )
+            })
             .collect::<Result<Vec<_>>>()?,
     }))
 }
@@ -765,6 +1008,7 @@ fn normalize_method(
     abstract_types: &BTreeSet<String>,
     callback_names: &BTreeSet<String>,
     known_enum_types: &BTreeSet<String>,
+    record_ctx: Option<&PipelineContext>,
     skipped_declarations: &mut Vec<SkippedDeclaration>,
 ) -> Result<Option<IrFunction>> {
     let qualified = cpp_qualified(&class.namespace, &class.name);
@@ -819,7 +1063,15 @@ fn normalize_method(
         method
             .params
             .iter()
-            .map(|param| normalize_param(config, param, callback_names, known_enum_types))
+            .map(|param| {
+                normalize_param(
+                    config,
+                    param,
+                    callback_names,
+                    known_enum_types,
+                    record_ctx,
+                )
+            })
             .collect::<Result<Vec<_>>>()?,
     );
     Ok(Some(IrFunction {
@@ -830,13 +1082,14 @@ fn normalize_method(
         owner_cpp_type: Some(qualified),
         is_const: Some(method.is_const),
         field_accessor: None,
-        returns: normalize_return_type_with_canonical(
+        returns: normalize_return_type_with_canonical_in_context(
             config,
             &method.return_type,
             &method.return_canonical_type,
             abstract_types,
             callback_names,
             known_enum_types,
+            record_ctx,
         )?,
         params,
     }))
@@ -848,6 +1101,7 @@ fn normalize_function(
     abstract_types: &BTreeSet<String>,
     callback_names: &BTreeSet<String>,
     known_enum_types: &BTreeSet<String>,
+    record_ctx: Option<&PipelineContext>,
     skipped_declarations: &mut Vec<SkippedDeclaration>,
 ) -> Result<Option<IrFunction>> {
     let cpp_name = cpp_qualified(&function.namespace, &function.name);
@@ -887,18 +1141,27 @@ fn normalize_function(
         owner_cpp_type: None,
         is_const: None,
         field_accessor: None,
-        returns: normalize_return_type_with_canonical(
+        returns: normalize_return_type_with_canonical_in_context(
             config,
             &function.return_type,
             &function.return_canonical_type,
             abstract_types,
             callback_names,
             known_enum_types,
+            record_ctx,
         )?,
         params: function
             .params
             .iter()
-            .map(|param| normalize_param(config, param, callback_names, known_enum_types))
+            .map(|param| {
+                normalize_param(
+                    config,
+                    param,
+                    callback_names,
+                    known_enum_types,
+                    record_ctx,
+                )
+            })
             .collect::<Result<Vec<_>>>()?,
     }))
 }
@@ -923,21 +1186,31 @@ fn normalize_callback(
     callback: &CppCallbackTypedef,
     callback_names: &BTreeSet<String>,
     known_enum_types: &BTreeSet<String>,
+    record_ctx: Option<&PipelineContext>,
 ) -> Result<IrCallback> {
     Ok(IrCallback {
         name: callback.name.clone(),
         cpp_name: cpp_qualified(&callback.namespace, &callback.name),
-        returns: normalize_type_with_canonical(
+        returns: normalize_type_with_canonical_in_context(
             config,
             &callback.return_type,
             &callback.return_canonical_type,
             callback_names,
             known_enum_types,
+            record_ctx,
         )?,
         params: callback
             .params
             .iter()
-            .map(|param| normalize_param(config, param, callback_names, known_enum_types))
+            .map(|param| {
+                normalize_param(
+                    config,
+                    param,
+                    callback_names,
+                    known_enum_types,
+                    record_ctx,
+                )
+            })
             .collect::<Result<Vec<_>>>()?,
     })
 }
@@ -982,19 +1255,22 @@ fn normalize_param(
     param: &CppParam,
     callback_names: &BTreeSet<String>,
     known_enum_types: &BTreeSet<String>,
+    record_ctx: Option<&PipelineContext>,
 ) -> Result<IrParam> {
     Ok(IrParam {
         name: sanitize_go_param_name(&param.name),
-        ty: normalize_type_with_canonical(
+        ty: normalize_type_with_canonical_in_context(
             config,
             &param.ty,
             &param.canonical_ty,
             callback_names,
             known_enum_types,
+            record_ctx,
         )?,
     })
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn normalize_return_type_with_canonical(
     config: &Config,
     cpp_type: &str,
@@ -1003,18 +1279,40 @@ fn normalize_return_type_with_canonical(
     callback_names: &BTreeSet<String>,
     known_enum_types: &BTreeSet<String>,
 ) -> Result<IrType> {
-    let mut ty = normalize_type_with_canonical(
+    normalize_return_type_with_canonical_in_context(
+        config,
+        cpp_type,
+        canonical_type,
+        abstract_types,
+        callback_names,
+        known_enum_types,
+        None,
+    )
+}
+
+fn normalize_return_type_with_canonical_in_context(
+    config: &Config,
+    cpp_type: &str,
+    canonical_type: &str,
+    abstract_types: &BTreeSet<String>,
+    callback_names: &BTreeSet<String>,
+    known_enum_types: &BTreeSet<String>,
+    record_ctx: Option<&PipelineContext>,
+) -> Result<IrType> {
+    let mut ty = normalize_type_with_canonical_in_context(
         config,
         cpp_type,
         canonical_type,
         callback_names,
         known_enum_types,
+        record_ctx,
     )?;
     if matches!(
         ty.kind,
         IrTypeKind::ModelReference | IrTypeKind::ModelPointer
     ) && !is_abstract_model_type(&ty.cpp_type, abstract_types)
         && base_model_cpp_type(&ty.cpp_type) != "void"
+        && should_promote_model_return_to_view(record_ctx, &ty.cpp_type, canonical_type)
     {
         ty.kind = IrTypeKind::ModelView;
     }
@@ -1024,6 +1322,29 @@ fn normalize_return_type_with_canonical(
 fn is_abstract_model_type(cpp_type: &str, abstract_types: &BTreeSet<String>) -> bool {
     let base = base_model_cpp_type(cpp_type);
     !base.is_empty() && abstract_types.contains(&base)
+}
+
+fn should_promote_model_return_to_view(
+    record_ctx: Option<&PipelineContext>,
+    cpp_type: &str,
+    canonical_type: &str,
+) -> bool {
+    if is_opaque_tag_record_without_definition(record_ctx, cpp_type)
+        || is_opaque_tag_record_without_definition(record_ctx, canonical_type)
+    {
+        return false;
+    }
+
+    let Some(ctx) = record_ctx else {
+        return true;
+    };
+
+    let display_lookup = record_lookup_base_type(cpp_type);
+    let canonical_lookup = record_lookup_base_type(canonical_type);
+    ctx.known_record_type(&display_lookup).is_some()
+        || ctx.known_record_type(&canonical_lookup).is_some()
+        || ctx.is_known_model_type(&display_lookup)
+        || ctx.is_known_model_type(&canonical_lookup)
 }
 
 fn function_pointer_reason(
@@ -1217,11 +1538,29 @@ fn enum_value_type(cpp_type: &str) -> IrType {
 }
 
 fn normalize_type_with_canonical(
+    config: &Config,
+    cpp_type: &str,
+    canonical_type: &str,
+    callback_names: &BTreeSet<String>,
+    known_enum_types: &BTreeSet<String>,
+) -> Result<IrType> {
+    normalize_type_with_canonical_in_context(
+        config,
+        cpp_type,
+        canonical_type,
+        callback_names,
+        known_enum_types,
+        None,
+    )
+}
+
+fn normalize_type_with_canonical_in_context(
     _config: &Config,
     cpp_type: &str,
     canonical_type: &str,
     callback_names: &BTreeSet<String>,
     known_enum_types: &BTreeSet<String>,
+    record_ctx: Option<&PipelineContext>,
 ) -> Result<IrType> {
     let trimmed = cpp_type.trim();
     let canonical_trimmed = canonical_type.trim();
@@ -1230,7 +1569,7 @@ fn normalize_type_with_canonical(
     {
         return Ok(enum_value_type(&enum_cpp_type));
     }
-    if let Ok(ty) = normalize_type(trimmed, callback_names) {
+    if let Ok(ty) = normalize_type_in_context(trimmed, callback_names, record_ctx) {
         if matches!(
             ty.kind,
             IrTypeKind::ModelReference
@@ -1239,7 +1578,9 @@ fn normalize_type_with_canonical(
                 | IrTypeKind::FixedModelArray
         ) && canonical_trimmed != trimmed
         {
-            if let Ok(mut canonical_ty) = normalize_type(canonical_trimmed, callback_names) {
+            if let Ok(mut canonical_ty) =
+                normalize_type_in_context(canonical_trimmed, callback_names, record_ctx)
+            {
                 if matches!(
                     canonical_ty.kind,
                     IrTypeKind::ExternStructReference
@@ -1274,7 +1615,8 @@ fn normalize_type_with_canonical(
 
     if canonical_trimmed != trimmed {
         if raw_type_shape(trimmed) == raw_type_shape(canonical_trimmed)
-            && let Ok(mut ty) = normalize_type(canonical_trimmed, callback_names)
+            && let Ok(mut ty) =
+                normalize_type_in_context(canonical_trimmed, callback_names, record_ctx)
         {
             ty.cpp_type = trimmed.to_string();
             return Ok(ty);
@@ -1297,6 +1639,14 @@ fn raw_type_shape(cpp_type: &str) -> &'static str {
 }
 
 fn normalize_type(cpp_type: &str, callback_names: &BTreeSet<String>) -> Result<IrType> {
+    normalize_type_in_context(cpp_type, callback_names, None)
+}
+
+fn normalize_type_in_context(
+    cpp_type: &str,
+    callback_names: &BTreeSet<String>,
+    record_ctx: Option<&PipelineContext>,
+) -> Result<IrType> {
     let trimmed = cpp_type.trim();
     if callback_names.contains(trimmed) {
         return Ok(IrType {
@@ -1352,7 +1702,9 @@ fn normalize_type(cpp_type: &str, callback_names: &BTreeSet<String>) -> Result<I
                 handle: None,
             });
         }
-        if let Some(handle_name) = raw_safe_model_handle_name(elem) {
+        if let Some(handle_name) =
+            known_record_handle_name(record_ctx, elem).or_else(|| raw_safe_model_handle_name(elem))
+        {
             return Ok(IrType {
                 kind: IrTypeKind::FixedModelArray,
                 cpp_type: trimmed.to_string(),
@@ -1437,6 +1789,33 @@ fn normalize_type(cpp_type: &str, callback_names: &BTreeSet<String>) -> Result<I
                 handle: None,
             })
         }
+        _ if trimmed.ends_with('&') && model_like_handle_name(record_ctx, trimmed).is_some() => {
+            let handle_name = model_like_handle_name(record_ctx, trimmed).unwrap();
+            Ok(IrType {
+                kind: IrTypeKind::ModelReference,
+                cpp_type: trimmed.to_string(),
+                c_type: format!("{handle_name}*"),
+                handle: Some(handle_name),
+            })
+        }
+        _ if trimmed.ends_with('*') && model_like_handle_name(record_ctx, trimmed).is_some() => {
+            let handle_name = model_like_handle_name(record_ctx, trimmed).unwrap();
+            Ok(IrType {
+                kind: IrTypeKind::ModelPointer,
+                cpp_type: trimmed.to_string(),
+                c_type: format!("{handle_name}*"),
+                handle: Some(handle_name),
+            })
+        }
+        _ if model_like_handle_name(record_ctx, trimmed).is_some() => {
+            let handle_name = model_like_handle_name(record_ctx, trimmed).unwrap();
+            Ok(IrType {
+                kind: IrTypeKind::ModelValue,
+                cpp_type: trimmed.to_string(),
+                c_type: format!("{handle_name}*"),
+                handle: Some(handle_name),
+            })
+        }
         _ if trimmed.ends_with('&') && extern_c_struct_base_type(trimmed).is_some() => {
             let base = extern_c_struct_base_type(trimmed).unwrap();
             Ok(IrType {
@@ -1453,33 +1832,6 @@ fn normalize_type(cpp_type: &str, callback_names: &BTreeSet<String>) -> Result<I
                 cpp_type: trimmed.to_string(),
                 c_type: format!("{base}*"),
                 handle: None,
-            })
-        }
-        _ if trimmed.ends_with('&') && raw_safe_model_handle_name(trimmed).is_some() => {
-            let handle_name = raw_safe_model_handle_name(trimmed).unwrap();
-            Ok(IrType {
-                kind: IrTypeKind::ModelReference,
-                cpp_type: trimmed.to_string(),
-                c_type: format!("{handle_name}*"),
-                handle: Some(handle_name),
-            })
-        }
-        _ if trimmed.ends_with('*') && raw_safe_model_handle_name(trimmed).is_some() => {
-            let handle_name = raw_safe_model_handle_name(trimmed).unwrap();
-            Ok(IrType {
-                kind: IrTypeKind::ModelPointer,
-                cpp_type: trimmed.to_string(),
-                c_type: format!("{handle_name}*"),
-                handle: Some(handle_name),
-            })
-        }
-        _ if raw_safe_model_handle_name(trimmed).is_some() => {
-            let handle_name = raw_safe_model_handle_name(trimmed).unwrap();
-            Ok(IrType {
-                kind: IrTypeKind::ModelValue,
-                cpp_type: trimmed.to_string(),
-                c_type: format!("{handle_name}*"),
-                handle: Some(handle_name),
             })
         }
         _ => bail!("unsupported C++ type in v1: {trimmed}"),
@@ -1767,10 +2119,8 @@ fn base_model_cpp_type(value: &str) -> String {
 
 fn extern_c_struct_base_type(cpp_type: &str) -> Option<String> {
     let base = base_model_cpp_type(cpp_type);
-    if let Some(tag) = base.strip_prefix("struct ") {
-        return (!tag.trim().is_empty()).then(|| format!("struct {}", tag.trim()));
-    }
     match base.as_str() {
+        "struct timeval" => Some("struct timeval".to_string()),
         "timeval" => Some("struct timeval".to_string()),
         _ => None,
     }
@@ -1793,6 +2143,69 @@ fn raw_safe_model_handle_name(cpp_type: &str) -> Option<String> {
     }
 
     Some(format!("{}Handle", flatten_qualified_cpp_name(&base)))
+}
+
+fn known_record_handle_name(
+    record_ctx: Option<&PipelineContext>,
+    cpp_type: &str,
+) -> Option<String> {
+    let ctx = record_ctx?;
+    let lookup = record_lookup_base_type(cpp_type);
+    let record = ctx.known_record_type(&lookup)?;
+    Some(stable_class_handle_name(
+        &record.cpp_type,
+        &ctx.preferred_model_aliases,
+    ))
+}
+
+fn opaque_tag_record_handle_name(cpp_type: &str) -> Option<String> {
+    let base = base_model_cpp_type(cpp_type);
+    let tag = base.strip_prefix("struct ")?;
+    let tag = tag.trim();
+    if tag.is_empty() || tag == "timeval" {
+        return None;
+    }
+    Some(format!("{}Handle", flatten_qualified_cpp_name(tag)))
+}
+
+fn model_like_handle_name(
+    record_ctx: Option<&PipelineContext>,
+    cpp_type: &str,
+) -> Option<String> {
+    known_record_handle_name(record_ctx, cpp_type)
+        .or_else(|| opaque_tag_record_handle_name(cpp_type))
+        .or_else(|| {
+            if extern_c_struct_base_type(cpp_type).is_none() {
+                raw_safe_model_handle_name(cpp_type)
+            } else {
+                None
+            }
+        })
+}
+
+fn is_opaque_tag_record_without_definition(
+    record_ctx: Option<&PipelineContext>,
+    cpp_type: &str,
+) -> bool {
+    let base = base_model_cpp_type(cpp_type);
+    let Some(tag) = base.strip_prefix("struct ") else {
+        return false;
+    };
+    let tag = tag.trim();
+    !tag.is_empty()
+        && tag != "timeval"
+        && record_ctx
+            .and_then(|ctx| ctx.known_record_type(tag))
+            .is_none()
+}
+
+fn record_lookup_base_type(value: &str) -> String {
+    let base = base_model_cpp_type(value);
+    base.strip_prefix("struct ")
+        .or_else(|| base.strip_prefix("class "))
+        .unwrap_or(&base)
+        .trim()
+        .to_string()
 }
 
 /// "T[N]" 패턴에서 (elem_type_str, size) 추출. const 접두사 제거 후 처리.

@@ -12,6 +12,7 @@ use clang_sys::*;
 use serde::Serialize;
 
 use crate::{
+    domain::kind::RecordLayout,
     parsing::compiler,
     pipeline::context::PipelineContext,
 };
@@ -31,6 +32,7 @@ pub struct CppClass {
     pub namespace: Vec<String>,
     pub name: String,
     pub is_struct: bool,
+    pub layout: RecordLayout,
     pub fields: Vec<CppField>,
     pub methods: Vec<CppMethod>,
     pub constructors: Vec<CppConstructor>,
@@ -362,6 +364,7 @@ fn parse_class(
     let source_header = normalized_cursor_file_path(cursor)
         .ok_or_else(|| anyhow!("failed to determine source header for class `{name}`"))?;
     let is_struct = unsafe { clang_getCursorKind(cursor) == CXCursor_StructDecl };
+    let layout = detect_record_layout(cursor);
     let mut fields = Vec::new();
     let mut methods = Vec::new();
     let mut constructors = Vec::new();
@@ -428,6 +431,7 @@ fn parse_class(
         namespace,
         name,
         is_struct,
+        layout,
         fields,
         methods,
         constructors,
@@ -435,6 +439,54 @@ fn parse_class(
         has_declared_constructor,
         is_abstract,
     })
+}
+
+fn detect_record_layout(cursor: CXCursor) -> RecordLayout {
+    if cursor_has_attr_kind(cursor, CXCursor_PackedAttr) {
+        return RecordLayout::Packed;
+    }
+
+    let record_align = type_align_of(unsafe { clang_getCursorType(cursor) });
+    for child in direct_children(cursor) {
+        if unsafe { clang_getCursorKind(child) } != CXCursor_FieldDecl {
+            continue;
+        }
+
+        let field_ty = unsafe { clang_getCanonicalType(clang_getCursorType(child)) };
+        let field_align = type_align_of(field_ty);
+        let field_offset_bits = unsafe { clang_Cursor_getOffsetOfField(child) };
+
+        if let (Some(record_align), Some(field_align)) = (record_align, field_align)
+            && field_align > record_align
+        {
+            return RecordLayout::Packed;
+        }
+
+        if let Some(field_align) = field_align
+            && field_align > 1
+            && field_offset_bits >= 0
+            && field_offset_bits % (field_align * 8) != 0
+        {
+            return RecordLayout::Packed;
+        }
+    }
+
+    RecordLayout::Normal
+}
+
+fn cursor_has_attr_kind(cursor: CXCursor, attr_kind: CXCursorKind) -> bool {
+    if unsafe { clang_Cursor_hasAttrs(cursor) } == 0 {
+        return false;
+    }
+
+    direct_children(cursor)
+        .into_iter()
+        .any(|child| unsafe { clang_getCursorKind(child) } == attr_kind)
+}
+
+fn type_align_of(ty: CXType) -> Option<i64> {
+    let align = unsafe { clang_Type_getAlignOf(ty) };
+    (align >= 0).then_some(align)
 }
 
 fn parse_function(cursor: CXCursor, namespace: Vec<String>) -> Result<CppFunction> {

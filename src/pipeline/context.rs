@@ -2,12 +2,26 @@ use std::{collections::BTreeMap, ops::Deref, path::PathBuf};
 
 use anyhow::Result;
 
-use crate::{config::Config, domain::model_projection::ModelProjection};
+use crate::{
+    config::Config,
+    domain::{
+        kind::{RecordKind, RecordLayout},
+        model_projection::ModelProjection,
+    },
+};
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct KnownRecordType {
+    pub cpp_type: String,
+    pub kind: RecordKind,
+    pub layout: RecordLayout,
+}
 
 #[derive(Debug, Clone)]
 pub struct PipelineContext {
     pub config: Config,
     pub known_model_types: Vec<String>,
+    pub known_record_types: Vec<KnownRecordType>,
     pub known_enum_types: Vec<String>,
     pub preferred_model_aliases: BTreeMap<String, String>,
     pub known_model_projections: Vec<ModelProjection>,
@@ -23,6 +37,7 @@ impl PipelineContext {
             raw_clang_args,
             config,
             known_model_types: vec![],
+            known_record_types: vec![],
             known_enum_types: vec![],
             preferred_model_aliases: BTreeMap::new(),
             known_model_projections: vec![],
@@ -48,6 +63,11 @@ impl PipelineContext {
 
     pub fn with_known_model_types(mut self, known_model_types: Vec<String>) -> Self {
         self.known_model_types = known_model_types;
+        self
+    }
+
+    pub fn with_known_record_types(mut self, known_record_types: Vec<KnownRecordType>) -> Self {
+        self.known_record_types = known_record_types;
         self
     }
 
@@ -78,6 +98,7 @@ impl PipelineContext {
         PipelineContext {
             config: scoped_config,
             known_model_types: self.known_model_types.clone(),
+            known_record_types: self.known_record_types.clone(),
             known_enum_types: self.known_enum_types.clone(),
             preferred_model_aliases: self.preferred_model_aliases.clone(),
             known_model_projections: self.known_model_projections.clone(),
@@ -105,6 +126,25 @@ impl PipelineContext {
                 || normalized.rsplit("::").next().unwrap_or(&normalized) == base
                 || base.rsplit("::").next().unwrap_or(&base) == normalized
         })
+    }
+
+    pub fn known_record_type(&self, cpp_type: &str) -> Option<&KnownRecordType> {
+        let base = base_cpp_type_name(cpp_type);
+        self.known_record_types.iter().find(|record| {
+            let normalized = base_cpp_type_name(&record.cpp_type);
+            normalized == base
+                || normalized.rsplit("::").next().unwrap_or(&normalized) == base
+                || base.rsplit("::").next().unwrap_or(&base) == normalized
+        })
+    }
+
+    pub fn is_known_struct_type(&self, cpp_type: &str) -> bool {
+        self.known_record_type(cpp_type)
+            .is_some_and(|record| record.kind == RecordKind::Struct)
+    }
+
+    pub fn known_record_layout(&self, cpp_type: &str) -> Option<RecordLayout> {
+        self.known_record_type(cpp_type).map(|record| record.layout)
     }
 
     pub fn is_known_enum_type(&self, cpp_type: &str) -> bool {

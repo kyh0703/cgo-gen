@@ -9,10 +9,11 @@ use anyhow::{bail, Context, Result};
 use crate::{
     analysis::model_analysis,
     codegen::{go_facade as facade, ir_norm as ir},
+    domain::kind::{RecordKind, RecordLayout},
     domain::kind::{FieldAccessKind, IrFunctionKind, IrTypeKind},
     ir::{IrCallback, IrFunction, IrModule, IrParam, IrType},
     parsing::parser,
-    pipeline::context::PipelineContext,
+    pipeline::context::{KnownRecordType, PipelineContext},
 };
 
 pub fn generate_all(ctx: &PipelineContext, write_ir: bool) -> Result<()> {
@@ -139,11 +140,13 @@ fn build_pipeline_context(
     ctx: &PipelineContext,
     parsed: &parser::ParsedApi,
 ) -> Result<PipelineContext> {
+    let known_record_types = collect_known_record_types(parsed);
     let known_model_types = collect_known_model_types(parsed);
     let known_enum_types = collect_known_enum_types(parsed);
     let preferred_model_aliases = ir::collect_preferred_model_aliases(parsed);
     let scoped = ctx
         .clone()
+        .with_known_record_types(known_record_types)
         .with_known_model_types(known_model_types)
         .with_known_enum_types(known_enum_types)
         .with_preferred_model_aliases(preferred_model_aliases);
@@ -156,12 +159,35 @@ fn collect_known_model_types(parsed: &parser::ParsedApi) -> Vec<String> {
     parsed
         .classes
         .iter()
+        .filter(|class| !class.is_struct)
         .map(|class| {
             if class.namespace.is_empty() {
                 class.name.clone()
             } else {
                 format!("{}::{}", class.namespace.join("::"), class.name)
             }
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+fn collect_known_record_types(parsed: &parser::ParsedApi) -> Vec<KnownRecordType> {
+    parsed
+        .classes
+        .iter()
+        .map(|class| KnownRecordType {
+            cpp_type: if class.namespace.is_empty() {
+                class.name.clone()
+            } else {
+                format!("{}::{}", class.namespace.join("::"), class.name)
+            },
+            kind: if class.is_struct {
+                RecordKind::Struct
+            } else {
+                RecordKind::Class
+            },
+            layout: class.layout,
         })
         .collect::<BTreeSet<_>>()
         .into_iter()
@@ -419,7 +445,7 @@ pub fn render_source(ctx: &PipelineContext, ir: &IrModule) -> String {
     out.push('\n');
 
     for function in &ir.functions {
-        out.push_str(&render_function_def(function));
+        out.push_str(&render_function_def(ctx, function));
         out.push('\n');
     }
     let callback_map = callback_map(ir);
@@ -490,7 +516,7 @@ fn render_param_list(function: &IrFunction) -> String {
         .join(", ")
 }
 
-fn render_function_def(function: &IrFunction) -> String {
+fn render_function_def(ctx: &PipelineContext, function: &IrFunction) -> String {
     let signature = format!(
         "{} {}({})",
         function.returns.c_type,
@@ -498,9 +524,9 @@ fn render_function_def(function: &IrFunction) -> String {
         render_param_list(function)
     );
     let body = match function.kind {
-        IrFunctionKind::Constructor => render_constructor_body(function),
-        IrFunctionKind::Destructor => render_destructor_body(function),
-        IrFunctionKind::Method => render_method_body(function),
+        IrFunctionKind::Constructor => render_constructor_body(ctx, function),
+        IrFunctionKind::Destructor => render_destructor_body(ctx, function),
+        IrFunctionKind::Method => render_method_body(ctx, function),
         IrFunctionKind::Function => render_free_function_body(function),
     };
     format!("{signature} {{\n{body}}}\n")
@@ -521,7 +547,14 @@ fn render_callback_bridge_def(
     format!("{signature} {{\n{body}}}\n")
 }
 
-fn render_constructor_body(function: &IrFunction) -> String {
+fn render_constructor_body(ctx: &PipelineContext, function: &IrFunction) -> String {
+    if owner_record_kind(ctx, function) == Some(RecordKind::Struct) {
+        return render_struct_constructor_body(ctx, function);
+    }
+    render_class_constructor_body(ctx, function)
+}
+
+fn render_class_constructor_body(_ctx: &PipelineContext, function: &IrFunction) -> String {
     let owner = function.owner_cpp_type.as_deref().unwrap_or("void");
     let call_args = call_args(function, 0);
     format!(
@@ -530,12 +563,40 @@ fn render_constructor_body(function: &IrFunction) -> String {
     )
 }
 
-fn render_destructor_body(function: &IrFunction) -> String {
+fn render_struct_constructor_body(_ctx: &PipelineContext, function: &IrFunction) -> String {
+    let owner = function.owner_cpp_type.as_deref().unwrap_or("void");
+    let call_args = call_args(function, 0);
+    format!(
+        "    return reinterpret_cast<{}>(new {}({}));\n",
+        function.returns.c_type, owner, call_args
+    )
+}
+
+fn render_destructor_body(ctx: &PipelineContext, function: &IrFunction) -> String {
+    if owner_record_kind(ctx, function) == Some(RecordKind::Struct) {
+        return render_struct_destructor_body(ctx, function);
+    }
+    render_class_destructor_body(ctx, function)
+}
+
+fn render_class_destructor_body(_ctx: &PipelineContext, function: &IrFunction) -> String {
     let owner = function.owner_cpp_type.as_deref().unwrap_or("void");
     format!("    delete reinterpret_cast<{}*>(self);\n", owner)
 }
 
-fn render_method_body(function: &IrFunction) -> String {
+fn render_struct_destructor_body(_ctx: &PipelineContext, function: &IrFunction) -> String {
+    let owner = function.owner_cpp_type.as_deref().unwrap_or("void");
+    format!("    delete reinterpret_cast<{}*>(self);\n", owner)
+}
+
+fn render_method_body(ctx: &PipelineContext, function: &IrFunction) -> String {
+    if owner_record_kind(ctx, function) == Some(RecordKind::Struct) {
+        return render_struct_method_body(ctx, function);
+    }
+    render_class_method_body(ctx, function)
+}
+
+fn render_class_method_body(_ctx: &PipelineContext, function: &IrFunction) -> String {
     let owner = function.owner_cpp_type.as_deref().unwrap_or("void");
     if let Some(accessor) = &function.field_accessor {
         let receiver = if function.is_const.unwrap_or(false) {
@@ -550,6 +611,42 @@ fn render_method_body(function: &IrFunction) -> String {
             FieldAccessKind::Set => {
                 render_field_setter_body(function, &receiver, &accessor.field_name)
             }
+        };
+    }
+    let receiver = if function.is_const.unwrap_or(false) {
+        format!("reinterpret_cast<const {}*>(self)", owner)
+    } else {
+        format!("reinterpret_cast<{}*>(self)", owner)
+    };
+    let method_name = function
+        .cpp_name
+        .rsplit("::")
+        .next()
+        .unwrap_or(&function.cpp_name);
+    render_callable_body(function, &format!("{receiver}->{method_name}"), 1)
+}
+
+fn render_struct_method_body(ctx: &PipelineContext, function: &IrFunction) -> String {
+    let owner = function.owner_cpp_type.as_deref().unwrap_or("void");
+    if let Some(accessor) = &function.field_accessor {
+        let receiver = if function.is_const.unwrap_or(false) {
+            format!("reinterpret_cast<const {}*>(self)", owner)
+        } else {
+            format!("reinterpret_cast<{}*>(self)", owner)
+        };
+        return match accessor.access {
+            FieldAccessKind::Get => render_struct_field_getter_body(
+                ctx,
+                function,
+                &receiver,
+                &accessor.field_name,
+            ),
+            FieldAccessKind::Set => render_struct_field_setter_body(
+                ctx,
+                function,
+                &receiver,
+                &accessor.field_name,
+            ),
         };
     }
     let receiver = if function.is_const.unwrap_or(false) {
@@ -683,6 +780,32 @@ fn render_field_setter_body(function: &IrFunction, receiver: &str, field_name: &
             base_model_cpp_type(&value_param.ty.cpp_type)
         ),
         _ => format!("    {receiver}->{} = value;\n", field_name),
+    }
+}
+
+fn render_struct_field_getter_body(
+    ctx: &PipelineContext,
+    function: &IrFunction,
+    receiver: &str,
+    field_name: &str,
+) -> String {
+    match owner_record_layout(ctx, function) {
+        Some(RecordLayout::Packed) | Some(RecordLayout::Normal) | None => {
+            render_field_getter_body(function, receiver, field_name)
+        }
+    }
+}
+
+fn render_struct_field_setter_body(
+    ctx: &PipelineContext,
+    function: &IrFunction,
+    receiver: &str,
+    field_name: &str,
+) -> String {
+    match owner_record_layout(ctx, function) {
+        Some(RecordLayout::Packed) | Some(RecordLayout::Normal) | None => {
+            render_field_setter_body(function, receiver, field_name)
+        }
     }
 }
 
@@ -1009,6 +1132,16 @@ fn base_model_cpp_type(value: &str) -> String {
         .trim_end_matches('*')
         .trim()
         .to_string()
+}
+
+fn owner_record_kind(ctx: &PipelineContext, function: &IrFunction) -> Option<RecordKind> {
+    let owner = function.owner_cpp_type.as_deref()?;
+    ctx.known_record_type(owner).map(|record| record.kind)
+}
+
+fn owner_record_layout(ctx: &PipelineContext, function: &IrFunction) -> Option<RecordLayout> {
+    let owner = function.owner_cpp_type.as_deref()?;
+    ctx.known_record_type(owner).map(|record| record.layout)
 }
 
 fn fixed_model_array_elem_cpp_type(cpp_type: &str) -> String {

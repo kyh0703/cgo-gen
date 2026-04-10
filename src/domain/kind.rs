@@ -1,5 +1,21 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum RecordKind {
+    #[serde(rename = "class")]
+    Class,
+    #[serde(rename = "struct")]
+    Struct,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum RecordLayout {
+    #[serde(rename = "normal")]
+    Normal,
+    #[serde(rename = "packed")]
+    Packed,
+}
+
 /// Classifies the type of an IR type node.
 /// Serializes to the same string values as the previous String-based field
 /// to maintain YAML/JSON wire format compatibility.

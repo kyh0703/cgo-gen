@@ -7,7 +7,7 @@ use anyhow::{Result, bail};
 
 use crate::{
     codegen::ir_norm,
-    domain::kind::{IrFunctionKind, IrTypeKind},
+    domain::kind::{IrFunctionKind, IrTypeKind, RecordKind, RecordLayout},
     ir::{IrCallback, IrEnum, IrFunction, IrModule, IrType, OpaqueType},
     pipeline::context::PipelineContext,
 };
@@ -23,7 +23,7 @@ struct AnalyzedFacadeClass<'a> {
     go_name: String,
     handle_name: String,
     constructors: Vec<&'a IrFunction>,
-    destructor: &'a IrFunction,
+    destructor: Option<&'a IrFunction>,
     methods: Vec<&'a IrFunction>,
 }
 
@@ -132,9 +132,10 @@ fn collect_facade_classes<'a>(
     for (owner, methods) in methods_by_owner {
         ensure_unique_method_exports(owner, &methods)?;
 
-        let Some(destructor) = destructors.get(owner).copied() else {
+        let destructor = destructors.get(owner).copied();
+        if destructor.is_none() && !config.is_known_struct_type(owner) {
             continue;
-        };
+        }
         let constructors = constructors_by_owner
             .get(owner)
             .into_iter()
@@ -149,10 +150,12 @@ fn collect_facade_classes<'a>(
             .first()
             .and_then(|ctor| ctor.returns.handle.clone())
             .or_else(|| {
-                destructor
-                    .params
-                    .first()
-                    .and_then(|param| param.ty.handle.clone())
+                destructor.and_then(|function| {
+                    function
+                        .params
+                        .first()
+                        .and_then(|param| param.ty.handle.clone())
+                })
             })
             .unwrap_or_else(|| format!("{}Handle", flatten_qualified_cpp_name(owner)));
         let go_name = handle_name
@@ -310,13 +313,13 @@ fn render_go_facade_file(
     }
 
     for class in classes {
-        out.push_str(&render_facade_class(class));
+        out.push_str(&render_facade_record_type(config, class));
         out.push('\n');
         let constructor_names = go_constructor_export_names(class);
         for (constructor, constructor_name) in
             class.constructors.iter().zip(constructor_names.iter())
         {
-            out.push_str(&render_facade_constructor(
+            out.push_str(&render_record_constructor(
                 config,
                 class,
                 constructor,
@@ -324,12 +327,14 @@ fn render_go_facade_file(
             ));
             out.push('\n');
         }
-        out.push_str(&render_facade_close(class));
-        out.push('\n');
-        out.push_str(&render_handle_helpers(class));
+        if class.destructor.is_some() {
+            out.push_str(&render_record_close(config, class));
+            out.push('\n');
+        }
+        out.push_str(&render_record_handle_helpers(config, class));
         out.push('\n');
         for method in &class.methods {
-            out.push_str(&render_general_api_method(config, class, method));
+            out.push_str(&render_record_method(config, class, method));
             out.push('\n');
         }
     }
@@ -485,14 +490,59 @@ fn render_callback_export(usage: &CallbackUsage<'_>) -> String {
     out
 }
 
-fn render_facade_class(class: &AnalyzedFacadeClass<'_>) -> String {
+fn render_facade_record_type(
+    config: &PipelineContext,
+    class: &AnalyzedFacadeClass<'_>,
+) -> String {
+    match facade_record_kind(config, class) {
+        RecordKind::Struct => render_facade_struct_type(config, class),
+        RecordKind::Class => render_facade_class_type(config, class),
+    }
+}
+
+fn render_facade_class_type(
+    _config: &PipelineContext,
+    class: &AnalyzedFacadeClass<'_>,
+) -> String {
     format!(
         "type {} struct {{\n    ptr *C.{}\n}}\n",
         class.go_name, class.handle_name
     )
 }
 
-fn render_facade_constructor(
+fn render_facade_struct_type(
+    _config: &PipelineContext,
+    class: &AnalyzedFacadeClass<'_>,
+) -> String {
+    format!(
+        "type {} struct {{\n    ptr *C.{}\n}}\n",
+        class.go_name, class.handle_name
+    )
+}
+
+fn render_record_constructor(
+    config: &PipelineContext,
+    class: &AnalyzedFacadeClass<'_>,
+    constructor: &IrFunction,
+    constructor_name: &str,
+) -> String {
+    match facade_record_kind(config, class) {
+        RecordKind::Struct => render_facade_struct_constructor(
+            config,
+            class,
+            constructor,
+            constructor_name,
+        ),
+        RecordKind::Class => render_facade_class_constructor(
+            config,
+            class,
+            constructor,
+            constructor_name,
+        ),
+    }
+}
+
+fn render_facade_class_constructor(
     config: &PipelineContext,
     class: &AnalyzedFacadeClass<'_>,
     constructor: &IrFunction,
@@ -533,15 +583,93 @@ fn render_facade_constructor(
     out
 }
 
-fn render_facade_close(class: &AnalyzedFacadeClass<'_>) -> String {
+fn render_facade_struct_constructor(
+    config: &PipelineContext,
+    class: &AnalyzedFacadeClass<'_>,
+    constructor: &IrFunction,
+    constructor_name: &str,
+) -> String {
+    let constructor_params = constructor.params.iter().collect::<Vec<_>>();
+    let params = render_param_list(config, &constructor_params);
+    let prep = render_call_prep(config, &constructor_params);
+
+    let mut out = format!(
+        "func {constructor_name}({params}) (*{}, error) {{\n",
+        class.go_name
+    );
+    for line in prep.setup_lines {
+        out.push_str("    ");
+        out.push_str(&line);
+        out.push('\n');
+    }
+    for line in prep.defer_lines {
+        out.push_str("    ");
+        out.push_str(&line);
+        out.push('\n');
+    }
+    out.push_str(&format!(
+        "    ptr := C.{}({})\n",
+        constructor.name,
+        prep.args.join(", "),
+    ));
+    for line in prep.post_call_lines {
+        out.push_str("    ");
+        out.push_str(&line);
+        out.push('\n');
+    }
+    out.push_str(&format!(
+        "    if ptr == nil {{\n        return nil, errors.New(\"wrapper returned nil facade handle\")\n    }}\n    return &{}{{ptr: ptr}}, nil\n}}\n",
+        class.go_name
+    ));
+    out
+}
+
+fn render_record_close(config: &PipelineContext, class: &AnalyzedFacadeClass<'_>) -> String {
+    match facade_record_kind(config, class) {
+        RecordKind::Struct => render_facade_struct_close(config, class),
+        RecordKind::Class => render_facade_class_close(config, class),
+    }
+}
+
+fn render_facade_class_close(_config: &PipelineContext, class: &AnalyzedFacadeClass<'_>) -> String {
+    let destructor = class
+        .destructor
+        .expect("render_facade_close requires a destructor");
     let receiver = receiver_name(&class.go_name);
     format!(
         "func ({} *{}) Close() {{\n    if {} == nil || {}.ptr == nil {{\n        return\n    }}\n    C.{}({}.ptr)\n    {}.ptr = nil\n}}\n",
-        receiver, class.go_name, receiver, receiver, class.destructor.name, receiver, receiver,
+        receiver, class.go_name, receiver, receiver, destructor.name, receiver, receiver,
     )
 }
 
-fn render_handle_helpers(class: &AnalyzedFacadeClass<'_>) -> String {
+fn render_facade_struct_close(
+    _config: &PipelineContext,
+    class: &AnalyzedFacadeClass<'_>,
+) -> String {
+    let destructor = class
+        .destructor
+        .expect("render_facade_close requires a destructor");
+    let receiver = receiver_name(&class.go_name);
+    format!(
+        "func ({} *{}) Close() {{\n    if {} == nil || {}.ptr == nil {{\n        return\n    }}\n    C.{}({}.ptr)\n    {}.ptr = nil\n}}\n",
+        receiver, class.go_name, receiver, receiver, destructor.name, receiver, receiver,
+    )
+}
+
+fn render_record_handle_helpers(
+    config: &PipelineContext,
+    class: &AnalyzedFacadeClass<'_>,
+) -> String {
+    match facade_record_kind(config, class) {
+        RecordKind::Struct => render_struct_handle_helpers(config, class),
+        RecordKind::Class => render_class_handle_helpers(config, class),
+    }
+}
+
+fn render_class_handle_helpers(
+    _config: &PipelineContext,
+    class: &AnalyzedFacadeClass<'_>,
+) -> String {
     let go_name = &class.go_name;
     let handle = &class.handle_name;
     let receiver = receiver_name(go_name);
@@ -560,6 +688,41 @@ fn render_handle_helpers(class: &AnalyzedFacadeClass<'_>) -> String {
          \x20   return {receiver}.ptr\n\
          }}\n"
     )
+}
+
+fn render_struct_handle_helpers(
+    _config: &PipelineContext,
+    class: &AnalyzedFacadeClass<'_>,
+) -> String {
+    let go_name = &class.go_name;
+    let handle = &class.handle_name;
+    let receiver = receiver_name(go_name);
+    format!(
+        "func require{go_name}Handle({receiver} *{go_name}) *C.{handle} {{\n\
+         \x20   if {receiver} == nil || {receiver}.ptr == nil {{\n\
+         \x20       panic(\"{go_name} handle is required but nil\")\n\
+         \x20   }}\n\
+         \x20   return {receiver}.ptr\n\
+         }}\n\
+         \n\
+         func optional{go_name}Handle({receiver} *{go_name}) *C.{handle} {{\n\
+         \x20   if {receiver} == nil {{\n\
+         \x20       return nil\n\
+         \x20   }}\n\
+         \x20   return {receiver}.ptr\n\
+         }}\n"
+    )
+}
+
+fn render_record_method(
+    config: &PipelineContext,
+    class: &AnalyzedFacadeClass<'_>,
+    function: &IrFunction,
+) -> String {
+    match facade_record_kind(config, class) {
+        RecordKind::Struct => render_struct_method(config, class, function),
+        RecordKind::Class => render_general_api_method(config, class, function),
+    }
 }
 
 fn render_general_api_method(
@@ -609,6 +772,14 @@ fn render_general_api_method(
     ));
     out.push_str("}\n");
     out
+}
+
+fn render_struct_method(
+    config: &PipelineContext,
+    class: &AnalyzedFacadeClass<'_>,
+    function: &IrFunction,
+) -> String {
+    render_general_api_method(config, class, function)
 }
 
 fn render_free_function(config: &PipelineContext, function: &IrFunction) -> String {
@@ -1867,8 +2038,11 @@ fn ir_uses_struct_timeval(functions: &[&IrFunction], classes: &[AnalyzedFacadeCl
                         .chain(ctor.params.iter().map(|param| &param.ty))
                         .collect::<Vec<_>>()
                 })
-                .chain(std::iter::once(&class.destructor.returns))
-                .chain(class.destructor.params.iter().map(|param| &param.ty))
+                .chain(class.destructor.into_iter().flat_map(|destructor| {
+                    std::iter::once(&destructor.returns)
+                        .chain(destructor.params.iter().map(|param| &param.ty))
+                        .collect::<Vec<_>>()
+                }))
                 .chain(class.methods.iter().flat_map(|function| {
                     std::iter::once(&function.returns)
                         .chain(function.params.iter().map(|param| &param.ty))
@@ -1880,6 +2054,39 @@ fn ir_uses_struct_timeval(functions: &[&IrFunction], classes: &[AnalyzedFacadeCl
                 IrTypeKind::ExternStructReference | IrTypeKind::ExternStructPointer
             ) && base_model_cpp_type(&ty.c_type) == "struct timeval"
         })
+}
+
+fn facade_record_kind(
+    config: &PipelineContext,
+    class: &AnalyzedFacadeClass<'_>,
+) -> RecordKind {
+    facade_owner_cpp_type(class)
+        .and_then(|owner| config.known_record_type(owner))
+        .map(|record| record.kind)
+        .unwrap_or(RecordKind::Class)
+}
+
+#[allow(dead_code)]
+fn facade_record_layout(
+    config: &PipelineContext,
+    class: &AnalyzedFacadeClass<'_>,
+) -> Option<RecordLayout> {
+    facade_owner_cpp_type(class)
+        .and_then(|owner| config.known_record_type(owner))
+        .map(|record| record.layout)
+}
+
+fn facade_owner_cpp_type<'a>(class: &'a AnalyzedFacadeClass<'a>) -> Option<&'a str> {
+    class
+        .methods
+        .first()
+        .and_then(|function| function.owner_cpp_type.as_deref())
+        .or_else(|| {
+            class.constructors.iter().find_map(|function| {
+                function.owner_cpp_type.as_deref()
+            })
+        })
+        .or_else(|| class.destructor.and_then(|function| function.owner_cpp_type.as_deref()))
 }
 fn sanitize_go_token(value: &str) -> String {
     value
@@ -1969,8 +2176,10 @@ mod tests {
     use super::*;
     use crate::{
         config::Config,
+        domain::kind::{RecordKind, RecordLayout},
         domain::model_projection::{ModelProjection, ModelProjectionField},
         ir::IrParam,
+        pipeline::context::KnownRecordType,
         pipeline::context::PipelineContext,
     };
 
@@ -2547,7 +2756,7 @@ mod tests {
             go_name: "Widget".to_string(),
             handle_name,
             constructors: vec![&constructor_int, &constructor_double],
-            destructor: &destructor,
+            destructor: Some(&destructor),
             methods: vec![],
         };
 
@@ -2834,7 +3043,7 @@ mod tests {
             go_name: "Api".to_string(),
             handle_name: "ApiHandle".to_string(),
             constructors: vec![&constructor],
-            destructor: &destructor,
+            destructor: Some(&destructor),
             methods: vec![&function],
         };
         let code = render_general_api_method(&config, &class, &function);
@@ -2962,6 +3171,60 @@ mod tests {
             !contents.contains("_DCSHISTORYHandle"),
             "unexpected underscore handle cast in Go facade:\n{contents}"
         );
+    }
+
+    #[test]
+    fn known_struct_methods_render_without_destructor_dependency() {
+        use crate::codegen::ir_norm::{IrModule, OpaqueType, SupportMetadata};
+
+        let config = PipelineContext::new(Config::default()).with_known_record_types(vec![
+            KnownRecordType {
+                cpp_type: "Counter".to_string(),
+                kind: RecordKind::Struct,
+                layout: RecordLayout::Normal,
+            },
+        ]);
+        let ir = IrModule {
+            version: 1,
+            module: "cgowrap".to_string(),
+            source_headers: vec![],
+            opaque_types: vec![OpaqueType {
+                name: "CounterHandle".to_string(),
+                cpp_type: "Counter".to_string(),
+            }],
+            functions: vec![IrFunction {
+                name: "cgowrap_Counter_GetValue".to_string(),
+                kind: IrFunctionKind::Method,
+                cpp_name: "Counter::GetValue".to_string(),
+                method_of: Some("CounterHandle".to_string()),
+                owner_cpp_type: Some("Counter".to_string()),
+                is_const: Some(true),
+                field_accessor: None,
+                returns: primitive_type("int", "int"),
+                params: vec![IrParam {
+                    name: "self".to_string(),
+                    ty: IrType {
+                        kind: IrTypeKind::Opaque,
+                        cpp_type: "const Counter*".to_string(),
+                        c_type: "const CounterHandle*".to_string(),
+                        handle: Some("CounterHandle".to_string()),
+                    },
+                }],
+            }],
+            enums: vec![],
+            callbacks: vec![],
+            support: SupportMetadata {
+                parser_backend: "test".to_string(),
+                notes: vec![],
+                skipped_declarations: vec![],
+            },
+        };
+
+        let files = render_go_facade(&config, &ir, &BTreeSet::new()).unwrap();
+        let contents = &files[0].contents;
+        assert!(contents.contains("type Counter struct {\n    ptr *C.CounterHandle\n}"));
+        assert!(contents.contains("func (c *Counter) GetValue() int32 {"));
+        assert!(!contents.contains("func (c *Counter) Close() {"));
     }
 
     #[test]

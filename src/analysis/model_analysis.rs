@@ -5,7 +5,7 @@ use anyhow::{Result, bail};
 use crate::{
     codegen::{go_facade, ir_norm},
     domain::{
-        kind::{IrFunctionKind, IrTypeKind},
+        kind::{IrFunctionKind, IrTypeKind, RecordKind, RecordLayout},
         model_projection::{ModelProjection, ModelProjectionField},
     },
     ir::{IrFunction, IrModule, IrType},
@@ -63,6 +63,12 @@ fn build_all_model_projections(
 
     let mut projections = Vec::new();
     for (owner, class_methods) in methods_by_owner {
+        if ctx
+            .known_record_type(&owner)
+            .is_some_and(|record| record.kind == RecordKind::Struct || record.layout == RecordLayout::Packed)
+        {
+            continue;
+        }
         if let Some(projection) = build_model_projection(
             ctx,
             &owner,
@@ -361,6 +367,7 @@ mod tests {
     use crate::{
         config::Config,
         ir::{IrFunction, IrParam},
+        pipeline::context::KnownRecordType,
     };
 
     fn test_context() -> PipelineContext {
@@ -374,6 +381,24 @@ mod tests {
                 fields: vec![],
             },
         ])
+    }
+
+    fn primitive_type(cpp_type: &str, c_type: &str) -> IrType {
+        IrType {
+            kind: IrTypeKind::Primitive,
+            cpp_type: cpp_type.to_string(),
+            c_type: c_type.to_string(),
+            handle: None,
+        }
+    }
+
+    fn opaque_handle_type(cpp_type: &str, handle_name: &str) -> IrType {
+        IrType {
+            kind: IrTypeKind::Opaque,
+            cpp_type: cpp_type.to_string(),
+            c_type: format!("{handle_name}*"),
+            handle: Some(handle_name.to_string()),
+        }
     }
 
     fn model_type(kind: IrTypeKind, cpp_type: &str) -> IrType {
@@ -681,5 +706,157 @@ mod tests {
         assert_eq!(projections.len(), 1);
         assert_eq!(projections[0].handle_name, "DCSHISTORYHandle");
         assert_eq!(projections[0].go_name, "DCSHISTORY");
+    }
+
+    #[test]
+    fn known_struct_and_packed_records_do_not_build_model_projections() {
+        let ctx = PipelineContext::new(Config::default()).with_known_record_types(vec![
+            KnownRecordType {
+                cpp_type: "PlainRecord".to_string(),
+                kind: RecordKind::Struct,
+                layout: RecordLayout::Normal,
+            },
+            KnownRecordType {
+                cpp_type: "PackedClassLike".to_string(),
+                kind: RecordKind::Class,
+                layout: RecordLayout::Packed,
+            },
+        ]);
+        let ir = IrModule {
+            version: 1,
+            module: "cgowrap".to_string(),
+            source_headers: vec![],
+            opaque_types: vec![],
+            enums: vec![],
+            callbacks: vec![],
+            support: crate::ir::SupportMetadata {
+                parser_backend: "libclang".to_string(),
+                notes: vec![],
+                skipped_declarations: vec![],
+            },
+            functions: vec![
+                IrFunction {
+                    name: "cgowrap_PlainRecord_new".to_string(),
+                    kind: IrFunctionKind::Constructor,
+                    cpp_name: "PlainRecord".to_string(),
+                    method_of: Some("PlainRecordHandle".to_string()),
+                    owner_cpp_type: Some("PlainRecord".to_string()),
+                    is_const: None,
+                    field_accessor: None,
+                    returns: opaque_handle_type("PlainRecord", "PlainRecordHandle"),
+                    params: vec![],
+                },
+                IrFunction {
+                    name: "cgowrap_PlainRecord_delete".to_string(),
+                    kind: IrFunctionKind::Destructor,
+                    cpp_name: "~PlainRecord".to_string(),
+                    method_of: Some("PlainRecordHandle".to_string()),
+                    owner_cpp_type: Some("PlainRecord".to_string()),
+                    is_const: None,
+                    field_accessor: None,
+                    returns: primitive_type("void", "void"),
+                    params: vec![IrParam {
+                        name: "self".to_string(),
+                        ty: opaque_handle_type("PlainRecord*", "PlainRecordHandle"),
+                    }],
+                },
+                IrFunction {
+                    name: "cgowrap_PlainRecord_GetValue".to_string(),
+                    kind: IrFunctionKind::Method,
+                    cpp_name: "PlainRecord::GetValue".to_string(),
+                    method_of: Some("PlainRecordHandle".to_string()),
+                    owner_cpp_type: Some("PlainRecord".to_string()),
+                    is_const: Some(true),
+                    field_accessor: None,
+                    returns: primitive_type("int", "int"),
+                    params: vec![IrParam {
+                        name: "self".to_string(),
+                        ty: opaque_handle_type("const PlainRecord*", "PlainRecordHandle"),
+                    }],
+                },
+                IrFunction {
+                    name: "cgowrap_PlainRecord_SetValue".to_string(),
+                    kind: IrFunctionKind::Method,
+                    cpp_name: "PlainRecord::SetValue".to_string(),
+                    method_of: Some("PlainRecordHandle".to_string()),
+                    owner_cpp_type: Some("PlainRecord".to_string()),
+                    is_const: Some(false),
+                    field_accessor: None,
+                    returns: primitive_type("void", "void"),
+                    params: vec![
+                        IrParam {
+                            name: "self".to_string(),
+                            ty: opaque_handle_type("PlainRecord*", "PlainRecordHandle"),
+                        },
+                        IrParam {
+                            name: "value".to_string(),
+                            ty: primitive_type("int", "int"),
+                        },
+                    ],
+                },
+                IrFunction {
+                    name: "cgowrap_PackedClassLike_new".to_string(),
+                    kind: IrFunctionKind::Constructor,
+                    cpp_name: "PackedClassLike".to_string(),
+                    method_of: Some("PackedClassLikeHandle".to_string()),
+                    owner_cpp_type: Some("PackedClassLike".to_string()),
+                    is_const: None,
+                    field_accessor: None,
+                    returns: opaque_handle_type("PackedClassLike", "PackedClassLikeHandle"),
+                    params: vec![],
+                },
+                IrFunction {
+                    name: "cgowrap_PackedClassLike_delete".to_string(),
+                    kind: IrFunctionKind::Destructor,
+                    cpp_name: "~PackedClassLike".to_string(),
+                    method_of: Some("PackedClassLikeHandle".to_string()),
+                    owner_cpp_type: Some("PackedClassLike".to_string()),
+                    is_const: None,
+                    field_accessor: None,
+                    returns: primitive_type("void", "void"),
+                    params: vec![IrParam {
+                        name: "self".to_string(),
+                        ty: opaque_handle_type("PackedClassLike*", "PackedClassLikeHandle"),
+                    }],
+                },
+                IrFunction {
+                    name: "cgowrap_PackedClassLike_GetValue".to_string(),
+                    kind: IrFunctionKind::Method,
+                    cpp_name: "PackedClassLike::GetValue".to_string(),
+                    method_of: Some("PackedClassLikeHandle".to_string()),
+                    owner_cpp_type: Some("PackedClassLike".to_string()),
+                    is_const: Some(true),
+                    field_accessor: None,
+                    returns: primitive_type("int", "int"),
+                    params: vec![IrParam {
+                        name: "self".to_string(),
+                        ty: opaque_handle_type("const PackedClassLike*", "PackedClassLikeHandle"),
+                    }],
+                },
+                IrFunction {
+                    name: "cgowrap_PackedClassLike_SetValue".to_string(),
+                    kind: IrFunctionKind::Method,
+                    cpp_name: "PackedClassLike::SetValue".to_string(),
+                    method_of: Some("PackedClassLikeHandle".to_string()),
+                    owner_cpp_type: Some("PackedClassLike".to_string()),
+                    is_const: Some(false),
+                    field_accessor: None,
+                    returns: primitive_type("void", "void"),
+                    params: vec![
+                        IrParam {
+                            name: "self".to_string(),
+                            ty: opaque_handle_type("PackedClassLike*", "PackedClassLikeHandle"),
+                        },
+                        IrParam {
+                            name: "value".to_string(),
+                            ty: primitive_type("int", "int"),
+                        },
+                    ],
+                },
+            ],
+        };
+
+        let projections = collect_known_model_projections(&ctx, &ir).unwrap();
+        assert!(projections.is_empty());
     }
 }
