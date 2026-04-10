@@ -168,7 +168,9 @@ fn build_model_projection(
 
 fn go_model_field_type(ctx: &PipelineContext, ty: &IrType) -> Option<String> {
     match ty.kind {
-        IrTypeKind::Enum => ctx.known_enum_go_type(&ty.cpp_type).or_else(|| go_type_for_ir(ty).map(str::to_string)),
+        IrTypeKind::Enum => ctx
+            .known_enum_go_type(&ty.cpp_type)
+            .or_else(|| go_type_for_ir(ty).map(str::to_string)),
         IrTypeKind::ModelValue => Some(format!("*{}", go_model_return_type(ctx, ty))),
         IrTypeKind::FixedByteArray => Some("[]byte".to_string()),
         IrTypeKind::FixedArray => {
@@ -394,6 +396,7 @@ mod tests {
             source_headers: vec![],
             opaque_types: vec![],
             enums: vec![],
+            constants: vec![],
             callbacks: vec![],
             support: crate::ir::SupportMetadata {
                 parser_backend: "libclang".to_string(),
@@ -568,6 +571,7 @@ mod tests {
             source_headers: vec![],
             opaque_types: vec![],
             enums: vec![],
+            constants: vec![],
             callbacks: vec![],
             support: crate::ir::SupportMetadata {
                 parser_backend: "libclang".to_string(),

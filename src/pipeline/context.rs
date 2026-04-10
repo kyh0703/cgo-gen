@@ -166,5 +166,8 @@ fn base_cpp_type_name(value: &str) -> String {
 
 fn enum_cpp_type_name(value: &str) -> String {
     let base = base_cpp_type_name(value);
-    base.strip_prefix("enum ").unwrap_or(&base).trim().to_string()
+    base.strip_prefix("enum ")
+        .unwrap_or(&base)
+        .trim()
+        .to_string()
 }

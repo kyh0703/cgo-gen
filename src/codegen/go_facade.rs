@@ -8,7 +8,7 @@ use anyhow::{Result, bail};
 use crate::{
     codegen::ir_norm,
     domain::kind::{IrFunctionKind, IrTypeKind},
-    ir::{IrCallback, IrEnum, IrFunction, IrModule, IrType, OpaqueType},
+    ir::{IrCallback, IrEnum, IrFunction, IrMacroConstant, IrModule, IrType, OpaqueType},
     pipeline::context::PipelineContext,
 };
 
@@ -53,11 +53,12 @@ pub fn render_go_facade(
         .filter(|function| function.kind == IrFunctionKind::Function)
         .filter(|function| free_function_supported(&config, function))
         .collect::<Vec<_>>();
+    let constants = ir.constants.iter().collect::<Vec<_>>();
     let enums = ir.enums.iter().collect::<Vec<_>>();
     let classes = collect_facade_classes(&config, ir)?;
     let callback_usages = collect_callback_usages(&functions, &classes, ir);
 
-    if functions.is_empty() && classes.is_empty() && enums.is_empty() {
+    if functions.is_empty() && classes.is_empty() && enums.is_empty() && constants.is_empty() {
         return Ok(Vec::new());
     }
 
@@ -75,6 +76,7 @@ pub fn render_go_facade(
         filename: config.go_filename(""),
         contents: render_go_facade_file(
             &config,
+            &constants,
             &enums,
             &functions,
             &classes,
@@ -174,6 +176,7 @@ fn collect_facade_classes<'a>(
 
 fn render_go_facade_file(
     config: &PipelineContext,
+    constants: &[&IrMacroConstant],
     enums: &[&IrEnum],
     functions: &[&IrFunction],
     classes: &[AnalyzedFacadeClass<'_>],
@@ -253,6 +256,10 @@ fn render_go_facade_file(
         out.push_str("import \"sync\"\n\n");
     }
 
+    if !constants.is_empty() {
+        out.push_str(&render_go_constants(constants));
+        out.push('\n');
+    }
     for item in enums {
         out.push_str(&render_go_enum(item));
         out.push('\n');
@@ -334,6 +341,16 @@ fn render_go_facade_file(
         }
     }
 
+    out
+}
+
+fn render_go_constants(constants: &[&IrMacroConstant]) -> String {
+    let mut out = String::new();
+    out.push_str("const (\n");
+    for item in constants {
+        out.push_str(&format!("    {} = {}\n", item.name, item.value));
+    }
+    out.push_str(")\n");
     out
 }
 
@@ -1843,7 +1860,10 @@ fn base_model_cpp_type(value: &str) -> String {
 
 fn enum_base_cpp_type(value: &str) -> String {
     let base = base_model_cpp_type(value);
-    base.strip_prefix("enum ").unwrap_or(&base).trim().to_string()
+    base.strip_prefix("enum ")
+        .unwrap_or(&base)
+        .trim()
+        .to_string()
 }
 
 fn extern_struct_go_type(ty: &IrType) -> Option<String> {
@@ -2329,6 +2349,7 @@ mod tests {
                 },
             ],
             enums: vec![],
+            constants: vec![],
             callbacks: vec![],
             support: SupportMetadata {
                 parser_backend: "test".to_string(),
@@ -2457,6 +2478,7 @@ mod tests {
                 },
             ],
             enums: vec![],
+            constants: vec![],
             callbacks: vec![],
             support: SupportMetadata {
                 parser_backend: "test".to_string(),
@@ -2650,6 +2672,7 @@ mod tests {
                 },
             ],
             enums: vec![],
+            constants: vec![],
             callbacks: vec![],
             support: SupportMetadata {
                 parser_backend: "test".to_string(),
@@ -2743,6 +2766,7 @@ mod tests {
                 },
             ],
             enums: vec![],
+            constants: vec![],
             callbacks: vec![],
             support: SupportMetadata {
                 parser_backend: "test".to_string(),
@@ -2940,6 +2964,7 @@ mod tests {
                 },
             ],
             enums: vec![],
+            constants: vec![],
             callbacks: vec![],
             support: SupportMetadata {
                 parser_backend: "test".to_string(),
@@ -3042,6 +3067,7 @@ mod tests {
                 },
             ],
             enums: vec![],
+            constants: vec![],
             callbacks: vec![],
             support: SupportMetadata {
                 parser_backend: "test".to_string(),

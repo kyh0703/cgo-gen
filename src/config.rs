@@ -220,7 +220,9 @@ fn expand_env_vars_in_str(value: &str, context: &str) -> Result<String> {
                             continue;
                         }
                         Err(env::VarError::NotPresent) => {
-                            bail!("environment variable `{name}` referenced in {context} is not set")
+                            bail!(
+                                "environment variable `{name}` referenced in {context} is not set"
+                            )
                         }
                         Err(env::VarError::NotUnicode(_)) => bail!(
                             "environment variable `{name}` referenced in {context} is not valid unicode"
@@ -242,7 +244,9 @@ fn expand_env_vars_in_str(value: &str, context: &str) -> Result<String> {
                             continue;
                         }
                         Err(env::VarError::NotPresent) => {
-                            bail!("environment variable `{name}` referenced in {context} is not set")
+                            bail!(
+                                "environment variable `{name}` referenced in {context} is not set"
+                            )
                         }
                         Err(env::VarError::NotUnicode(_)) => bail!(
                             "environment variable `{name}` referenced in {context} is not valid unicode"

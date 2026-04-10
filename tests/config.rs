@@ -57,11 +57,7 @@ fn temp_test_dir(label: &str) -> PathBuf {
 fn write_directory_example_config() -> PathBuf {
     let dir = temp_test_dir("directory_example");
     fs::create_dir_all(dir.join("include")).unwrap();
-    fs::write(
-        dir.join("include/UserProfile.hpp"),
-        "class UserProfile {};",
-    )
-    .unwrap();
+    fs::write(dir.join("include/UserProfile.hpp"), "class UserProfile {};").unwrap();
     fs::write(dir.join("include/AdminUser.hpp"), "class AdminUser {};").unwrap();
 
     let config_path = dir.join("cppgo-wrap.yaml");
@@ -372,7 +368,14 @@ fn loads_directory_wrapper_example_config() {
     assert_eq!(config.naming.prefix, "sdk");
     assert_eq!(
         config.input.dir.as_ref(),
-        Some(&config_path.parent().unwrap().join("include").canonicalize().unwrap())
+        Some(
+            &config_path
+                .parent()
+                .unwrap()
+                .join("include")
+                .canonicalize()
+                .unwrap()
+        )
     );
     assert!(config.output.dir.ends_with(Path::new("pkg").join("sdk")));
 }

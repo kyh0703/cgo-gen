@@ -345,7 +345,9 @@ output:
     assert!(!header.contains("char[33]Handle"));
     assert!(!header.contains("char[11]Handle"));
     assert!(header.contains("const char* cgowrap_Agent_GetLoginId(const AgentHandle* self);"));
-    assert!(header.contains("void cgowrap_Agent_SetLoginId(AgentHandle* self, const char* value);"));
+    assert!(
+        header.contains("void cgowrap_Agent_SetLoginId(AgentHandle* self, const char* value);")
+    );
     assert!(go_wrapper.contains("func (a *Agent) GetLoginId() (string, error) {"));
     assert!(go_wrapper.contains("func (a *Agent) SetLoginId(value string) {"));
 

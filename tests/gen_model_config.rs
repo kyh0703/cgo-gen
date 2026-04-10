@@ -83,12 +83,7 @@ fn gen_model_config_uses_dir_only_input_shape() {
 #[test]
 fn gen_model_config_generates_go_wrapper_when_sources_exist() {
     let config = Config::load(write_model_record_dir_config()).unwrap();
-    let header = config
-        .input
-        .dir
-        .as_ref()
-        .unwrap()
-        .join("DataRecord.h");
+    let header = config.input.dir.as_ref().unwrap().join("DataRecord.h");
     assert!(header.exists(), "fixture header not found: {header:?}");
 
     let prepared = generator::prepare_config(&PipelineContext::new(config)).unwrap();
