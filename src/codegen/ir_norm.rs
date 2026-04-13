@@ -8,8 +8,8 @@ pub use crate::domain::kind::{FieldAccessKind, IrFunctionKind, IrTypeKind, Recor
 use crate::{
     config::Config,
     parser::{
-        CppCallbackTypedef, CppConstructor, CppEnum, CppField, CppFunction, CppMacroConstant,
-        CppMethod, CppParam, CppRecord, ParsedApi,
+        CppCallbackTypedef, CppConstructor, CppEnum, CppField, CppFunction, CppRecord,
+        CppMacroConstant, CppMethod, CppParam, ParsedApi,
     },
     pipeline::context::PipelineContext,
 };
@@ -56,37 +56,6 @@ pub struct IrFunction {
     pub field_accessor: Option<IrFieldAccessor>,
     pub returns: IrType,
     pub params: Vec<IrParam>,
-}
-
-impl IrFunction {
-    pub fn is_synthetic_struct_field_accessor(&self) -> bool {
-        self.field_accessor.is_some()
-    }
-
-    pub fn is_synthetic_struct_field_getter(&self) -> bool {
-        self.field_accessor
-            .as_ref()
-            .is_some_and(|accessor| accessor.access == FieldAccessKind::Get)
-    }
-
-    pub fn is_synthetic_struct_field_array_getter(&self) -> bool {
-        self.is_synthetic_struct_field_getter()
-            && matches!(
-                self.returns.kind,
-                IrTypeKind::CString
-                    | IrTypeKind::FixedByteArray
-                    | IrTypeKind::FixedArray
-                    | IrTypeKind::FixedModelArray
-            )
-    }
-
-    pub fn is_synthetic_struct_field_borrowed_model_getter(&self) -> bool {
-        self.is_synthetic_struct_field_getter() && self.returns.kind == IrTypeKind::ModelValue
-    }
-
-    pub fn is_synthetic_struct_field_borrowed_model_array_getter(&self) -> bool {
-        self.is_synthetic_struct_field_getter() && self.returns.kind == IrTypeKind::FixedModelArray
-    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -649,7 +618,7 @@ fn normalize_struct_fields(
     let mut functions = Vec::new();
 
     for field in &record.fields {
-        if field.is_function_pointer || field_has_zero_length_array(field) {
+        if field.is_function_pointer {
             continue;
         }
 
@@ -688,14 +657,10 @@ fn normalize_struct_fields(
             handle_name,
             field,
             field_ty.clone(),
-            field_getter_is_const(&field_ty),
         ));
 
         let setter_name = format!("Set{suffix}");
-        if existing_methods.contains(setter_name.as_str())
-            || field_is_read_only(field)
-            || field_is_array(field)
-        {
+        if existing_methods.contains(setter_name.as_str()) || field_is_read_only(field) {
             continue;
         }
 
@@ -721,7 +686,6 @@ fn make_struct_field_getter(
     handle_name: &str,
     field: &CppField,
     returns: IrType,
-    is_const: bool,
 ) -> IrFunction {
     let method_name = format!("Get{}", struct_field_accessor_suffix(&field.name));
     IrFunction {
@@ -730,7 +694,7 @@ fn make_struct_field_getter(
         cpp_name: format!("{qualified}::{method_name}"),
         method_of: Some(handle_name.to_string()),
         owner_cpp_type: Some(qualified.to_string()),
-        is_const: Some(is_const),
+        is_const: Some(true),
         field_accessor: Some(IrFieldAccessor {
             field_name: field.name.clone(),
             access: FieldAccessKind::Get,
@@ -740,16 +704,8 @@ fn make_struct_field_getter(
             name: "self".to_string(),
             ty: IrType {
                 kind: IrTypeKind::Opaque,
-                cpp_type: if is_const {
-                    format!("const {}*", qualified)
-                } else {
-                    format!("{}*", qualified)
-                },
-                c_type: if is_const {
-                    format!("const {handle_name}*")
-                } else {
-                    format!("{handle_name}*")
-                },
+                cpp_type: format!("const {}*", qualified),
+                c_type: format!("const {handle_name}*"),
                 handle: Some(handle_name.to_string()),
             },
         }],
@@ -800,23 +756,6 @@ fn field_is_read_only(field: &CppField) -> bool {
     let ty = field.ty.trim();
     let canonical = field.canonical_ty.trim();
     ty.starts_with("const ") || canonical.starts_with("const ")
-}
-
-fn field_is_array(field: &CppField) -> bool {
-    parse_array_type(&field.ty).is_some()
-        || parse_array_type(&field.canonical_ty).is_some()
-        || field_has_zero_length_array(field)
-}
-
-fn field_has_zero_length_array(field: &CppField) -> bool {
-    is_zero_length_array_type(&field.ty) || is_zero_length_array_type(&field.canonical_ty)
-}
-
-fn field_getter_is_const(ty: &IrType) -> bool {
-    !matches!(
-        ty.kind,
-        IrTypeKind::ModelValue | IrTypeKind::FixedModelArray
-    )
 }
 
 fn struct_field_accessor_suffix(field_name: &str) -> String {
@@ -1424,8 +1363,7 @@ fn normalize_type_with_canonical(
         && raw_type_shape(trimmed) == raw_type_shape(canonical_trimmed)
         && let Some(mut ty) = normalize_known_record_type(canonical_trimmed, known_records)
     {
-        ty.cpp_type =
-            canonicalized_known_record_cpp_type(trimmed, &base_model_cpp_type(&ty.cpp_type));
+        ty.cpp_type = canonicalized_known_record_cpp_type(trimmed, &base_model_cpp_type(&ty.cpp_type));
         return Ok(ty);
     }
     if let Ok(ty) = normalize_type(trimmed, callback_names) {
@@ -1499,11 +1437,7 @@ fn normalize_known_record_type(cpp_type: &str, known_records: &[IrRecord]) -> Op
     let record = known_record(trimmed, known_records)?;
     let shape = raw_type_shape(trimmed);
     let cpp_type = canonicalized_known_record_cpp_type(trimmed, &record.cpp_type);
-    let c_type = format!(
-        "{}{}",
-        record.handle_name,
-        "*".repeat(model_handle_pointer_depth(trimmed))
-    );
+    let c_type = format!("{}*", record.handle_name);
     match shape {
         "pointer" => Some(IrType {
             kind: IrTypeKind::ModelPointer,
@@ -1543,14 +1477,11 @@ fn canonicalized_known_record_cpp_type(original: &str, record_cpp_type: &str) ->
     } else {
         record_cpp_type.to_string()
     };
-    if original.trim().ends_with('&') {
-        return format!("{base}&");
+    match raw_type_shape(original) {
+        "pointer" => format!("{base}*"),
+        "reference" => format!("{base}&"),
+        _ => base,
     }
-    let pointer_depth = original.chars().filter(|ch| *ch == '*').count();
-    if pointer_depth > 0 {
-        return format!("{base}{}", "*".repeat(pointer_depth));
-    }
-    base
 }
 
 fn canonicalized_known_record_array_type(original: &str, record_cpp_type: &str) -> String {
@@ -1742,10 +1673,7 @@ fn normalize_type(cpp_type: &str, callback_names: &BTreeSet<String>) -> Result<I
             Ok(IrType {
                 kind: IrTypeKind::ModelPointer,
                 cpp_type: trimmed.to_string(),
-                c_type: format!(
-                    "{handle_name}{}",
-                    "*".repeat(model_handle_pointer_depth(trimmed))
-                ),
+                c_type: format!("{handle_name}*"),
                 handle: Some(handle_name),
             })
         }
@@ -2079,10 +2007,6 @@ fn raw_safe_model_handle_name(cpp_type: &str) -> Option<String> {
     Some(format!("{}Handle", flatten_qualified_cpp_name(&base)))
 }
 
-fn model_handle_pointer_depth(cpp_type: &str) -> usize {
-    cpp_type.chars().filter(|ch| *ch == '*').count().max(1)
-}
-
 /// "T[N]" 패턴에서 (elem_type_str, size) 추출. const 접두사 제거 후 처리.
 fn parse_array_type(value: &str) -> Option<(&str, usize)> {
     let trimmed = value.trim().trim_start_matches("const ").trim();
@@ -2140,17 +2064,6 @@ pub fn byte_array_length(cpp_type: &str) -> Option<usize> {
     let prefix = trimmed.strip_prefix("unsigned char[")?;
     let len = prefix.strip_suffix(']')?;
     len.parse().ok()
-}
-
-fn is_zero_length_array_type(value: &str) -> bool {
-    let trimmed = value.trim().trim_start_matches("const ").trim();
-    let Some(bracket) = trimmed.rfind('[') else {
-        return false;
-    };
-    let Some(rest) = trimmed[bracket + 1..].strip_suffix(']') else {
-        return false;
-    };
-    rest.trim() == "0"
 }
 
 #[cfg(test)]
@@ -2369,30 +2282,6 @@ mod tests {
 
         assert_eq!(ty.kind, IrTypeKind::ModelPointer);
         assert_eq!(ty.c_type, "DBHandlerHandle*");
-    }
-
-    #[test]
-    fn normalizes_aliased_model_double_pointer_as_handle_double_pointer() {
-        let callback_names = BTreeSet::new();
-        let known_records = vec![IrRecord {
-            cpp_type: "_DIMIR_PACKET".to_string(),
-            handle_name: "DIMIR_PACKETHandle".to_string(),
-            kind: RecordKind::Struct,
-        }];
-        let ty = normalize_type_with_canonical(
-            &Config::default(),
-            "DIMIR_PACKET**",
-            "_DIMIR_PACKET**",
-            &callback_names,
-            &BTreeSet::new(),
-            &known_records,
-        )
-        .unwrap();
-
-        assert_eq!(ty.kind, IrTypeKind::ModelPointer);
-        assert_eq!(ty.cpp_type, "_DIMIR_PACKET**");
-        assert_eq!(ty.c_type, "DIMIR_PACKETHandle**");
-        assert_eq!(ty.handle, Some("DIMIR_PACKETHandle".to_string()));
     }
 
     #[test]

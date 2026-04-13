@@ -345,9 +345,11 @@ output:
     assert!(!header.contains("char[33]Handle"));
     assert!(!header.contains("char[11]Handle"));
     assert!(header.contains("const char* cgowrap_Agent_GetLoginId(const AgentHandle* self);"));
+    assert!(
+        header.contains("void cgowrap_Agent_SetLoginId(AgentHandle* self, const char* value);")
+    );
     assert!(go_wrapper.contains("func (a *Agent) GetLoginId() (string, error) {"));
-    assert!(!go_wrapper.contains("func (a *Agent) SetLoginId("));
-    assert!(!go_wrapper.contains("func (a *Agent) SetPbxLoginId("));
+    assert!(go_wrapper.contains("func (a *Agent) SetLoginId(value string) {"));
 
     let smoke_cpp = config.output.dir.join("smoke.cpp");
     fs::write(
@@ -359,8 +361,10 @@ output:
         int main() {{
             AgentHandle* agent = cgowrap_Agent_new();
             if (agent == nullptr) return 10;
-            if (std::strcmp(cgowrap_Agent_GetLoginId(agent), "") != 0) return 11;
-            if (std::strcmp(cgowrap_Agent_GetPbxLoginId(agent), "") != 0) return 12;
+            cgowrap_Agent_SetLoginId(agent, "agent-1001");
+            cgowrap_Agent_SetPbxLoginId(agent, "101");
+            if (std::strcmp(cgowrap_Agent_GetLoginId(agent), "agent-1001") != 0) return 11;
+            if (std::strcmp(cgowrap_Agent_GetPbxLoginId(agent), "101") != 0) return 12;
             cgowrap_Agent_delete(agent);
             return 0;
         }}
@@ -434,17 +438,21 @@ output:
         format!(
             r#"
         #include "{}"
-        #include <cstdlib>
         int main() {{
             HolderHandle* holder = cgowrap_Holder_new();
             if (holder == nullptr) return 10;
 
-            ItemHandle** items = cgowrap_Holder_GetItems(holder);
-            if (items == nullptr) return 11;
-            cgowrap_Item_SetValue(items[0], 10);
-            cgowrap_Item_SetValue(items[1], 20);
-            cgowrap_Item_SetValue(items[2], 30);
-            std::free(items);
+            ItemHandle* item0 = cgowrap_Item_new();
+            ItemHandle* item1 = cgowrap_Item_new();
+            ItemHandle* item2 = cgowrap_Item_new();
+            if (item0 == nullptr || item1 == nullptr || item2 == nullptr) return 11;
+
+            cgowrap_Item_SetValue(item0, 10);
+            cgowrap_Item_SetValue(item1, 20);
+            cgowrap_Item_SetValue(item2, 30);
+
+            ItemHandle* items[3] = {{ item0, item1, item2 }};
+            cgowrap_Holder_SetItems(holder, items);
 
             ItemHandle** roundtrip = cgowrap_Holder_GetItems(holder);
             if (roundtrip == nullptr) return 12;
@@ -452,7 +460,14 @@ output:
             if (cgowrap_Item_GetValue(roundtrip[1]) != 20) return 14;
             if (cgowrap_Item_GetValue(roundtrip[2]) != 30) return 15;
 
-            std::free(roundtrip);
+            cgowrap_Item_delete(roundtrip[0]);
+            cgowrap_Item_delete(roundtrip[1]);
+            cgowrap_Item_delete(roundtrip[2]);
+            free(roundtrip);
+
+            cgowrap_Item_delete(item0);
+            cgowrap_Item_delete(item1);
+            cgowrap_Item_delete(item2);
             cgowrap_Holder_delete(holder);
             return 0;
         }}
@@ -485,7 +500,7 @@ output:
 }
 
 #[test]
-fn generated_wrapper_compiles_for_model_value_field_alias_semantics() {
+fn generated_wrapper_compiles_for_model_view_snapshot_copy_semantics() {
     let root = temp_output_dir("model_view_snapshot");
     fs::create_dir_all(root.join("include")).unwrap();
     fs::write(
@@ -534,15 +549,22 @@ output:
             ChildHandle* initial = cgowrap_Parent_GetChild(parent);
             if (initial == nullptr) return 11;
             cgowrap_Child_SetValue(initial, 3);
+            cgowrap_Parent_SetChild(parent, initial);
+            cgowrap_Child_delete(initial);
 
-            ChildHandle* roundtrip = cgowrap_Parent_GetChild(parent);
-            if (roundtrip == nullptr) return 12;
-            if (cgowrap_Child_GetValue(roundtrip) != 3) return 13;
-            cgowrap_Child_SetValue(roundtrip, 9);
-
+            ChildHandle* snapshot = cgowrap_Parent_GetChild(parent);
+            if (snapshot == nullptr) return 12;
+            cgowrap_Child_SetValue(snapshot, 9);
+            ChildHandle* unchanged = cgowrap_Parent_GetChild(parent);
+            if (unchanged == nullptr) return 13;
+            if (cgowrap_Child_GetValue(unchanged) != 3) return 14;
+            cgowrap_Child_delete(unchanged);
+            cgowrap_Parent_SetChild(parent, snapshot);
             ChildHandle* updated = cgowrap_Parent_GetChild(parent);
-            if (updated == nullptr) return 14;
-            if (cgowrap_Child_GetValue(updated) != 9) return 15;
+            if (updated == nullptr) return 15;
+            if (cgowrap_Child_GetValue(updated) != 9) return 16;
+            cgowrap_Child_delete(updated);
+            cgowrap_Child_delete(snapshot);
 
             cgowrap_Parent_delete(parent);
             return 0;
@@ -640,106 +662,6 @@ output:
             if (cgowrap_DBHandler_GetValue(handler) != 7) return 12;
             cgowrap_DBHandler_delete(handler);
             cgowrap_DBHandlerFactory_delete(factory);
-            return 0;
-        }}
-        "#,
-            config.output.header
-        ),
-    )
-    .unwrap();
-
-    let binary = config.output.dir.join("smoke");
-    let compiler = pick_clangxx();
-    let status = Command::new(&compiler)
-        .current_dir(&root)
-        .arg("-std=c++17")
-        .arg(config.output_dir().join(&config.output.source))
-        .arg(&smoke_cpp)
-        .arg("-I")
-        .arg(config.output_dir())
-        .arg("-I")
-        .arg(root.join("include"))
-        .arg("-o")
-        .arg(&binary)
-        .status()
-        .unwrap();
-
-    assert!(status.success(), "generated wrapper did not compile/link");
-
-    let status = Command::new(&binary).status().unwrap();
-    assert!(status.success(), "generated smoke binary failed: {status}");
-}
-
-#[test]
-fn generated_wrapper_compiles_for_model_view_method_alias_semantics() {
-    let root = temp_output_dir("model_view_method_alias");
-    fs::create_dir_all(root.join("include")).unwrap();
-    fs::write(
-        root.join("include/Api.hpp"),
-        r#"
-        class ThingModel {
-        public:
-            ThingModel() = default;
-            int GetValue() const { return value_; }
-            void SetValue(int value) { value_ = value; }
-        private:
-            int value_ = 7;
-        };
-
-        class Api {
-        public:
-            ThingModel* GetThingPtr() { return &thing_; }
-            ThingModel& GetThingRef() { return thing_; }
-        private:
-            ThingModel thing_;
-        };
-        "#,
-    )
-    .unwrap();
-    fs::write(
-        root.join("config.yaml"),
-        r#"
-version: 1
-input:
-  headers:
-    - include/Api.hpp
-output:
-  dir: out
-"#,
-    )
-    .unwrap();
-
-    let config = Config::load(root.join("config.yaml")).unwrap();
-    let ctx = generator::prepare_config(&PipelineContext::new(config.clone())).unwrap();
-    let parsed = parser::parse(&ctx).unwrap();
-    let ir = ir::normalize(&ctx, &parsed).unwrap();
-    generator::generate(&ctx, &ir, true, &Default::default()).unwrap();
-
-    let source = fs::read_to_string(config.output_dir().join(&config.output.source)).unwrap();
-    assert!(source.contains(
-        "return reinterpret_cast<ThingModelHandle*>(result);"
-    ));
-    assert!(source.contains(
-        "return reinterpret_cast<ThingModelHandle*>(&result);"
-    ));
-    assert!(!source.contains("new ThingModel(*result)"));
-
-    let smoke_cpp = config.output.dir.join("smoke.cpp");
-    fs::write(
-        &smoke_cpp,
-        format!(
-            r#"
-        #include "{}"
-        int main() {{
-            ApiHandle* api = cgowrap_Api_new();
-            if (api == nullptr) return 10;
-            ThingModelHandle* ptr = cgowrap_Api_GetThingPtr(api);
-            if (ptr == nullptr) return 11;
-            cgowrap_ThingModel_SetValue(ptr, 10);
-            ThingModelHandle* ref = cgowrap_Api_GetThingRef(api);
-            if (ref == nullptr) return 12;
-            if (cgowrap_ThingModel_GetValue(ref) != 10) return 13;
-            cgowrap_Api_delete(api);
             return 0;
         }}
         "#,

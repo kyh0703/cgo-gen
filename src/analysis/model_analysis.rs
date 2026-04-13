@@ -97,6 +97,9 @@ fn build_model_projection(
         let Some(suffix) = getter_suffix(function) else {
             continue;
         };
+        let Some(setter) = setters.get(suffix) else {
+            continue;
+        };
         if seen.insert(suffix.to_string(), ()).is_some() {
             continue;
         }
@@ -104,32 +107,25 @@ fn build_model_projection(
         let Some(getter_ty) = go_model_field_type(ctx, &function.returns) else {
             continue;
         };
-        let setter_symbol = if let Some(setter) = setters.get(suffix) {
-            let Some(setter_param) = setter.params.get(1) else {
-                bail!(
-                    "setter `{}` on `{owner}` is missing its value parameter",
-                    setter.cpp_name
-                );
-            };
-            let Some(setter_ty) = go_model_field_type(ctx, &setter_param.ty) else {
-                continue;
-            };
-
-            if getter_ty != setter_ty {
-                continue;
-            }
-            Some(setter.name.clone())
-        } else if function.is_synthetic_struct_field_array_getter() {
-            None
-        } else {
+        let Some(setter_param) = setter.params.get(1) else {
+            bail!(
+                "setter `{}` on `{owner}` is missing its value parameter",
+                setter.cpp_name
+            );
+        };
+        let Some(setter_ty) = go_model_field_type(ctx, &setter_param.ty) else {
             continue;
         };
+
+        if getter_ty != setter_ty {
+            continue;
+        }
 
         fields.push(ModelProjectionField {
             go_name: go_field_name(suffix),
             go_type: getter_ty.to_string(),
             getter_symbol: function.name.clone(),
-            setter_symbol,
+            setter_symbol: setter.name.clone(),
             return_kind: function.returns.kind,
         });
     }

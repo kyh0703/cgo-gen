@@ -87,68 +87,6 @@ naming:
 }
 
 #[test]
-fn preserves_model_double_pointer_out_params_in_raw_wrappers() {
-    let root = temp_dir("double-pointer-out");
-    fs::write(
-        root.join("include/ThingModel.hpp"),
-        r#"
-        class ThingModel {
-        public:
-            int GetValue() const;
-            void SetValue(int value);
-        };
-        "#,
-    )
-    .unwrap();
-    fs::write(
-        root.join("include/Api.hpp"),
-        r#"
-        #include "ThingModel.hpp"
-
-        class Api {
-        public:
-            int Count() const;
-            bool GetThingHandle(int id, ThingModel** out);
-        };
-        "#,
-    )
-    .unwrap();
-
-    let config_path = root.join("cppgo-wrap.yaml");
-    fs::write(
-        &config_path,
-        r#"
-version: 1
-input:
-  headers:
-    - include/ThingModel.hpp
-    - include/Api.hpp
-output:
-  dir: gen
-naming:
-  prefix: cgowrap
-  style: preserve
-"#,
-    )
-    .unwrap();
-
-    let config = Config::load(&config_path).unwrap();
-    let ctx = PipelineContext::new(config.clone());
-    generator::generate_all(&ctx, true).unwrap();
-
-    let api_header = fs::read_to_string(root.join("gen/api_wrapper.h")).unwrap();
-    let api_source = fs::read_to_string(root.join("gen/api_wrapper.cpp")).unwrap();
-    let api_go = fs::read_to_string(root.join("gen/api_wrapper.go")).unwrap();
-
-    assert!(api_header.contains(
-        "bool cgowrap_Api_GetThingHandle(ApiHandle* self, int id, ThingModelHandle** out);"
-    ));
-    assert!(api_source.contains("reinterpret_cast<ThingModel**>(out)"));
-    assert!(api_go.contains("func (a *Api) Count() int32 {"));
-    assert!(!api_go.contains("GetThingHandle"));
-}
-
-#[test]
 fn skips_mismatched_getter_setter_fields_without_failing_generation() {
     let root = temp_dir("mismatch_skip");
     fs::write(

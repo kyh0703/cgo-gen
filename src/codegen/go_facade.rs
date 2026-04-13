@@ -310,8 +310,10 @@ fn render_go_facade_file(
         if covered_go_names.contains(&go_name) {
             continue;
         }
-        out.push_str(&render_wrapper_struct(&go_name, &opaque.name));
-        out.push('\n');
+        out.push_str(&format!(
+            "type {} struct {{\n    ptr *C.{}\n}}\n\n",
+            go_name, opaque.name
+        ));
     }
 
     for class in classes {
@@ -510,7 +512,10 @@ fn render_callback_export(usage: &CallbackUsage<'_>) -> String {
 }
 
 fn render_facade_class(class: &AnalyzedFacadeClass<'_>) -> String {
-    render_wrapper_struct(&class.go_name, &class.handle_name)
+    format!(
+        "type {} struct {{\n    ptr *C.{}\n}}\n",
+        class.go_name, class.handle_name
+    )
 }
 
 fn render_facade_constructor(
@@ -548,8 +553,8 @@ fn render_facade_constructor(
         out.push('\n');
     }
     out.push_str(&format!(
-        "    if ptr == nil {{\n        return nil, errors.New(\"wrapper returned nil facade handle\")\n    }}\n    return {}, nil\n}}\n",
-        wrapper_literal(&class.go_name, "ptr", true)
+        "    if ptr == nil {{\n        return nil, errors.New(\"wrapper returned nil facade handle\")\n    }}\n    return &{}{{ptr: ptr}}, nil\n}}\n",
+        class.go_name
     ));
     out
 }
@@ -557,16 +562,8 @@ fn render_facade_constructor(
 fn render_facade_close(class: &AnalyzedFacadeClass<'_>) -> String {
     let receiver = receiver_name(&class.go_name);
     format!(
-        "func ({} *{}) Close() {{\n    if {} == nil || {}.ptr == nil {{\n        return\n    }}\n    if !{}.owned {{\n        return\n    }}\n    C.{}({}.ptr)\n    {}.ptr = nil\n    {}.owned = false\n}}\n",
-        receiver,
-        class.go_name,
-        receiver,
-        receiver,
-        receiver,
-        class.destructor.name,
-        receiver,
-        receiver,
-        receiver,
+        "func ({} *{}) Close() {{\n    if {} == nil || {}.ptr == nil {{\n        return\n    }}\n    C.{}({}.ptr)\n    {}.ptr = nil\n}}\n",
+        receiver, class.go_name, receiver, receiver, class.destructor.name, receiver, receiver,
     )
 }
 
@@ -1178,9 +1175,6 @@ fn go_param_type(config: &PipelineContext, ty: &IrType) -> Option<String> {
         }
         IrTypeKind::Callback => Some(leaf_cpp_name(&ty.cpp_type)),
         IrTypeKind::ModelReference | IrTypeKind::ModelPointer | IrTypeKind::ModelValue => {
-            if ty.kind == IrTypeKind::ModelPointer && model_pointer_depth(ty) > 1 {
-                return None;
-            }
             if base_model_cpp_type(&ty.cpp_type) == "void" {
                 return Some("unsafe.Pointer".to_string());
             }
@@ -1211,8 +1205,7 @@ fn go_return_supported(_config: &PipelineContext, ty: &IrType) -> bool {
         )
         || (ty.kind == IrTypeKind::Primitive && go_type_for_ir(ty).is_some())
         || (ty.kind == IrTypeKind::Pointer && go_pointer_return_type(ty).is_some())
-        || (ty.kind == IrTypeKind::ModelPointer && model_pointer_depth(ty) == 1)
-        || ty.kind == IrTypeKind::ModelView
+        || matches!(ty.kind, IrTypeKind::ModelPointer | IrTypeKind::ModelView)
         || ty.kind == IrTypeKind::ModelValue
 }
 
@@ -1351,12 +1344,10 @@ fn render_go_call_return(
             let n = ir_norm::fixed_array_length(&ty.cpp_type).unwrap_or(0);
             let go_name = go_model_return_type(config, ty);
             let c_handle = ty.handle.as_deref().unwrap_or("");
-            let owned = !function.is_synthetic_struct_field_borrowed_model_array_getter();
             let mut out = format!("    raw := {call}\n");
             out.push_str(&indented_lines(post_call_lines));
             out.push_str(&format!(
-                "    if raw == nil {{\n        return nil, errors.New(\"wrapper returned nil model array\")\n    }}\n    defer C.free(unsafe.Pointer(raw))\n    cSlice := (*[{n}]*C.{c_handle})(unsafe.Pointer(raw))\n    result := make([]*{go_name}, {n})\n    for i := range result {{\n        result[i] = {wrapper}\n    }}\n    return result, nil\n",
-                wrapper = wrapper_literal(&go_name, "cSlice[i]", owned)
+                "    if raw == nil {{\n        return nil, errors.New(\"wrapper returned nil model array\")\n    }}\n    defer C.free(unsafe.Pointer(raw))\n    cSlice := (*[{n}]*C.{c_handle})(unsafe.Pointer(raw))\n    result := make([]*{go_name}, {n})\n    for i := range result {{\n        result[i] = &{go_name}{{ptr: cSlice[i]}}\n    }}\n    return result, nil\n"
             ));
             out
         }
@@ -1369,7 +1360,6 @@ fn render_go_call_return(
         }
         _ if is_model_wrapper_return(ty) => {
             let go_name = go_model_return_type(config, ty);
-            let owned = model_wrapper_return_is_owned(function);
             let mut out = format!("    raw := {call}\n");
             out.push_str(&indented_lines(post_call_lines));
             if go_name == "unsafe.Pointer" {
@@ -1377,8 +1367,7 @@ fn render_go_call_return(
             } else {
                 let ptr_expr = cast_raw_to_projection_handle(config, ty, "raw");
                 out.push_str(&format!(
-                    "    if raw == nil {{\n        return nil\n    }}\n    return {}\n",
-                    wrapper_literal(&go_name, &ptr_expr, owned)
+                    "    if raw == nil {{\n        return nil\n    }}\n    return &{go_name}{{ptr: {ptr_expr}}}\n"
                 ));
             }
             out
@@ -1405,22 +1394,6 @@ fn zero_value_for_go_type(go_type: &str) -> &'static str {
         "float32" | "float64" | "int" | "int8" | "int16" | "int32" | "int64" | "uint8"
         | "uint16" | "uint32" | "uint64" | "uintptr" => "0",
         _ => "0",
-    }
-}
-
-fn render_wrapper_struct(go_name: &str, handle_name: &str) -> String {
-    format!("type {go_name} struct {{\n    ptr *C.{handle_name}\n    owned bool\n}}\n")
-}
-
-fn wrapper_literal(go_name: &str, ptr_expr: &str, owned: bool) -> String {
-    format!("&{go_name}{{ptr: {ptr_expr}, owned: {owned}}}")
-}
-
-fn model_wrapper_return_is_owned(function: &IrFunction) -> bool {
-    match function.returns.kind {
-        IrTypeKind::ModelView => false,
-        IrTypeKind::ModelValue => !function.is_synthetic_struct_field_borrowed_model_getter(),
-        _ => true,
     }
 }
 
@@ -2042,7 +2015,7 @@ mod tests {
                     go_name: "Value".to_string(),
                     go_type: "int".to_string(),
                     getter_symbol: "cgowrap_ThingModel_GetValue".to_string(),
-                    setter_symbol: Some("cgowrap_ThingModel_SetValue".to_string()),
+                    setter_symbol: "cgowrap_ThingModel_SetValue".to_string(),
                     return_kind: IrTypeKind::Primitive,
                 }],
             },
@@ -2823,9 +2796,7 @@ mod tests {
         .unwrap();
         let contents = &files[0].contents;
         assert!(
-            contents.contains(
-                "type DCSHISTORY struct {\n    ptr *C.DCSHISTORYHandle\n    owned bool\n}"
-            ),
+            contents.contains("type DCSHISTORY struct {\n    ptr *C.DCSHISTORYHandle\n}"),
             "expected stable public handle in class wrapper but got:\n{contents}"
         );
     }
@@ -2913,8 +2884,8 @@ mod tests {
             "expected nil check but got:\n{code}"
         );
         assert!(
-            code.contains("&ThingModel{ptr: raw, owned: false}"),
-            "expected borrowed ThingModel wrap but got:\n{code}"
+            code.contains("&ThingModel{ptr: raw}"),
+            "expected &ThingModel{{ptr: raw}} but got:\n{code}"
         );
     }
 
@@ -3023,7 +2994,7 @@ mod tests {
             "unexpected duplicate DCSHISTORY wrapper:\n{contents}"
         );
         assert!(
-            contents.contains("return &DCSHISTORY{ptr: raw, owned: false}"),
+            contents.contains("return &DCSHISTORY{ptr: raw}"),
             "expected direct stable-handle wrap but got:\n{contents}"
         );
         assert!(
@@ -3128,7 +3099,7 @@ mod tests {
         .unwrap();
         let contents = &files[0].contents;
         assert!(
-            contents.contains("type CIosShm struct {\n    ptr *C.CIosShmHandle\n    owned bool\n}"),
+            contents.contains("type CIosShm struct {\n    ptr *C.CIosShmHandle\n}"),
             "expected opaque CIosShm wrapper but got:\n{contents}"
         );
         assert!(
@@ -3136,7 +3107,7 @@ mod tests {
             "expected GetIos method signature but got:\n{contents}"
         );
         assert!(
-            contents.contains("return &CIosShm{ptr: raw, owned: false}"),
+            contents.contains("return &CIosShm{ptr: raw}"),
             "expected opaque CIosShm wrap pattern but got:\n{contents}"
         );
     }
