@@ -2299,6 +2299,7 @@ mod tests {
             version: 1,
             module: "cgowrap".to_string(),
             source_headers: vec![],
+            records: vec![],
             opaque_types: vec![OpaqueType {
                 name: handle_name.clone(),
                 cpp_type: "myApi".to_string(),
@@ -2390,6 +2391,7 @@ mod tests {
             version: 1,
             module: "cgowrap".to_string(),
             source_headers: vec![],
+            records: vec![],
             opaque_types: vec![OpaqueType {
                 name: handle_name.clone(),
                 cpp_type: "Widget".to_string(),
@@ -2598,6 +2600,7 @@ mod tests {
             version: 1,
             module: "cgowrap".to_string(),
             source_headers: vec![],
+            records: vec![],
             opaque_types: vec![OpaqueType {
                 name: handle_name.clone(),
                 cpp_type: "Widget".to_string(),
@@ -2716,6 +2719,7 @@ mod tests {
             version: 1,
             module: "cgowrap".to_string(),
             source_headers: vec![],
+            records: vec![],
             opaque_types: vec![OpaqueType {
                 name: handle_name.clone(),
                 cpp_type: "_DCSHISTORY".to_string(),
@@ -2903,6 +2907,7 @@ mod tests {
             version: 1,
             module: "cgowrap".to_string(),
             source_headers: vec![],
+            records: vec![],
             opaque_types: vec![
                 OpaqueType {
                     name: "ApiHandle".to_string(),
@@ -3006,6 +3011,7 @@ mod tests {
             version: 1,
             module: "cgowrap".to_string(),
             source_headers: vec![],
+            records: vec![],
             opaque_types: vec![
                 OpaqueType {
                     name: "ApiHandle".to_string(),

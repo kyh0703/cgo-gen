@@ -244,6 +244,8 @@ fn discover_windows_fallback_include_dirs() -> Vec<PathBuf> {
 fn discover_linux_fallback_include_dirs() -> Vec<PathBuf> {
     let mut includes = Vec::new();
 
+    includes.extend(discover_linux_driver_include_dirs());
+
     if let Some(resource_dir) = discover_command_output_dir(&["clang", "-print-resource-dir"])
         .map(|dir| dir.join("include"))
     {
@@ -284,6 +286,60 @@ fn discover_linux_fallback_include_dirs() -> Vec<PathBuf> {
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect()
+}
+
+fn discover_linux_driver_include_dirs() -> Vec<PathBuf> {
+    let candidates = [
+        ["clang++", "-E", "-x", "c++", "-", "-v"],
+        ["clang++-18", "-E", "-x", "c++", "-", "-v"],
+        ["c++", "-E", "-x", "c++", "-", "-v"],
+        ["g++", "-E", "-x", "c++", "-", "-v"],
+    ];
+
+    for command in candidates {
+        let (program, args) = command.split_first().expect("driver candidate");
+        let Ok(output) = Command::new(program).args(args).output() else {
+            continue;
+        };
+        if !output.status.success() {
+            continue;
+        }
+        let parsed = parse_driver_include_search_list(&String::from_utf8_lossy(&output.stderr));
+        if !parsed.is_empty() {
+            return parsed;
+        }
+    }
+
+    Vec::new()
+}
+
+fn parse_driver_include_search_list(stderr: &str) -> Vec<PathBuf> {
+    let mut includes = Vec::new();
+    let mut in_search_list = false;
+
+    for line in stderr.lines() {
+        let trimmed = line.trim();
+        if trimmed == "#include <...> search starts here:" {
+            in_search_list = true;
+            continue;
+        }
+        if trimmed == "End of search list." {
+            break;
+        }
+        if !in_search_list || trimmed.is_empty() {
+            continue;
+        }
+        if trimmed.starts_with("(framework directory)") {
+            continue;
+        }
+
+        let candidate = PathBuf::from(trimmed);
+        if candidate.exists() {
+            includes.push(candidate);
+        }
+    }
+
+    includes
 }
 
 fn linux_sysroot_include_candidates(sysroot: &Path) -> Vec<PathBuf> {
@@ -532,4 +588,41 @@ pub fn ensure_parse_entry_exists(parse_entry: &Path) -> Result<()> {
 
 pub fn ensure_header_exists(path: &Path) -> Result<()> {
     ensure_parse_entry_exists(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_driver_include_search_list;
+    use std::path::PathBuf;
+
+    #[test]
+    fn parses_driver_include_search_list_from_verbose_output() {
+        let stderr = r#"
+#include "..." search starts here:
+#include <...> search starts here:
+ /usr/include/c++/13
+ /usr/include/x86_64-linux-gnu/c++/13
+ /usr/lib/llvm-18/lib/clang/18/include
+ /usr/local/include
+ /usr/include/x86_64-linux-gnu
+ /usr/include
+End of search list.
+"#;
+
+        let includes = parse_driver_include_search_list(stderr);
+        assert_eq!(
+            includes,
+            vec![
+                PathBuf::from("/usr/include/c++/13"),
+                PathBuf::from("/usr/include/x86_64-linux-gnu/c++/13"),
+                PathBuf::from("/usr/lib/llvm-18/lib/clang/18/include"),
+                PathBuf::from("/usr/local/include"),
+                PathBuf::from("/usr/include/x86_64-linux-gnu"),
+                PathBuf::from("/usr/include"),
+            ]
+            .into_iter()
+            .filter(|path| path.exists())
+            .collect::<Vec<_>>()
+        );
+    }
 }

@@ -43,11 +43,11 @@ fn parses_and_generates_wrapper_for_model_record_fixture() {
 
     let ctx = generator::prepare_config(&PipelineContext::new(config.clone())).unwrap();
     let parsed = parser::parse(&ctx).unwrap();
-    assert_eq!(parsed.classes.len(), 1);
+    assert_eq!(parsed.records.len(), 1);
     assert_eq!(parsed.functions.len(), 0);
     assert_eq!(parsed.enums.len(), 0);
-    assert_eq!(parsed.classes[0].name, "DataRecord");
-    assert_eq!(parsed.classes[0].methods.len(), 22);
+    assert_eq!(parsed.records[0].name, "DataRecord");
+    assert_eq!(parsed.records[0].methods.len(), 22);
 
     let ir = ir::normalize(&ctx, &parsed).unwrap();
     assert_eq!(ir.functions.len(), 24);

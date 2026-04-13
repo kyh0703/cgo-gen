@@ -39,8 +39,8 @@ fn disambiguates_overloaded_methods_with_signature_suffixes() {
     let ctx = PipelineContext::new(config.clone());
     let parsed = parser::parse(&ctx).unwrap();
 
-    assert_eq!(parsed.classes.len(), 1);
-    assert_eq!(parsed.classes[0].methods.len(), 2);
+    assert_eq!(parsed.records.len(), 1);
+    assert_eq!(parsed.records[0].methods.len(), 2);
 
     let ir = ir::normalize(&ctx, &parsed).unwrap();
     assert!(

@@ -11,24 +11,24 @@ use anyhow::{Result, anyhow, bail};
 use clang_sys::*;
 use serde::Serialize;
 
-use crate::{parsing::compiler, pipeline::context::PipelineContext};
+use crate::{domain::kind::RecordKind, parsing::compiler, pipeline::context::PipelineContext};
 
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct ParsedApi {
     pub headers: Vec<String>,
     pub functions: Vec<CppFunction>,
-    pub classes: Vec<CppClass>,
+    pub records: Vec<CppRecord>,
     pub enums: Vec<CppEnum>,
     pub macros: Vec<CppMacroConstant>,
     pub callbacks: Vec<CppCallbackTypedef>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
-pub struct CppClass {
+pub struct CppRecord {
     pub source_header: PathBuf,
     pub namespace: Vec<String>,
     pub name: String,
-    pub is_struct: bool,
+    pub kind: RecordKind,
     pub fields: Vec<CppField>,
     pub methods: Vec<CppMethod>,
     pub constructors: Vec<CppConstructor>,
@@ -121,10 +121,10 @@ impl ParsedApi {
                 .filter(|function| same_path(&function.source_header, header))
                 .cloned()
                 .collect(),
-            classes: self
-                .classes
+            records: self
+                .records
                 .iter()
-                .filter(|class| same_path(&class.source_header, header))
+                .filter(|record| same_path(&record.source_header, header))
                 .cloned()
                 .collect(),
             enums: self
@@ -150,7 +150,7 @@ impl ParsedApi {
 
     pub fn is_empty(&self) -> bool {
         self.functions.is_empty()
-            && self.classes.is_empty()
+            && self.records.is_empty()
             && self.enums.is_empty()
             && self.macros.is_empty()
             && self.callbacks.is_empty()
@@ -246,8 +246,8 @@ fn dedupe_api(api: &mut ParsedApi) {
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
-    api.classes = api
-        .classes
+    api.records = api
+        .records
         .clone()
         .into_iter()
         .collect::<BTreeSet<_>>()
@@ -321,13 +321,13 @@ fn collect_entity(
                 return Ok(());
             }
             if cursor_spelling(cursor).is_some() {
-                let parsed = parse_class(cursor, namespace.to_vec(), filter, discovered_headers)?;
+                let parsed = parse_record(cursor, namespace.to_vec(), filter, discovered_headers)?;
                 if parsed.has_declared_constructor
                     || parsed.has_destructor
                     || !parsed.fields.is_empty()
                     || !parsed.methods.is_empty()
                 {
-                    api.classes.push(parsed);
+                    api.records.push(parsed);
                 }
             }
         }
@@ -375,17 +375,21 @@ fn collect_entity(
     Ok(())
 }
 
-fn parse_class(
+fn parse_record(
     cursor: CXCursor,
     namespace: Vec<String>,
     filter: &ParseFilter,
     discovered_headers: &mut BTreeSet<String>,
-) -> Result<CppClass> {
+) -> Result<CppRecord> {
     let name = cursor_spelling(cursor)
         .ok_or_else(|| anyhow!("anonymous classes are unsupported in v1"))?;
     let source_header = normalized_cursor_file_path(cursor)
         .ok_or_else(|| anyhow!("failed to determine source header for class `{name}`"))?;
-    let is_struct = unsafe { clang_getCursorKind(cursor) == CXCursor_StructDecl };
+    let kind = if unsafe { clang_getCursorKind(cursor) == CXCursor_StructDecl } {
+        RecordKind::Struct
+    } else {
+        RecordKind::Class
+    };
     let mut fields = Vec::new();
     let mut methods = Vec::new();
     let mut constructors = Vec::new();
@@ -399,7 +403,7 @@ fn parse_class(
         }
         record_header_path(child, discovered_headers);
         let accessible = matches!(unsafe { clang_getCXXAccessSpecifier(child) }, CX_CXXPublic)
-            || (is_struct
+            || (kind == RecordKind::Struct
                 && unsafe { clang_getCXXAccessSpecifier(child) } == CX_CXXInvalidAccessSpecifier);
 
         match unsafe { clang_getCursorKind(child) } {
@@ -447,11 +451,11 @@ fn parse_class(
         }
     }
 
-    Ok(CppClass {
+    Ok(CppRecord {
         source_header,
         namespace,
         name,
-        is_struct,
+        kind,
         fields,
         methods,
         constructors,
