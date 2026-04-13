@@ -355,15 +355,24 @@ fn render_go_constants(constants: &[&IrMacroConstant]) -> String {
 }
 
 fn render_go_enum(item: &IrEnum) -> String {
-    let name = leaf_cpp_name(&item.cpp_name);
     let mut out = String::new();
-    out.push_str(&format!("type {} int64\n\n", name));
-    out.push_str("const (\n");
-    for variant in &item.variants {
-        let value = variant.value.as_deref().unwrap_or("0");
-        out.push_str(&format!("    {} {} = {}\n", variant.name, name, value));
+    if item.is_anonymous {
+        out.push_str("const (\n");
+        for variant in &item.variants {
+            let value = variant.value.as_deref().unwrap_or("0");
+            out.push_str(&format!("    {} = {}\n", variant.name, value));
+        }
+        out.push_str(")\n");
+    } else {
+        let name = leaf_cpp_name(&item.cpp_name);
+        out.push_str(&format!("type {} int64\n\n", name));
+        out.push_str("const (\n");
+        for variant in &item.variants {
+            let value = variant.value.as_deref().unwrap_or("0");
+            out.push_str(&format!("    {} {} = {}\n", variant.name, name, value));
+        }
+        out.push_str(")\n");
     }
-    out.push_str(")\n");
     out
 }
 

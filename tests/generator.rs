@@ -197,6 +197,53 @@ output:
 }
 
 #[test]
+fn renders_standalone_anonymous_enums_as_untyped_go_constants() {
+    let root =
+        std::env::temp_dir().join(format!("c_go_standalone_anon_enum_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("include")).unwrap();
+    std::fs::write(
+        root.join("include/Api.hpp"),
+        r#"
+        enum {
+            FeatureDisabled = 0,
+            FeatureEnabled = 1,
+        };
+        "#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("config.yaml"),
+        r#"
+version: 1
+input:
+  headers:
+    - include/Api.hpp
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+
+    let config = generator::prepare_config(&PipelineContext::new(
+        Config::load(root.join("config.yaml")).unwrap(),
+    ))
+    .unwrap();
+    let parsed = parser::parse(&config).unwrap();
+    let ir = ir::normalize(&config, &parsed).unwrap();
+    let header = render_header(&config, &ir);
+    let go = render_go_structs(&config, &ir).unwrap();
+
+    assert!(parsed.enums.iter().any(|item| item.is_anonymous));
+    assert!(!header.contains("__anonymous_enum_"));
+    assert!(go[0].contents.contains("FeatureDisabled = 0"));
+    assert!(go[0].contents.contains("FeatureEnabled = 1"));
+    assert!(!go[0].contents.contains("type __anonymous_enum_"));
+    assert!(!go[0].contents.contains("FeatureDisabled __anonymous_enum_"));
+    assert!(!go[0].contents.contains("int64"));
+}
+
+#[test]
 fn renders_standalone_integer_macros_as_go_constants() {
     let root = std::env::temp_dir().join(format!("c_go_macro_constants_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
