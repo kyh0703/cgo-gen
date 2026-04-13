@@ -172,6 +172,7 @@ fn collect_known_enum_types(parsed: &parser::ParsedApi) -> Vec<String> {
     parsed
         .enums
         .iter()
+        .filter(|item| !item.is_anonymous)
         .map(|item| {
             if item.namespace.is_empty() {
                 item.name.clone()

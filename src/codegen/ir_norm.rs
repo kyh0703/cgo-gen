@@ -91,6 +91,8 @@ pub struct IrCallback {
 pub struct IrEnum {
     pub name: String,
     pub cpp_name: String,
+    #[serde(skip)]
+    pub is_anonymous: bool,
     pub variants: Vec<IrEnumVariant>,
 }
 
@@ -346,6 +348,7 @@ pub fn collect_preferred_model_aliases(api: &ParsedApi) -> BTreeMap<String, Stri
 fn collect_known_enum_types(api: &ParsedApi) -> BTreeSet<String> {
     api.enums
         .iter()
+        .filter(|item| !item.is_anonymous)
         .map(|item| cpp_qualified(&item.namespace, &item.name))
         .collect()
 }
@@ -993,6 +996,7 @@ fn normalize_enum(item: &CppEnum) -> IrEnum {
     IrEnum {
         name: flatten_cpp_name(&item.namespace, &item.name),
         cpp_name: cpp_qualified(&item.namespace, &item.name),
+        is_anonymous: item.is_anonymous,
         variants: item
             .variants
             .iter()

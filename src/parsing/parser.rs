@@ -95,6 +95,8 @@ pub struct CppEnum {
     pub source_header: PathBuf,
     pub namespace: Vec<String>,
     pub name: String,
+    #[serde(skip)]
+    pub is_anonymous: bool,
     pub variants: Vec<CppEnumVariant>,
 }
 
@@ -362,6 +364,9 @@ fn collect_entity(
             if let Some(name) = enum_decl_name(cursor) {
                 api.enums
                     .push(parse_enum_with_name(cursor, namespace.to_vec(), name));
+            } else {
+                api.enums
+                    .push(parse_anonymous_enum(cursor, namespace.to_vec()));
             }
         }
         CXCursor_MacroDefinition => {
@@ -496,6 +501,28 @@ fn parse_enum_with_name(cursor: CXCursor, namespace: Vec<String>, name: String) 
         source_header,
         namespace,
         name,
+        is_anonymous: false,
+        variants,
+    }
+}
+
+fn parse_anonymous_enum(cursor: CXCursor, namespace: Vec<String>) -> CppEnum {
+    let source_header = normalized_cursor_file_path(cursor).unwrap_or_default();
+    let (line, column) = cursor_line_column(cursor);
+    let variants = direct_children(cursor)
+        .into_iter()
+        .filter(|child| unsafe { clang_getCursorKind(*child) } == CXCursor_EnumConstantDecl)
+        .map(|child| CppEnumVariant {
+            name: cursor_spelling(child).unwrap_or_default(),
+            value: Some(unsafe { clang_getEnumConstantDeclValue(child) }.to_string()),
+        })
+        .collect();
+
+    CppEnum {
+        source_header,
+        namespace,
+        name: format!("__anonymous_enum_{line}_{column}"),
+        is_anonymous: true,
         variants,
     }
 }
@@ -576,6 +603,22 @@ fn parse_callback_typedef(
 
 fn enum_decl_name(cursor: CXCursor) -> Option<String> {
     cursor_spelling(cursor).filter(|name| !is_unnamed_enum_spelling(name))
+}
+
+fn cursor_line_column(cursor: CXCursor) -> (u32, u32) {
+    let location = unsafe { clang_getCursorLocation(cursor) };
+    let mut line = 0;
+    let mut column = 0;
+    unsafe {
+        clang_getSpellingLocation(
+            location,
+            std::ptr::null_mut(),
+            &mut line,
+            &mut column,
+            std::ptr::null_mut(),
+        );
+    }
+    (line, column)
 }
 
 fn is_unnamed_enum_spelling(name: &str) -> bool {
