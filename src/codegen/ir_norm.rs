@@ -8,8 +8,8 @@ pub use crate::domain::kind::{FieldAccessKind, IrFunctionKind, IrTypeKind, Recor
 use crate::{
     config::Config,
     parser::{
-        CppCallbackTypedef, CppConstructor, CppEnum, CppField, CppFunction, CppRecord,
-        CppMacroConstant, CppMethod, CppParam, ParsedApi,
+        CppCallbackTypedef, CppConstructor, CppEnum, CppField, CppFunction, CppMacroConstant,
+        CppMethod, CppParam, CppRecord, ParsedApi,
     },
     pipeline::context::PipelineContext,
 };
@@ -813,7 +813,10 @@ fn field_has_zero_length_array(field: &CppField) -> bool {
 }
 
 fn field_getter_is_const(ty: &IrType) -> bool {
-    !matches!(ty.kind, IrTypeKind::ModelValue | IrTypeKind::FixedModelArray)
+    !matches!(
+        ty.kind,
+        IrTypeKind::ModelValue | IrTypeKind::FixedModelArray
+    )
 }
 
 fn struct_field_accessor_suffix(field_name: &str) -> String {
@@ -1421,7 +1424,8 @@ fn normalize_type_with_canonical(
         && raw_type_shape(trimmed) == raw_type_shape(canonical_trimmed)
         && let Some(mut ty) = normalize_known_record_type(canonical_trimmed, known_records)
     {
-        ty.cpp_type = canonicalized_known_record_cpp_type(trimmed, &base_model_cpp_type(&ty.cpp_type));
+        ty.cpp_type =
+            canonicalized_known_record_cpp_type(trimmed, &base_model_cpp_type(&ty.cpp_type));
         return Ok(ty);
     }
     if let Ok(ty) = normalize_type(trimmed, callback_names) {
@@ -1495,7 +1499,11 @@ fn normalize_known_record_type(cpp_type: &str, known_records: &[IrRecord]) -> Op
     let record = known_record(trimmed, known_records)?;
     let shape = raw_type_shape(trimmed);
     let cpp_type = canonicalized_known_record_cpp_type(trimmed, &record.cpp_type);
-    let c_type = format!("{}*", record.handle_name);
+    let c_type = format!(
+        "{}{}",
+        record.handle_name,
+        "*".repeat(model_handle_pointer_depth(trimmed))
+    );
     match shape {
         "pointer" => Some(IrType {
             kind: IrTypeKind::ModelPointer,
@@ -1535,11 +1543,14 @@ fn canonicalized_known_record_cpp_type(original: &str, record_cpp_type: &str) ->
     } else {
         record_cpp_type.to_string()
     };
-    match raw_type_shape(original) {
-        "pointer" => format!("{base}*"),
-        "reference" => format!("{base}&"),
-        _ => base,
+    if original.trim().ends_with('&') {
+        return format!("{base}&");
     }
+    let pointer_depth = original.chars().filter(|ch| *ch == '*').count();
+    if pointer_depth > 0 {
+        return format!("{base}{}", "*".repeat(pointer_depth));
+    }
+    base
 }
 
 fn canonicalized_known_record_array_type(original: &str, record_cpp_type: &str) -> String {
@@ -1731,7 +1742,10 @@ fn normalize_type(cpp_type: &str, callback_names: &BTreeSet<String>) -> Result<I
             Ok(IrType {
                 kind: IrTypeKind::ModelPointer,
                 cpp_type: trimmed.to_string(),
-                c_type: format!("{handle_name}*"),
+                c_type: format!(
+                    "{handle_name}{}",
+                    "*".repeat(model_handle_pointer_depth(trimmed))
+                ),
                 handle: Some(handle_name),
             })
         }
@@ -2065,6 +2079,10 @@ fn raw_safe_model_handle_name(cpp_type: &str) -> Option<String> {
     Some(format!("{}Handle", flatten_qualified_cpp_name(&base)))
 }
 
+fn model_handle_pointer_depth(cpp_type: &str) -> usize {
+    cpp_type.chars().filter(|ch| *ch == '*').count().max(1)
+}
+
 /// "T[N]" 패턴에서 (elem_type_str, size) 추출. const 접두사 제거 후 처리.
 fn parse_array_type(value: &str) -> Option<(&str, usize)> {
     let trimmed = value.trim().trim_start_matches("const ").trim();
@@ -2351,6 +2369,30 @@ mod tests {
 
         assert_eq!(ty.kind, IrTypeKind::ModelPointer);
         assert_eq!(ty.c_type, "DBHandlerHandle*");
+    }
+
+    #[test]
+    fn normalizes_aliased_model_double_pointer_as_handle_double_pointer() {
+        let callback_names = BTreeSet::new();
+        let known_records = vec![IrRecord {
+            cpp_type: "_DIMIR_PACKET".to_string(),
+            handle_name: "DIMIR_PACKETHandle".to_string(),
+            kind: RecordKind::Struct,
+        }];
+        let ty = normalize_type_with_canonical(
+            &Config::default(),
+            "DIMIR_PACKET**",
+            "_DIMIR_PACKET**",
+            &callback_names,
+            &BTreeSet::new(),
+            &known_records,
+        )
+        .unwrap();
+
+        assert_eq!(ty.kind, IrTypeKind::ModelPointer);
+        assert_eq!(ty.cpp_type, "_DIMIR_PACKET**");
+        assert_eq!(ty.c_type, "DIMIR_PACKETHandle**");
+        assert_eq!(ty.handle, Some("DIMIR_PACKETHandle".to_string()));
     }
 
     #[test]

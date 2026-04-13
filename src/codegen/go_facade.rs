@@ -1178,6 +1178,9 @@ fn go_param_type(config: &PipelineContext, ty: &IrType) -> Option<String> {
         }
         IrTypeKind::Callback => Some(leaf_cpp_name(&ty.cpp_type)),
         IrTypeKind::ModelReference | IrTypeKind::ModelPointer | IrTypeKind::ModelValue => {
+            if ty.kind == IrTypeKind::ModelPointer && model_pointer_depth(ty) > 1 {
+                return None;
+            }
             if base_model_cpp_type(&ty.cpp_type) == "void" {
                 return Some("unsafe.Pointer".to_string());
             }
@@ -1208,7 +1211,8 @@ fn go_return_supported(_config: &PipelineContext, ty: &IrType) -> bool {
         )
         || (ty.kind == IrTypeKind::Primitive && go_type_for_ir(ty).is_some())
         || (ty.kind == IrTypeKind::Pointer && go_pointer_return_type(ty).is_some())
-        || matches!(ty.kind, IrTypeKind::ModelPointer | IrTypeKind::ModelView)
+        || (ty.kind == IrTypeKind::ModelPointer && model_pointer_depth(ty) == 1)
+        || ty.kind == IrTypeKind::ModelView
         || ty.kind == IrTypeKind::ModelValue
 }
 
@@ -1405,9 +1409,7 @@ fn zero_value_for_go_type(go_type: &str) -> &'static str {
 }
 
 fn render_wrapper_struct(go_name: &str, handle_name: &str) -> String {
-    format!(
-        "type {go_name} struct {{\n    ptr *C.{handle_name}\n    owned bool\n}}\n"
-    )
+    format!("type {go_name} struct {{\n    ptr *C.{handle_name}\n    owned bool\n}}\n")
 }
 
 fn wrapper_literal(go_name: &str, ptr_expr: &str, owned: bool) -> String {
