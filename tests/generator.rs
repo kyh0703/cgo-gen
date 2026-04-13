@@ -141,6 +141,7 @@ fn renders_standalone_integer_macros_as_go_constants() {
         #define RTRK_BSRMETHOD_NOTDEFINE        (0)
         #define RTRK_BSRMETHOD_EWT              (10)
         #define RTRK_BSRMETHOD_WAITCNT          (20)
+        #define TEST_INDEX                      10
         #define STARTUP_PENDING                 0x01
         #define MAKE_FLAG(value)                ((value) << 1)
         "#,
@@ -182,6 +183,12 @@ output:
             .iter()
             .any(|item| item.name == "STARTUP_PENDING" && item.value == "0x01")
     );
+    assert!(
+        parsed
+            .macros
+            .iter()
+            .any(|item| item.name == "TEST_INDEX" && item.value == "10")
+    );
     assert!(!parsed.macros.iter().any(|item| item.name == "MAKE_FLAG"));
 
     let ir = ir::normalize(&ctx, &parsed).unwrap();
@@ -189,6 +196,11 @@ output:
         ir.constants
             .iter()
             .any(|item| item.name == "RTRK_BSRMETHOD_WAITCNT" && item.value == "20")
+    );
+    assert!(
+        ir.constants
+            .iter()
+            .any(|item| item.name == "TEST_INDEX" && item.value == "10")
     );
 
     let go = render_go_structs(&ctx, &ir).unwrap();
@@ -198,6 +210,7 @@ output:
     assert!(go_text.contains("RTRK_BSRMETHOD_NOTDEFINE = 0"));
     assert!(go_text.contains("RTRK_BSRMETHOD_EWT = 10"));
     assert!(go_text.contains("RTRK_BSRMETHOD_WAITCNT = 20"));
+    assert!(go_text.contains("TEST_INDEX = 10"));
     assert!(go_text.contains("STARTUP_PENDING = 0x01"));
     assert!(!go_text.contains("MAKE_FLAG"));
     assert!(!go_text.contains("import \"C\""));
