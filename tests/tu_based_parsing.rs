@@ -110,9 +110,9 @@ output:
             .iter()
             .any(|header| header.ends_with("foreign.hpp"))
     );
-    assert!(parsed.classes.iter().any(|class| class.name == "Owned"));
-    assert!(!parsed.classes.iter().any(|class| class.name == "LocalOnly"));
-    assert!(!parsed.classes.iter().any(|class| class.name == "Foreign"));
+    assert!(parsed.records.iter().any(|record| record.name == "Owned"));
+    assert!(!parsed.records.iter().any(|record| record.name == "LocalOnly"));
+    assert!(!parsed.records.iter().any(|record| record.name == "Foreign"));
 }
 
 #[test]
@@ -311,7 +311,7 @@ output:
 
     assert_eq!(units.len(), 1);
     assert!(units[0].ends_with("tu.cpp"));
-    assert!(parsed.classes.iter().any(|class| class.name == "Entry"));
+    assert!(parsed.records.iter().any(|record| record.name == "Entry"));
     assert!(
         !parsed
             .headers

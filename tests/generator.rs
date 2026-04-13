@@ -43,6 +43,72 @@ fn renders_unified_go_wrapper() {
 }
 
 #[test]
+fn parsed_struct_pointers_use_handle_wrappers_while_foreign_structs_stay_direct() {
+    let root = std::env::temp_dir().join(format!(
+        "c_go_parsed_struct_pointer_routing_{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("include")).unwrap();
+    std::fs::write(
+        root.join("include/Api.hpp"),
+        r#"
+        #include <sys/time.h>
+
+        struct Counter {
+            int value;
+        };
+
+        bool TakeCounter(struct Counter* value);
+        bool TakeTimeval(struct timeval* value);
+        "#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("config.yaml"),
+        r#"
+version: 1
+input:
+  headers:
+    - include/Api.hpp
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+
+    let ctx = generator::prepare_config(&PipelineContext::new(
+        Config::load(root.join("config.yaml")).unwrap(),
+    ))
+    .unwrap();
+    let parsed = parser::parse(&ctx).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
+    let go = render_go_structs(&ctx, &ir).unwrap();
+
+    let take_counter = ir
+        .functions
+        .iter()
+        .find(|function| function.cpp_name == "TakeCounter")
+        .unwrap();
+    assert_eq!(take_counter.params[0].ty.kind, IrTypeKind::ModelPointer);
+    assert_eq!(take_counter.params[0].ty.c_type, "CounterHandle*");
+
+    let take_timeval = ir
+        .functions
+        .iter()
+        .find(|function| function.cpp_name == "TakeTimeval")
+        .unwrap();
+    assert_eq!(take_timeval.params[0].ty.kind, IrTypeKind::ExternStructPointer);
+    assert_eq!(take_timeval.params[0].ty.c_type, "struct timeval*");
+
+    assert_eq!(go.len(), 1);
+    assert!(go[0].contents.contains("type Counter struct {"));
+    assert!(go[0].contents.contains("func TakeCounter(value *Counter) bool {"));
+    assert!(!go[0].contents.contains("func TakeCounter(value *C.struct_Counter) bool {"));
+    assert!(go[0].contents.contains("func TakeTimeval(value *C.struct_timeval) bool {"));
+}
+
+#[test]
 fn preserves_const_char_spelling_but_normalizes_c_value_type() {
     let root = std::env::temp_dir().join(format!("c_go_const_char_value_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);

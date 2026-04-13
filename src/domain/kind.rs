@@ -43,6 +43,15 @@ pub enum IrTypeKind {
     ModelValue,
 }
 
+/// Distinguishes parsed C++ record declarations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum RecordKind {
+    #[serde(rename = "struct")]
+    Struct,
+    #[serde(rename = "class")]
+    Class,
+}
+
 /// Classifies the role of an IR function node.
 /// Serializes to the same string values as the previous String-based field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

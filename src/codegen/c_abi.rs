@@ -55,7 +55,7 @@ pub fn generate_all(ctx: &PipelineContext, write_ir: bool) -> Result<()> {
 
     // Compute the set of handles for classes that will get primary Go wrapper structs.
     // These are classes with at least one method AND a destructor in any normalized IR.
-    // Using the normalized IR (instead of parsed.classes.has_destructor) correctly
+    // Using the normalized IR (instead of parsed.records.has_destructor) correctly
     // includes classes with implicit C++ destructors (has_destructor=false in parser).
     let global_class_handles: BTreeSet<String> = all_normalized
         .iter()
@@ -154,13 +154,13 @@ fn build_pipeline_context(
 
 fn collect_known_model_types(parsed: &parser::ParsedApi) -> Vec<String> {
     parsed
-        .classes
+        .records
         .iter()
-        .map(|class| {
-            if class.namespace.is_empty() {
-                class.name.clone()
+        .map(|record| {
+            if record.namespace.is_empty() {
+                record.name.clone()
             } else {
-                format!("{}::{}", class.namespace.join("::"), class.name)
+                format!("{}::{}", record.namespace.join("::"), record.name)
             }
         })
         .collect::<BTreeSet<_>>()

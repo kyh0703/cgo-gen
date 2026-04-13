@@ -82,9 +82,9 @@ pub fn run() -> Result<()> {
             let (ctx, parsed) = generator::prepare_with_parsed(&ctx)?;
             let ir = ir::normalize(&ctx, &parsed)?;
             println!(
-                "ok: {} headers, {} classes, {} functions, {} enums, {} abi functions",
+                "ok: {} headers, {} records, {} functions, {} enums, {} abi functions",
                 parsed.headers.len(),
-                parsed.classes.len(),
+                parsed.records.len(),
                 parsed.functions.len(),
                 parsed.enums.len(),
                 ir.functions.len()
