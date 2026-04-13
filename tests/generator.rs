@@ -652,19 +652,13 @@ output:
     let header = render_header(&ctx, &ir);
     let source = render_source(&ctx, &ir);
 
-    assert!(header.contains("ItemHandle** cgowrap_Holder_GetItems(const HolderHandle* self);"));
-    assert!(
-        header.contains("void cgowrap_Holder_SetItems(HolderHandle* self, ItemHandle** value);")
-    );
+    assert!(header.contains("ItemHandle** cgowrap_Holder_GetItems(HolderHandle* self);"));
+    assert!(!header.contains("cgowrap_Holder_SetItems("));
 
     assert!(source.contains(
-        "_r[_i] = reinterpret_cast<ItemHandle*>(new Item(reinterpret_cast<const Holder*>(self)->items[_i]));"
+        "_r[_i] = reinterpret_cast<ItemHandle*>(&(reinterpret_cast<Holder*>(self)->items[_i]));"
     ));
-    assert!(source.contains(
-        "reinterpret_cast<Holder*>(self)->items[_i] = *reinterpret_cast<Item*>(value[_i]);"
-    ));
-    assert!(!source.contains("new Item[3](reinterpret_cast<const Holder*>(self)->items[_i])"));
-    assert!(!source.contains("reinterpret_cast<Item[3]*>(value[_i])"));
+    assert!(!source.contains("new Item(reinterpret_cast<const Holder*>(self)->items[_i])"));
 }
 
 #[test]
@@ -777,14 +771,13 @@ output:
     assert_eq!(ptr_getter.returns.kind, IrTypeKind::ModelView);
     assert_eq!(ref_getter.returns.kind, IrTypeKind::ModelView);
     assert!(source.contains("auto result = reinterpret_cast<Api*>(self)->GetChildPtr();"));
-    assert!(source.contains("return reinterpret_cast<ChildHandle*>(new Child(*result));"));
-    assert!(source.contains(
-        "return reinterpret_cast<ChildHandle*>(new Child(reinterpret_cast<Api*>(self)->GetChildRef()));"
-    ));
+    assert!(source.contains("return reinterpret_cast<ChildHandle*>(result);"));
+    assert!(source.contains("auto& result = reinterpret_cast<Api*>(self)->GetChildRef();"));
+    assert!(source.contains("return reinterpret_cast<ChildHandle*>(&result);"));
 }
 
 #[test]
-fn renders_model_value_field_accessors_as_snapshot_get_and_explicit_set() {
+fn renders_model_value_field_accessors_as_borrowed_alias_get_and_explicit_set() {
     let root = env::temp_dir().join(format!("c_go_model_value_field_{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(root.join("include")).unwrap();
@@ -827,12 +820,12 @@ output:
         .collect::<Vec<_>>()
         .join("\n");
 
-    assert!(header.contains("ChildHandle* cgowrap_Parent_GetChild(const ParentHandle* self);"));
+    assert!(header.contains("ChildHandle* cgowrap_Parent_GetChild(ParentHandle* self);"));
     assert!(
         header.contains("void cgowrap_Parent_SetChild(ParentHandle* self, ChildHandle* value);")
     );
     assert!(source.contains(
-        "return reinterpret_cast<ChildHandle*>(new Child(reinterpret_cast<const Parent*>(self)->child));"
+        "return reinterpret_cast<ChildHandle*>(&(reinterpret_cast<Parent*>(self)->child));"
     ));
     assert!(
         source
@@ -840,6 +833,7 @@ output:
     );
     assert!(go_text.contains("func (p *Parent) GetChild() *Child {"));
     assert!(go_text.contains("func (p *Parent) SetChild(value *Child) {"));
+    assert!(go_text.contains("return &Child{ptr: raw, owned: false}"));
 }
 
 #[test]
@@ -889,16 +883,15 @@ output:
         .join("\n");
 
     assert!(header.contains("unsigned int* cgowrap_Info_GetCodes(const InfoHandle* self);"));
-    assert!(header.contains("void cgowrap_Info_SetCodes(InfoHandle* self, unsigned int* value);"));
+    assert!(!header.contains("cgowrap_Info_SetCodes("));
     assert!(header.contains("unsigned int* cgowrap_Info_GetIds(const InfoHandle* self);"));
-    assert!(header.contains("void cgowrap_Info_SetIds(InfoHandle* self, unsigned int* value);"));
+    assert!(!header.contains("cgowrap_Info_SetIds("));
 
     assert!(go_text.contains("func (i *Info) GetCodes() ([]uint32, error) {"));
-    assert!(go_text.contains("func (i *Info) SetCodes(value []uint32) {"));
     assert!(go_text.contains("func (i *Info) GetIds() ([]uint32, error) {"));
-    assert!(go_text.contains("func (i *Info) SetIds(value []uint32) {"));
+    assert!(!go_text.contains("func (i *Info) SetCodes("));
+    assert!(!go_text.contains("func (i *Info) SetIds("));
     assert!(go_text.contains("cSlice := (*[4]C.uint32_t)(unsafe.Pointer(raw))"));
-    assert!(go_text.contains("(*C.uint32_t)(unsafe.Pointer(&value[0]))"));
     assert!(go_text.contains("result := make([]uint32, 4)"));
 }
 
@@ -956,31 +949,24 @@ output:
     assert!(header.contains(
         "unsigned int* cgowrap_STATTNTM_INFO_GetNrdRsnCodeSet(const STATTNTM_INFOHandle* self);"
     ));
-    assert!(header.contains(
-        "void cgowrap_STATTNTM_INFO_SetNrdRsnCodeSet(STATTNTM_INFOHandle* self, unsigned int* value);"
-    ));
+    assert!(!header.contains("cgowrap_STATTNTM_INFO_SetNrdRsnCodeSet("));
     assert!(header.contains(
         "unsigned int* cgowrap_STATTNTM_INFO_GetAcwRsnCodeSet(const STATTNTM_INFOHandle* self);"
     ));
-    assert!(header.contains(
-        "void cgowrap_STATTNTM_INFO_SetAcwRsnCodeSet(STATTNTM_INFOHandle* self, unsigned int* value);"
-    ));
+    assert!(!header.contains("cgowrap_STATTNTM_INFO_SetAcwRsnCodeSet("));
     assert!(header.contains(
         "unsigned int* cgowrap_SUBSCRIBE_CODE_GetSubScrIds(const SUBSCRIBE_CODEHandle* self);"
     ));
-    assert!(header.contains(
-        "void cgowrap_SUBSCRIBE_CODE_SetSubScrIds(SUBSCRIBE_CODEHandle* self, unsigned int* value);"
-    ));
+    assert!(!header.contains("cgowrap_SUBSCRIBE_CODE_SetSubScrIds("));
 
     assert!(go_text.contains("func (s *STATTNTMINFO) GetNrdRsnCodeSet() ([]uint32, error) {"));
-    assert!(go_text.contains("func (s *STATTNTMINFO) SetNrdRsnCodeSet(value []uint32) {"));
     assert!(go_text.contains("func (s *STATTNTMINFO) GetAcwRsnCodeSet() ([]uint32, error) {"));
-    assert!(go_text.contains("func (s *STATTNTMINFO) SetAcwRsnCodeSet(value []uint32) {"));
     assert!(go_text.contains("func (s *SUBSCRIBECODE) GetSubScrIds() ([]uint32, error) {"));
-    assert!(go_text.contains("func (s *SUBSCRIBECODE) SetSubScrIds(value []uint32) {"));
+    assert!(!go_text.contains("func (s *STATTNTMINFO) SetNrdRsnCodeSet("));
+    assert!(!go_text.contains("func (s *STATTNTMINFO) SetAcwRsnCodeSet("));
+    assert!(!go_text.contains("func (s *SUBSCRIBECODE) SetSubScrIds("));
     assert!(go_text.contains("cSlice := (*[64]C.uint32_t)(unsafe.Pointer(raw))"));
     assert!(go_text.contains("cSlice := (*[16]C.uint32_t)(unsafe.Pointer(raw))"));
-    assert!(go_text.contains("(*C.uint32_t)(unsafe.Pointer(&value[0]))"));
 }
 
 #[test]

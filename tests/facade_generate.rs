@@ -723,15 +723,12 @@ naming:
     let go_facade = fs::read_to_string(root.join("out/api_wrapper.go")).unwrap();
 
     assert!(raw_source.contains("auto result = reinterpret_cast<Api*>(self)->GetThingPtr();"));
-    assert!(
-        raw_source.contains("return reinterpret_cast<ThingModelHandle*>(new ThingModel(*result));")
-    );
-    assert!(raw_source.contains(
-        "return reinterpret_cast<ThingModelHandle*>(new ThingModel(reinterpret_cast<Api*>(self)->GetThingRef()));"
-    ));
+    assert!(raw_source.contains("return reinterpret_cast<ThingModelHandle*>(result);"));
+    assert!(raw_source.contains("auto& result = reinterpret_cast<Api*>(self)->GetThingRef();"));
+    assert!(raw_source.contains("return reinterpret_cast<ThingModelHandle*>(&result);"));
     assert!(go_facade.contains("func (a *Api) GetThingPtr() *ThingModel {"));
     assert!(go_facade.contains("func (a *Api) GetThingRef() *ThingModel {"));
-    assert!(go_facade.contains("return &ThingModel{ptr: raw}"));
+    assert!(go_facade.contains("return &ThingModel{ptr: raw, owned: false}"));
 }
 
 #[test]

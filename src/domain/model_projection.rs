@@ -15,6 +15,6 @@ pub struct ModelProjectionField {
     pub go_name: String,
     pub go_type: String,
     pub getter_symbol: String,
-    pub setter_symbol: String,
+    pub setter_symbol: Option<String>,
     pub return_kind: IrTypeKind,
 }

@@ -58,6 +58,37 @@ pub struct IrFunction {
     pub params: Vec<IrParam>,
 }
 
+impl IrFunction {
+    pub fn is_synthetic_struct_field_accessor(&self) -> bool {
+        self.field_accessor.is_some()
+    }
+
+    pub fn is_synthetic_struct_field_getter(&self) -> bool {
+        self.field_accessor
+            .as_ref()
+            .is_some_and(|accessor| accessor.access == FieldAccessKind::Get)
+    }
+
+    pub fn is_synthetic_struct_field_array_getter(&self) -> bool {
+        self.is_synthetic_struct_field_getter()
+            && matches!(
+                self.returns.kind,
+                IrTypeKind::CString
+                    | IrTypeKind::FixedByteArray
+                    | IrTypeKind::FixedArray
+                    | IrTypeKind::FixedModelArray
+            )
+    }
+
+    pub fn is_synthetic_struct_field_borrowed_model_getter(&self) -> bool {
+        self.is_synthetic_struct_field_getter() && self.returns.kind == IrTypeKind::ModelValue
+    }
+
+    pub fn is_synthetic_struct_field_borrowed_model_array_getter(&self) -> bool {
+        self.is_synthetic_struct_field_getter() && self.returns.kind == IrTypeKind::FixedModelArray
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct IrFieldAccessor {
     pub field_name: String,
@@ -618,7 +649,7 @@ fn normalize_struct_fields(
     let mut functions = Vec::new();
 
     for field in &record.fields {
-        if field.is_function_pointer {
+        if field.is_function_pointer || field_has_zero_length_array(field) {
             continue;
         }
 
@@ -657,10 +688,14 @@ fn normalize_struct_fields(
             handle_name,
             field,
             field_ty.clone(),
+            field_getter_is_const(&field_ty),
         ));
 
         let setter_name = format!("Set{suffix}");
-        if existing_methods.contains(setter_name.as_str()) || field_is_read_only(field) {
+        if existing_methods.contains(setter_name.as_str())
+            || field_is_read_only(field)
+            || field_is_array(field)
+        {
             continue;
         }
 
@@ -686,6 +721,7 @@ fn make_struct_field_getter(
     handle_name: &str,
     field: &CppField,
     returns: IrType,
+    is_const: bool,
 ) -> IrFunction {
     let method_name = format!("Get{}", struct_field_accessor_suffix(&field.name));
     IrFunction {
@@ -694,7 +730,7 @@ fn make_struct_field_getter(
         cpp_name: format!("{qualified}::{method_name}"),
         method_of: Some(handle_name.to_string()),
         owner_cpp_type: Some(qualified.to_string()),
-        is_const: Some(true),
+        is_const: Some(is_const),
         field_accessor: Some(IrFieldAccessor {
             field_name: field.name.clone(),
             access: FieldAccessKind::Get,
@@ -704,8 +740,16 @@ fn make_struct_field_getter(
             name: "self".to_string(),
             ty: IrType {
                 kind: IrTypeKind::Opaque,
-                cpp_type: format!("const {}*", qualified),
-                c_type: format!("const {handle_name}*"),
+                cpp_type: if is_const {
+                    format!("const {}*", qualified)
+                } else {
+                    format!("{}*", qualified)
+                },
+                c_type: if is_const {
+                    format!("const {handle_name}*")
+                } else {
+                    format!("{handle_name}*")
+                },
                 handle: Some(handle_name.to_string()),
             },
         }],
@@ -756,6 +800,20 @@ fn field_is_read_only(field: &CppField) -> bool {
     let ty = field.ty.trim();
     let canonical = field.canonical_ty.trim();
     ty.starts_with("const ") || canonical.starts_with("const ")
+}
+
+fn field_is_array(field: &CppField) -> bool {
+    parse_array_type(&field.ty).is_some()
+        || parse_array_type(&field.canonical_ty).is_some()
+        || field_has_zero_length_array(field)
+}
+
+fn field_has_zero_length_array(field: &CppField) -> bool {
+    is_zero_length_array_type(&field.ty) || is_zero_length_array_type(&field.canonical_ty)
+}
+
+fn field_getter_is_const(ty: &IrType) -> bool {
+    !matches!(ty.kind, IrTypeKind::ModelValue | IrTypeKind::FixedModelArray)
 }
 
 fn struct_field_accessor_suffix(field_name: &str) -> String {
@@ -2064,6 +2122,17 @@ pub fn byte_array_length(cpp_type: &str) -> Option<usize> {
     let prefix = trimmed.strip_prefix("unsigned char[")?;
     let len = prefix.strip_suffix(']')?;
     len.parse().ok()
+}
+
+fn is_zero_length_array_type(value: &str) -> bool {
+    let trimmed = value.trim().trim_start_matches("const ").trim();
+    let Some(bracket) = trimmed.rfind('[') else {
+        return false;
+    };
+    let Some(rest) = trimmed[bracket + 1..].strip_suffix(']') else {
+        return false;
+    };
+    rest.trim() == "0"
 }
 
 #[cfg(test)]

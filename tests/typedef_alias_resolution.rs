@@ -129,13 +129,11 @@ naming:
     assert_eq!(getter.returns.cpp_type, "ReasonCode[4]");
     assert_eq!(getter.returns.c_type, "unsigned int*");
 
-    let setter = ir
-        .functions
-        .iter()
-        .find(|item| item.cpp_name == "Info::SetCodes")
-        .unwrap();
-    assert_eq!(setter.params[1].ty.cpp_type, "ReasonCode[4]");
-    assert_eq!(setter.params[1].ty.c_type, "unsigned int*");
+    assert!(
+        ir.functions
+            .iter()
+            .all(|item| item.cpp_name != "Info::SetCodes")
+    );
 }
 
 #[test]
@@ -190,14 +188,6 @@ naming:
     assert_eq!(nrd_getter.returns.cpp_type, "tRsnCode[64]");
     assert_eq!(nrd_getter.returns.c_type, "unsigned int*");
 
-    let nrd_setter = ir
-        .functions
-        .iter()
-        .find(|item| item.cpp_name == "STATTNTM_INFO::SetNrdRsnCodeSet")
-        .unwrap();
-    assert_eq!(nrd_setter.params[1].ty.cpp_type, "tRsnCode[64]");
-    assert_eq!(nrd_setter.params[1].ty.c_type, "unsigned int*");
-
     let acw_getter = ir
         .functions
         .iter()
@@ -206,14 +196,6 @@ naming:
     assert_eq!(acw_getter.returns.cpp_type, "tRsnCode[64]");
     assert_eq!(acw_getter.returns.c_type, "unsigned int*");
 
-    let acw_setter = ir
-        .functions
-        .iter()
-        .find(|item| item.cpp_name == "STATTNTM_INFO::SetAcwRsnCodeSet")
-        .unwrap();
-    assert_eq!(acw_setter.params[1].ty.cpp_type, "tRsnCode[64]");
-    assert_eq!(acw_setter.params[1].ty.c_type, "unsigned int*");
-
     let subscribe_getter = ir
         .functions
         .iter()
@@ -221,12 +203,11 @@ naming:
         .unwrap();
     assert_eq!(subscribe_getter.returns.cpp_type, "tSubscribeId[16]");
     assert_eq!(subscribe_getter.returns.c_type, "unsigned int*");
-
-    let subscribe_setter = ir
-        .functions
-        .iter()
-        .find(|item| item.cpp_name == "SUBSCRIBE_CODE::SetSubScrIds")
-        .unwrap();
-    assert_eq!(subscribe_setter.params[1].ty.cpp_type, "tSubscribeId[16]");
-    assert_eq!(subscribe_setter.params[1].ty.c_type, "unsigned int*");
+    assert!(
+        ir.functions
+            .iter()
+            .all(|item| item.cpp_name != "STATTNTM_INFO::SetNrdRsnCodeSet"
+                && item.cpp_name != "STATTNTM_INFO::SetAcwRsnCodeSet"
+                && item.cpp_name != "SUBSCRIBE_CODE::SetSubScrIds")
+    );
 }

@@ -538,7 +538,11 @@ fn render_destructor_body(function: &IrFunction) -> String {
 
 fn render_method_body(function: &IrFunction) -> String {
     let owner = function.owner_cpp_type.as_deref().unwrap_or("void");
-    if let Some(accessor) = &function.field_accessor {
+    if let Some(accessor) = function
+        .is_synthetic_struct_field_accessor()
+        .then_some(function.field_accessor.as_ref())
+        .flatten()
+    {
         let receiver = if function.is_const.unwrap_or(false) {
             format!("reinterpret_cast<const {}*>(self)", owner)
         } else {
@@ -632,16 +636,14 @@ fn render_field_getter_body(function: &IrFunction, receiver: &str, field_name: &
         }
         IrTypeKind::FixedModelArray => {
             let handle = function.returns.handle.as_deref().unwrap_or("");
-            let base_cpp = fixed_model_array_elem_cpp_type(&function.returns.cpp_type);
             let n = ir::fixed_array_length(&function.returns.cpp_type).unwrap_or(0);
             format!(
-                "    {handle}** _r = static_cast<{handle}**>(std::malloc({n} * sizeof({handle}*)));\n    if (_r == nullptr) {{\n        return nullptr;\n    }}\n    for (int _i = 0; _i < {n}; _i++) {{\n        _r[_i] = reinterpret_cast<{handle}*>(new {base_cpp}({receiver}->{field_name}[_i]));\n    }}\n    return _r;\n"
+                "    {handle}** _r = static_cast<{handle}**>(std::malloc({n} * sizeof({handle}*)));\n    if (_r == nullptr) {{\n        return nullptr;\n    }}\n    for (int _i = 0; _i < {n}; _i++) {{\n        _r[_i] = reinterpret_cast<{handle}*>(&({receiver}->{field_name}[_i]));\n    }}\n    return _r;\n"
             )
         }
         IrTypeKind::ModelValue => format!(
-            "    return reinterpret_cast<{}>(new {}({receiver}->{field_name}));\n",
+            "    return reinterpret_cast<{}>(&({receiver}->{field_name}));\n",
             function.returns.c_type,
-            base_model_cpp_type(&function.returns.cpp_type),
         ),
         _ => format!("    return {receiver}->{};\n", field_name),
     }
@@ -688,17 +690,16 @@ fn render_field_setter_body(function: &IrFunction, receiver: &str, field_name: &
 }
 
 fn render_model_view_return(function: &IrFunction, target: &str, args: &str) -> String {
-    let base = base_model_cpp_type(&function.returns.cpp_type);
     if function.returns.cpp_type.trim_end().ends_with('*') {
         return format!(
-            "    auto result = {}({});\n    if (result == nullptr) {{\n        return nullptr;\n    }}\n    return reinterpret_cast<{}>(new {}(*result));\n",
-            target, args, function.returns.c_type, base
+            "    auto result = {}({});\n    if (result == nullptr) {{\n        return nullptr;\n    }}\n    return reinterpret_cast<{}>(result);\n",
+            target, args, function.returns.c_type
         );
     }
 
     format!(
-        "    return reinterpret_cast<{}>(new {}({}({})));\n",
-        function.returns.c_type, base, target, args
+        "    auto& result = {}({});\n    return reinterpret_cast<{}>(&result);\n",
+        target, args, function.returns.c_type
     )
 }
 
