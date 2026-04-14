@@ -1,5 +1,9 @@
 # Model View Snapshot Copy
 
+## Historical Note
+- 이 문서는 2026-04 시점의 snapshot-copy 결정 기록이다.
+- 현재 구현 기본값은 이 기록과 다르게 `model_pointer` / `model_reference`는 borrow, `model_value`는 own으로 정리됐다.
+
 ## Goal
 - `model_view` 성격의 반환과 direct model field 접근을 Go에서 owned snapshot으로 노출한다.
 - 변경 반영은 explicit setter/native API 경계로만 일어나게 고정한다.

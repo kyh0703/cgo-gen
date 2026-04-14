@@ -24,7 +24,7 @@
 
 ### Go layer
 - Emits `*_wrapper.go` beside the generated native files.
-- Preserves handle-backed object identity instead of inventing detached DTO copies.
+- Preserves handle-backed object identity and defaults model pointer/reference handles to borrowed views.
 - Hides C string ownership, callback bridge plumbing, and native calling details behind Go-friendly helpers.
 
 ## Runtime boundaries
@@ -50,15 +50,17 @@ Generated output should expose a stable interoperability boundary, not business 
 Facade generation is intentionally type-driven:
 
 - if an API uses a known supported model type directly in a pointer or reference position
-- and that usage is safe to preserve as a live native-backed handle
-- then the Go layer should prefer a wrapper that accepts that handle-backed model directly
+- then the Go layer should preserve that usage as a live borrowed handle
+- by-value model boundaries stay explicit owned/copy handles
 
 Examples of the desired shape:
 
 - `bool LoadThing(..., ThingRecord& out)` -> `LoadThing(..., out *ThingRecord) bool`
 - `bool LoadThing(..., ThingRecord* out)` -> `LoadThing(..., out *ThingRecord) bool`
+- `ThingRecord& CurrentThing()` -> `CurrentThing() *ThingRecord` with borrowed lifetime semantics
+- `ThingRecord BuildThing()` -> `BuildThing() *ThingRecord` with owned lifetime semantics
 
-This keeps native mutability and lifetime attached to the same handle instead of fabricating detached return values.
+This keeps native mutability and lifetime attached to the same handle by default, while reserving owned wrappers for explicit value/copy boundaries.
 
 ## Current implementation note
 
@@ -68,7 +70,10 @@ This keeps native mutability and lifetime attached to the same handle instead of
 - Unknown object reference or pointer declarations can remain in raw output as opaque handles when the raw layer can express them safely.
 - The same unknown declarations stay filtered out from Go-facing layers unless they map to a supported model path.
 - Raw-unsafe by-value object declarations are skipped at declaration level and recorded in `support.skipped_declarations`.
-- Known-model Go helpers enforce non-nil handles for required references and allow nil where pointer semantics permit it.
+- Known-model Go helpers enforce non-nil handles for required references, allow nil where pointer semantics permit it, and block use after an owned root is closed.
+- Known-model pointer/reference returns stay borrowed and do not call native delete from `Close()`.
+- Known-model value returns remain owned wrappers that are responsible for native delete.
+- Const-qualified model pointer/reference returns remain available in raw output but stay filtered out from the current mutable Go facade.
 - Overloaded raw symbols and Go exports are disambiguated deterministically from parameter signatures.
 - Namespaced facade functions that would collide in exported Go names are rejected during generation.
 - The current source layout follows the implemented domain split under `src/parsing/`, `src/codegen/`, `src/analysis/`, `src/domain/`, and `src/pipeline/`.
