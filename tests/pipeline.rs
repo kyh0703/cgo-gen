@@ -1,7 +1,9 @@
 use std::{env, fs};
 
 use cgo_gen::{
-    config::Config, domain::kind::{IrTypeKind, RecordKind}, generator, ir, parser,
+    config::Config,
+    domain::kind::{IrTypeKind, RecordKind},
+    generator, ir, parser,
     pipeline::context::PipelineContext,
 };
 
@@ -95,8 +97,16 @@ output:
     let ctx = PipelineContext::new(Config::load(root.join("config.yaml")).unwrap());
     let parsed = parser::parse(&ctx).unwrap();
 
-    let counter = parsed.records.iter().find(|record| record.name == "Counter").unwrap();
-    let widget = parsed.records.iter().find(|record| record.name == "Widget").unwrap();
+    let counter = parsed
+        .records
+        .iter()
+        .find(|record| record.name == "Counter")
+        .unwrap();
+    let widget = parsed
+        .records
+        .iter()
+        .find(|record| record.name == "Widget")
+        .unwrap();
 
     assert_eq!(counter.kind, RecordKind::Struct);
     assert_eq!(widget.kind, RecordKind::Class);

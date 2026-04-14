@@ -1198,7 +1198,10 @@ fn go_param_supported(config: &PipelineContext, ty: &IrType) -> bool {
 }
 
 fn is_const_model_borrow(ty: &IrType) -> bool {
-    matches!(ty.kind, IrTypeKind::ModelReference | IrTypeKind::ModelPointer) && {
+    matches!(
+        ty.kind,
+        IrTypeKind::ModelReference | IrTypeKind::ModelPointer
+    ) && {
         let base = ty
             .cpp_type
             .trim()

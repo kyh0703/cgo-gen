@@ -8,8 +8,8 @@ pub use crate::domain::kind::{FieldAccessKind, IrFunctionKind, IrTypeKind, Recor
 use crate::{
     config::Config,
     parser::{
-        CppCallbackTypedef, CppConstructor, CppEnum, CppField, CppFunction, CppRecord,
-        CppMacroConstant, CppMethod, CppParam, ParsedApi,
+        CppCallbackTypedef, CppConstructor, CppEnum, CppField, CppFunction, CppMacroConstant,
+        CppMethod, CppParam, CppRecord, ParsedApi,
     },
     pipeline::context::PipelineContext,
 };
@@ -261,9 +261,7 @@ fn collect_referenced_opaque_types(opaque_types: &mut Vec<OpaqueType>, functions
             }
             if !matches!(
                 ty.kind,
-                IrTypeKind::ModelReference
-                    | IrTypeKind::ModelPointer
-                    | IrTypeKind::ModelValue
+                IrTypeKind::ModelReference | IrTypeKind::ModelPointer | IrTypeKind::ModelValue
             ) {
                 continue;
             }
@@ -812,6 +810,13 @@ fn normalize_constructor(
         });
         return Ok(None);
     }
+    if let Some(reason) = double_pointer_reason(None, &constructor.params) {
+        skipped_declarations.push(SkippedDeclaration {
+            cpp_name: qualified.clone(),
+            reason,
+        });
+        return Ok(None);
+    }
     Ok(Some(IrFunction {
         name: symbol_name(config, &record.namespace, &record.name, "new"),
         kind: IrFunctionKind::Constructor,
@@ -870,6 +875,13 @@ fn normalize_method(
         )),
         &method.params,
         callback_names,
+    ) {
+        skipped_declarations.push(SkippedDeclaration { cpp_name, reason });
+        return Ok(None);
+    }
+    if let Some(reason) = double_pointer_reason(
+        Some((&method.return_type, &method.return_canonical_type)),
+        &method.params,
     ) {
         skipped_declarations.push(SkippedDeclaration { cpp_name, reason });
         return Ok(None);
@@ -963,6 +975,13 @@ fn normalize_function(
         )),
         &function.params,
         callback_names,
+    ) {
+        skipped_declarations.push(SkippedDeclaration { cpp_name, reason });
+        return Ok(None);
+    }
+    if let Some(reason) = double_pointer_reason(
+        Some((&function.return_type, &function.return_canonical_type)),
+        &function.params,
     ) {
         skipped_declarations.push(SkippedDeclaration { cpp_name, reason });
         return Ok(None);
@@ -1183,6 +1202,35 @@ fn function_pointer_reason(
     (!issues.is_empty()).then(|| issues.join("; "))
 }
 
+fn double_pointer_reason(return_type: Option<(&str, &str)>, params: &[CppParam]) -> Option<String> {
+    let mut issues = Vec::new();
+
+    if let Some((display, canonical)) = return_type
+        && (is_unsupported_double_pointer_type(display)
+            || (!canonical.trim().is_empty() && is_unsupported_double_pointer_type(canonical)))
+    {
+        issues.push(format!(
+            "return type `{}` uses an unsupported double-pointer type",
+            format_type_for_reason(display, canonical)
+        ));
+    }
+
+    for param in params {
+        if is_unsupported_double_pointer_type(&param.ty)
+            || (!param.canonical_ty.trim().is_empty()
+                && is_unsupported_double_pointer_type(&param.canonical_ty))
+        {
+            issues.push(format!(
+                "parameter `{}` type `{}` uses an unsupported double-pointer type",
+                param.name,
+                format_type_for_reason(&param.ty, &param.canonical_ty)
+            ));
+        }
+    }
+
+    (!issues.is_empty()).then(|| issues.join("; "))
+}
+
 fn raw_unsafe_by_value_reason(
     return_type: Option<(&str, &str)>,
     params: &[CppParam],
@@ -1310,6 +1358,28 @@ fn format_type_for_reason(display: &str, canonical: &str) -> String {
     }
 }
 
+fn is_unsupported_double_pointer_type(cpp_type: &str) -> bool {
+    let trimmed = cpp_type.trim();
+    if trimmed.is_empty() || parse_array_type(trimmed).is_some() {
+        return false;
+    }
+    trailing_pointer_depth(trimmed) >= 2
+}
+
+fn trailing_pointer_depth(value: &str) -> usize {
+    let mut depth = 0;
+    for ch in value.trim().chars().rev() {
+        if ch == '*' {
+            depth += 1;
+        } else if ch.is_whitespace() {
+            continue;
+        } else {
+            break;
+        }
+    }
+    depth
+}
+
 fn resolved_enum_cpp_type(
     display: &str,
     canonical: &str,
@@ -1368,6 +1438,14 @@ fn normalize_type_with_canonical(
 ) -> Result<IrType> {
     let trimmed = cpp_type.trim();
     let canonical_trimmed = canonical_type.trim();
+    if is_unsupported_double_pointer_type(trimmed)
+        || (!canonical_trimmed.is_empty() && is_unsupported_double_pointer_type(canonical_trimmed))
+    {
+        bail!(
+            "unsupported double-pointer type in v1: {}",
+            format_type_for_reason(trimmed, canonical_trimmed)
+        );
+    }
     if let Some(enum_cpp_type) =
         resolved_enum_cpp_type(trimmed, canonical_trimmed, known_enum_types)
     {
@@ -1380,7 +1458,8 @@ fn normalize_type_with_canonical(
         && raw_type_shape(trimmed) == raw_type_shape(canonical_trimmed)
         && let Some(mut ty) = normalize_known_record_type(canonical_trimmed, known_records)
     {
-        ty.cpp_type = canonicalized_known_record_cpp_type(trimmed, &base_model_cpp_type(&ty.cpp_type));
+        ty.cpp_type =
+            canonicalized_known_record_cpp_type(trimmed, &base_model_cpp_type(&ty.cpp_type));
         return Ok(ty);
     }
     if let Ok(ty) = normalize_type(trimmed, callback_names) {
@@ -1483,10 +1562,7 @@ fn normalize_known_record_type(cpp_type: &str, known_records: &[IrRecord]) -> Op
 
 fn is_const_qualified_model_type(value: &str) -> bool {
     let trimmed = value.trim();
-    let base = trimmed
-        .trim_end_matches('&')
-        .trim_end_matches('*')
-        .trim();
+    let base = trimmed.trim_end_matches('&').trim_end_matches('*').trim();
     base.starts_with("const ") || base.ends_with(" const")
 }
 
@@ -1532,6 +1608,9 @@ fn raw_type_shape(cpp_type: &str) -> &'static str {
 
 fn normalize_type(cpp_type: &str, callback_names: &BTreeSet<String>) -> Result<IrType> {
     let trimmed = cpp_type.trim();
+    if is_unsupported_double_pointer_type(trimmed) {
+        bail!("unsupported double-pointer type in v1: {trimmed}");
+    }
     if callback_names.contains(trimmed) {
         return Ok(IrType {
             kind: IrTypeKind::Callback,
@@ -2449,6 +2528,45 @@ mod tests {
         assert_eq!(ty.cpp_type, "uint32_t[2]");
         assert_eq!(ty.c_type, "uint32_t*");
         assert_eq!(ty.handle, None);
+    }
+
+    #[test]
+    fn rejects_model_double_pointer_type() {
+        let callback_names = BTreeSet::new();
+        let err = normalize_type("ThingModel**", &callback_names).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("unsupported double-pointer type in v1: ThingModel**")
+        );
+    }
+
+    #[test]
+    fn rejects_char_double_pointer_type() {
+        let callback_names = BTreeSet::new();
+        let err = normalize_type("char **", &callback_names).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("unsupported double-pointer type in v1: char **")
+        );
+    }
+
+    #[test]
+    fn rejects_const_model_double_pointer_with_canonical_type() {
+        let callback_names = BTreeSet::new();
+        let err = normalize_type_with_canonical(
+            &Config::default(),
+            "const ThingModel **",
+            "ThingModel const **",
+            &callback_names,
+            &BTreeSet::new(),
+            &[],
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("unsupported double-pointer type in v1")
+        );
+        assert!(err.to_string().contains("const ThingModel **"));
     }
 
     #[test]

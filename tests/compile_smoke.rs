@@ -686,3 +686,328 @@ output:
     let status = Command::new(&binary).status().unwrap();
     assert!(status.success(), "generated smoke binary failed: {status}");
 }
+
+#[test]
+fn generated_wrapper_compiles_for_target_last_cyclic_header_prelude() {
+    let root = temp_output_dir("cyclic_header_prelude");
+    let include_dir = root.join("include");
+    fs::create_dir_all(&include_dir).unwrap();
+
+    fs::write(
+        include_dir.join("Memory.hpp"),
+        r#"
+        #pragma once
+        #include "Monitor.hpp"
+
+        class Memory {
+        public:
+            Monitor* monitor;
+        };
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        include_dir.join("Monitor.hpp"),
+        r#"
+        #pragma once
+        #include "Memory.hpp"
+
+        class Monitor {
+        public:
+            Monitor() = default;
+            bool Init() { return true; }
+        };
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        include_dir.join("driver.cpp"),
+        r#"
+        #include "Memory.hpp"
+        #include "Monitor.hpp"
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("config.yaml"),
+        r#"
+version: 1
+input:
+  dir: include
+output:
+  dir: out
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(root.join("config.yaml")).unwrap();
+    let ctx = PipelineContext::new(config.clone());
+    generator::generate_all(&ctx, true).unwrap();
+
+    let source = root.join("out/monitor_wrapper.cpp");
+    let source_text = fs::read_to_string(&source).unwrap();
+    let memory_include = source_text.find("#include \"Memory.hpp\"").unwrap();
+    let monitor_include = source_text.find("#include \"Monitor.hpp\"").unwrap();
+    assert!(memory_include < monitor_include);
+
+    let smoke_cpp = root.join("out/smoke.cpp");
+    fs::write(
+        &smoke_cpp,
+        r#"
+        #include "monitor_wrapper.h"
+        int main() {
+            MonitorHandle* monitor = cgowrap_Monitor_new();
+            if (monitor == nullptr) return 10;
+            if (!cgowrap_Monitor_Init(monitor)) return 11;
+            cgowrap_Monitor_delete(monitor);
+            return 0;
+        }
+        "#,
+    )
+    .unwrap();
+
+    let binary = root.join("out/smoke");
+    let compiler = pick_clangxx();
+    let status = Command::new(&compiler)
+        .current_dir(&root)
+        .arg("-std=c++17")
+        .arg(&source)
+        .arg(&smoke_cpp)
+        .arg("-I")
+        .arg(root.join("out"))
+        .arg("-I")
+        .arg(&include_dir)
+        .arg("-o")
+        .arg(&binary)
+        .status()
+        .unwrap();
+
+    assert!(status.success(), "generated wrapper did not compile/link");
+
+    let status = Command::new(&binary).status().unwrap();
+    assert!(status.success(), "generated smoke binary failed: {status}");
+}
+
+#[test]
+fn generated_wrapper_compiles_for_support_header_prelude_tokens() {
+    let root = temp_output_dir("support_header_prelude");
+    let include_dir = root.join("include");
+    fs::create_dir_all(&include_dir).unwrap();
+
+    fs::write(
+        include_dir.join("iSerialize.h"),
+        r#"
+        #pragma once
+        class iSerialize {};
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        include_dir.join("iSilType.h"),
+        r#"
+        #pragma once
+        typedef unsigned int iMsChnl_t;
+        typedef unsigned long long iChLeg_t;
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        include_dir.join("iSiDef.h"),
+        r#"
+        #pragma once
+        #define SIL_NAME128 128
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        include_dir.join("AliasHolder.hpp"),
+        r#"
+        #pragma once
+
+        class AliasHolder {
+        public:
+            AliasHolder() : ms_channel_(0), leg_(0) {}
+
+            bool AllocChnlId(unsigned int &ext_id, iMsChnl_t &channel_id) {
+                ext_id = 7;
+                channel_id = 9;
+                return true;
+            }
+
+            bool GetLeg(unsigned short idx, iChLeg_t &leg) {
+                leg = idx;
+                return true;
+            }
+
+            void Serialize(iSerialize &ar) { (void)&ar; }
+
+        private:
+            char node_name_[SIL_NAME128];
+            iMsChnl_t ms_channel_;
+            iChLeg_t leg_;
+        };
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        include_dir.join("driver.cpp"),
+        r#"
+        #include "iSerialize.h"
+        #include "iSilType.h"
+        #include "iSiDef.h"
+        #include "AliasHolder.hpp"
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("config.yaml"),
+        r#"
+version: 1
+input:
+  dir: include
+output:
+  dir: out
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(root.join("config.yaml")).unwrap();
+    let ctx = PipelineContext::new(config.clone());
+    generator::generate_all(&ctx, true).unwrap();
+
+    let source = root.join("out/alias_holder_wrapper.cpp");
+    let source_text = fs::read_to_string(&source).unwrap();
+    assert!(source_text.contains("#include \"iSerialize.h\""));
+    assert!(source_text.contains("#include \"iSilType.h\""));
+    assert!(source_text.contains("#include \"iSiDef.h\""));
+
+    let smoke_cpp = root.join("out/smoke.cpp");
+    fs::write(
+        &smoke_cpp,
+        r#"
+        #include "alias_holder_wrapper.h"
+        int main() {
+            AliasHolderHandle* holder = cgowrap_AliasHolder_new();
+            if (holder == nullptr) return 10;
+            unsigned int ext_id = 0;
+            unsigned int ms_channel = 0;
+            unsigned long long leg = 0;
+            if (!cgowrap_AliasHolder_AllocChnlId(holder, &ext_id, &ms_channel)) return 11;
+            if (!cgowrap_AliasHolder_GetLeg(holder, 3, &leg)) return 12;
+            cgowrap_AliasHolder_delete(holder);
+            return 0;
+        }
+        "#,
+    )
+    .unwrap();
+
+    let binary = root.join("out/smoke");
+    let compiler = pick_clangxx();
+    let status = Command::new(&compiler)
+        .current_dir(&root)
+        .arg("-std=c++17")
+        .arg(&source)
+        .arg(&smoke_cpp)
+        .arg("-I")
+        .arg(root.join("out"))
+        .arg("-I")
+        .arg(&include_dir)
+        .arg("-o")
+        .arg(&binary)
+        .status()
+        .unwrap();
+
+    assert!(status.success(), "generated wrapper did not compile/link");
+
+    let status = Command::new(&binary).status().unwrap();
+    assert!(status.success(), "generated smoke binary failed: {status}");
+}
+
+#[test]
+fn generated_wrapper_compiles_for_const_model_value_and_reference_args() {
+    let root = temp_output_dir("const_model_args");
+    fs::create_dir_all(root.join("include")).unwrap();
+    fs::write(
+        root.join("include/FlowApi.hpp"),
+        r#"
+        struct FlowData {
+            int value;
+        };
+
+        class FlowApi {
+        public:
+            FlowApi() = default;
+
+            void SetFlow(const FlowData flow) { flow_ = flow; }
+            bool CompareFlow(const FlowData &flow) const { return flow_.value == flow.value; }
+
+        private:
+            FlowData flow_;
+        };
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("config.yaml"),
+        r#"
+version: 1
+input:
+  headers:
+    - include/FlowApi.hpp
+output:
+  dir: out
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(root.join("config.yaml")).unwrap();
+    let ctx = generator::prepare_config(&PipelineContext::new(config.clone())).unwrap();
+    let parsed = parser::parse(&ctx).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
+    generator::generate(&ctx, &ir, true, &Default::default()).unwrap();
+
+    let smoke_cpp = config.output.dir.join("smoke.cpp");
+    fs::write(
+        &smoke_cpp,
+        format!(
+            r#"
+        #include "{}"
+        int main() {{
+            FlowApiHandle* api = cgowrap_FlowApi_new();
+            if (api == nullptr) return 10;
+            FlowDataHandle* flow = cgowrap_FlowData_new();
+            if (flow == nullptr) return 11;
+            cgowrap_FlowData_SetValue(flow, 9);
+            cgowrap_FlowApi_SetFlow(api, flow);
+            if (!cgowrap_FlowApi_CompareFlow(api, flow)) return 12;
+            cgowrap_FlowData_delete(flow);
+            cgowrap_FlowApi_delete(api);
+            return 0;
+        }}
+        "#,
+            config.output.header
+        ),
+    )
+    .unwrap();
+
+    let binary = config.output.dir.join("smoke");
+    let compiler = pick_clangxx();
+    let status = Command::new(&compiler)
+        .current_dir(&root)
+        .arg("-std=c++17")
+        .arg(config.output_dir().join(&config.output.source))
+        .arg(&smoke_cpp)
+        .arg("-I")
+        .arg(config.output_dir())
+        .arg("-I")
+        .arg(root.join("include"))
+        .arg("-o")
+        .arg(&binary)
+        .status()
+        .unwrap();
+
+    assert!(status.success(), "generated wrapper did not compile/link");
+
+    let status = Command::new(&binary).status().unwrap();
+    assert!(status.success(), "generated smoke binary failed: {status}");
+}

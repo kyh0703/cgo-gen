@@ -98,14 +98,29 @@ output:
         .iter()
         .find(|function| function.cpp_name == "TakeTimeval")
         .unwrap();
-    assert_eq!(take_timeval.params[0].ty.kind, IrTypeKind::ExternStructPointer);
+    assert_eq!(
+        take_timeval.params[0].ty.kind,
+        IrTypeKind::ExternStructPointer
+    );
     assert_eq!(take_timeval.params[0].ty.c_type, "struct timeval*");
 
     assert_eq!(go.len(), 1);
     assert!(go[0].contents.contains("type Counter struct {"));
-    assert!(go[0].contents.contains("func TakeCounter(value *Counter) bool {"));
-    assert!(!go[0].contents.contains("func TakeCounter(value *C.struct_Counter) bool {"));
-    assert!(go[0].contents.contains("func TakeTimeval(value *C.struct_timeval) bool {"));
+    assert!(
+        go[0]
+            .contents
+            .contains("func TakeCounter(value *Counter) bool {")
+    );
+    assert!(
+        !go[0]
+            .contents
+            .contains("func TakeCounter(value *C.struct_Counter) bool {")
+    );
+    assert!(
+        go[0]
+            .contents
+            .contains("func TakeTimeval(value *C.struct_timeval) bool {")
+    );
 }
 
 #[test]
@@ -832,9 +847,9 @@ output:
     assert!(
         header.contains("void cgowrap_Parent_SetChild(ParentHandle* self, ChildHandle* value);")
     );
-    assert!(
-        source.contains("return reinterpret_cast<ChildHandle*>(&reinterpret_cast<Parent*>(self)->child);")
-    );
+    assert!(source.contains(
+        "return reinterpret_cast<ChildHandle*>(&reinterpret_cast<Parent*>(self)->child);"
+    ));
     assert!(
         source
             .contains("reinterpret_cast<Parent*>(self)->child = *reinterpret_cast<Child*>(value);")

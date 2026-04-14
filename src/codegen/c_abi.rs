@@ -410,11 +410,7 @@ pub fn render_source(ctx: &PipelineContext, ir: &IrModule) -> String {
     let mut out = String::new();
     out.push_str(&format!("#include \"{}\"\n", ctx.output.header));
     out.push_str("#include <cstdlib>\n#include <cstring>\n#include <new>\n#include <string>\n\n");
-    for header in &ir.source_headers {
-        let include_name = Path::new(header)
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or(header.as_str());
+    for include_name in source_include_prelude(ir) {
         out.push_str(&format!("#include \"{}\"\n", include_name));
     }
     out.push('\n');
@@ -449,6 +445,144 @@ pub fn render_source(ctx: &PipelineContext, ir: &IrModule) -> String {
     // array_free helpers are defined as static inline in the header
 
     out
+}
+
+fn source_include_prelude(ir: &IrModule) -> Vec<String> {
+    let mut ordered_paths = Vec::new();
+    let mut emitted = BTreeSet::new();
+    for header in &ir.source_headers {
+        for include_path in immediate_local_include_paths(Path::new(header)) {
+            let normalized = fs::canonicalize(&include_path).unwrap_or(include_path);
+            if emitted.insert(normalized.clone()) {
+                ordered_paths.push(normalized);
+            }
+        }
+        let normalized = fs::canonicalize(header).unwrap_or_else(|_| PathBuf::from(header));
+        if emitted.insert(normalized.clone()) {
+            ordered_paths.push(normalized);
+        }
+    }
+
+    let mut token_scan = String::new();
+    let mut scanned = BTreeSet::new();
+    for header in &ir.source_headers {
+        collect_recursive_token_scan(Path::new(header), &mut scanned, &mut token_scan);
+    }
+
+    let mut include_names = Vec::new();
+    let mut seen = BTreeSet::new();
+    for support in supplemental_support_headers(&token_scan) {
+        if seen.insert(support.to_string()) {
+            include_names.push(support.to_string());
+        }
+    }
+    for path in ordered_paths {
+        let include_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        if !include_name.is_empty() && seen.insert(include_name.to_string()) {
+            include_names.push(include_name.to_string());
+        }
+    }
+
+    include_names
+}
+
+fn immediate_local_include_paths(path: &Path) -> Vec<PathBuf> {
+    let normalized = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let Ok(contents) = fs::read_to_string(&normalized) else {
+        return Vec::new();
+    };
+    let parent = normalized.parent().unwrap_or_else(|| Path::new("."));
+    leading_local_quoted_includes(&contents)
+        .into_iter()
+        .map(|include| parent.join(include))
+        .filter(|include_path| include_path.exists())
+        .collect()
+}
+
+fn collect_recursive_token_scan(
+    path: &Path,
+    visited: &mut BTreeSet<PathBuf>,
+    token_scan: &mut String,
+) {
+    let normalized = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    if !visited.insert(normalized.clone()) {
+        return;
+    }
+
+    let Ok(contents) = fs::read_to_string(&normalized) else {
+        return;
+    };
+    token_scan.push_str(&contents);
+    token_scan.push('\n');
+
+    for include in local_quoted_includes(&contents) {
+        let include_path = normalized
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(include);
+        if include_path.exists() {
+            collect_recursive_token_scan(&include_path, visited, token_scan);
+        }
+    }
+}
+
+fn local_quoted_includes(contents: &str) -> Vec<String> {
+    contents
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim_start();
+            let rest = trimmed.strip_prefix("#include")?.trim_start();
+            let inner = rest.strip_prefix('"')?;
+            let end = inner.find('"')?;
+            Some(inner[..end].to_string())
+        })
+        .collect()
+}
+
+fn leading_local_quoted_includes(contents: &str) -> Vec<String> {
+    let mut includes = Vec::new();
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty()
+            || trimmed == "#pragma once"
+            || trimmed.starts_with("//")
+            || trimmed.starts_with("/*")
+            || trimmed.starts_with('*')
+            || trimmed.starts_with("*/")
+        {
+            continue;
+        }
+        if let Some(include) = local_quoted_includes(trimmed).into_iter().next() {
+            includes.push(include);
+            continue;
+        }
+        if trimmed.starts_with('#') {
+            continue;
+        }
+        break;
+    }
+    includes
+}
+
+fn supplemental_support_headers(token_scan: &str) -> Vec<&'static str> {
+    let mut headers = Vec::new();
+    for (token, header) in [
+        ("iSerialize", "iSerialize.h"),
+        ("iChLeg_t", "iSilType.h"),
+        ("iMsChnl_t", "iSilType.h"),
+        ("SIL_NAME128", "iSiDef.h"),
+        ("SIL_SORTSEQ_SIZE", "iSiDef.h"),
+        ("SIL_IPv6_SIZE", "iSiDef.h"),
+        ("SIL_ORA_DATE_SIZE", "iSiDef.h"),
+    ] {
+        if token_scan.contains(token) && !headers.contains(&header) {
+            headers.push(header);
+        }
+    }
+    headers
 }
 
 pub fn render_go_structs(ctx: &PipelineContext, ir: &IrModule) -> Result<Vec<GeneratedGoFile>> {
@@ -681,8 +815,8 @@ fn render_field_setter_body(function: &IrFunction, receiver: &str, field_name: &
             )
         }
         IrTypeKind::ModelValue => format!(
-            "    {receiver}->{field_name} = *reinterpret_cast<{}*>(value);\n",
-            base_model_cpp_type(&value_param.ty.cpp_type)
+            "    {receiver}->{field_name} = {};\n",
+            render_model_deref_cast(&value_param.ty, "value")
         ),
         _ => format!("    {receiver}->{} = value;\n", field_name),
     }
@@ -747,16 +881,10 @@ fn render_cpp_arg(ty: IrType, name: &str) -> String {
             .map(|cpp_type| format!("reinterpret_cast<{}*>({name})", cpp_type))
             .unwrap_or_else(|| name.to_string()),
         IrTypeKind::ExternStructReference => format!("*{name}"),
-        IrTypeKind::ModelReference => format!(
-            "*reinterpret_cast<{}*>({name})",
-            base_model_cpp_type(&ty.cpp_type)
-        ),
-        IrTypeKind::ModelValue => format!(
-            "*reinterpret_cast<{}*>({name})",
-            base_model_cpp_type(&ty.cpp_type)
-        ),
+        IrTypeKind::ModelReference => render_model_deref_cast(&ty, name),
+        IrTypeKind::ModelValue => render_model_deref_cast(&ty, name),
         IrTypeKind::ModelPointer => {
-            let base = base_model_cpp_type(&ty.cpp_type);
+            let base = qualified_model_cpp_type(&ty);
             let depth = ty.cpp_type.chars().filter(|ch| *ch == '*').count().max(1);
             let stars = "*".repeat(depth);
             format!("reinterpret_cast<{base}{stars}>({name})")
@@ -1001,6 +1129,22 @@ fn callback_trampoline_name(function: &IrFunction, index: usize) -> String {
 
 fn callback_go_export_name(function: &IrFunction, index: usize) -> String {
     format!("go_{}_cb{}", function.name, index)
+}
+
+fn render_model_deref_cast(ty: &IrType, name: &str) -> String {
+    format!(
+        "*reinterpret_cast<{}*>({name})",
+        qualified_model_cpp_type(ty)
+    )
+}
+
+fn qualified_model_cpp_type(ty: &IrType) -> String {
+    let trimmed = ty.cpp_type.trim();
+    let base = trimmed.trim_end_matches('&').trim_end_matches('*').trim();
+    if let Some(inner) = base.strip_suffix(" const") {
+        return format!("const {}", inner.trim());
+    }
+    base.to_string()
 }
 
 fn base_model_cpp_type(value: &str) -> String {

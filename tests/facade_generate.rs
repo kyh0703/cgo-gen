@@ -722,11 +722,9 @@ naming:
     let raw_source = fs::read_to_string(root.join("out/api_wrapper.cpp")).unwrap();
     let go_facade = fs::read_to_string(root.join("out/api_wrapper.go")).unwrap();
 
-    assert!(
-        raw_source.contains(
-            "return reinterpret_cast<ThingModelHandle*>(reinterpret_cast<Api*>(self)->GetThingPtr());"
-        )
-    );
+    assert!(raw_source.contains(
+        "return reinterpret_cast<ThingModelHandle*>(reinterpret_cast<Api*>(self)->GetThingPtr());"
+    ));
     assert!(raw_source.contains(
         "return reinterpret_cast<ThingModelHandle*>(&reinterpret_cast<Api*>(self)->GetThingRef());"
     ));
@@ -796,9 +794,9 @@ naming:
     let raw_source = fs::read_to_string(root.join("out/api_wrapper.cpp")).unwrap();
     let go_facade = fs::read_to_string(root.join("out/api_wrapper.go")).unwrap();
 
-    assert!(raw_header.contains(
-        "const ThingModelHandle* cgowrap_Api_GetThing(const ApiHandle* self);"
-    ));
+    assert!(
+        raw_header.contains("const ThingModelHandle* cgowrap_Api_GetThing(const ApiHandle* self);")
+    );
     assert!(raw_source.contains(
         "return reinterpret_cast<const ThingModelHandle*>(&reinterpret_cast<const Api*>(self)->GetThing());"
     ));

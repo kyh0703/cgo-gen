@@ -111,7 +111,12 @@ output:
             .any(|header| header.ends_with("foreign.hpp"))
     );
     assert!(parsed.records.iter().any(|record| record.name == "Owned"));
-    assert!(!parsed.records.iter().any(|record| record.name == "LocalOnly"));
+    assert!(
+        !parsed
+            .records
+            .iter()
+            .any(|record| record.name == "LocalOnly")
+    );
     assert!(!parsed.records.iter().any(|record| record.name == "Foreign"));
 }
 
