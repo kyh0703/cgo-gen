@@ -127,9 +127,9 @@ fn dir_only_config_ignores_header_entries_from_compile_commands_when_sources_exi
     fs::create_dir_all(fixture.join("build")).unwrap();
 
     fs::write(
-        fixture.join("include/IEMemory.h"),
+        fixture.join("include/MemoryStore.h"),
         r#"
-        class IEMemory {
+        class MemoryStore {
         public:
             int GetValue() const { return 7; }
         };
@@ -137,9 +137,9 @@ fn dir_only_config_ignores_header_entries_from_compile_commands_when_sources_exi
     )
     .unwrap();
     fs::write(
-        fixture.join("include/DBHandler.cpp"),
+        fixture.join("include/DataHandler.cpp"),
         r#"
-        #include "IEMemory.h"
+        #include "MemoryStore.h"
         "#,
     )
     .unwrap();
@@ -149,7 +149,7 @@ fn dir_only_config_ignores_header_entries_from_compile_commands_when_sources_exi
 [
   {
     "directory": ".",
-    "file": "../include/IEMemory.h",
+    "file": "../include/MemoryStore.h",
     "arguments": [
       "clang++",
       "-std=c++17",
@@ -160,7 +160,7 @@ fn dir_only_config_ignores_header_entries_from_compile_commands_when_sources_exi
   },
   {
     "directory": ".",
-    "file": "../include/DBHandler.cpp",
+    "file": "../include/DataHandler.cpp",
     "arguments": [
       "clang++",
       "-std=c++17",
@@ -191,7 +191,7 @@ output:
     let units = compiler::collect_translation_units(&config).unwrap();
 
     assert_eq!(units.len(), 1);
-    assert!(units[0].ends_with("DBHandler.cpp"));
+    assert!(units[0].ends_with("DataHandler.cpp"));
 }
 
 #[test]

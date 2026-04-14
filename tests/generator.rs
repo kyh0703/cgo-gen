@@ -861,7 +861,7 @@ output:
 #[test]
 fn renders_go_fixed_array_typedef_aliases_with_canonical_unsigned_types() {
     let root = env::temp_dir().join(format!(
-        "c_go_fixed_array_typedef_alias_{}",
+        "c_go_reason_subscription_fixed_array_typedef_alias_{}",
         std::process::id()
     ));
     let _ = fs::remove_dir_all(&root);
@@ -919,9 +919,9 @@ output:
 }
 
 #[test]
-fn renders_ipron_reason_and_subscribe_fixed_arrays_as_uint32_slices() {
+fn renders_reason_and_subscription_fixed_arrays_as_uint32_slices() {
     let root = env::temp_dir().join(format!(
-        "c_go_ipron_fixed_array_typedef_alias_{}",
+        "c_go_fixed_array_typedef_alias_{}",
         std::process::id()
     ));
     let _ = fs::remove_dir_all(&root);
@@ -929,17 +929,17 @@ fn renders_ipron_reason_and_subscribe_fixed_arrays_as_uint32_slices() {
     fs::write(
         root.join("include/Api.hpp"),
         r#"
-        typedef unsigned int tRsnCode;
-        typedef unsigned int tSubscribeId;
-        #define DI_SUBSCR_SCRID_MAX 16
+        typedef unsigned int ReasonCode;
+        typedef unsigned int SubscriptionId;
+        #define MAX_SUBSCRIPTION_IDS 16
 
-        struct STATTNTM_INFO {
-            tRsnCode NrdRsnCodeSet[64];
-            tRsnCode AcwRsnCodeSet[64];
+        struct StatusInfo {
+            ReasonCode PrimaryReasonCodes[64];
+            ReasonCode SecondaryReasonCodes[64];
         };
 
-        struct SUBSCRIBE_CODE {
-            tSubscribeId SubScrIds[DI_SUBSCR_SCRID_MAX];
+        struct SubscriptionCodes {
+            SubscriptionId SubscriptionIds[MAX_SUBSCRIPTION_IDS];
         };
         "#,
     )
@@ -970,30 +970,30 @@ output:
         .join("\n");
 
     assert!(header.contains(
-        "unsigned int* cgowrap_STATTNTM_INFO_GetNrdRsnCodeSet(const STATTNTM_INFOHandle* self);"
+        "unsigned int* cgowrap_StatusInfo_GetPrimaryReasonCodes(const StatusInfoHandle* self);"
     ));
     assert!(header.contains(
-        "void cgowrap_STATTNTM_INFO_SetNrdRsnCodeSet(STATTNTM_INFOHandle* self, unsigned int* value);"
+        "void cgowrap_StatusInfo_SetPrimaryReasonCodes(StatusInfoHandle* self, unsigned int* value);"
     ));
     assert!(header.contains(
-        "unsigned int* cgowrap_STATTNTM_INFO_GetAcwRsnCodeSet(const STATTNTM_INFOHandle* self);"
+        "unsigned int* cgowrap_StatusInfo_GetSecondaryReasonCodes(const StatusInfoHandle* self);"
     ));
     assert!(header.contains(
-        "void cgowrap_STATTNTM_INFO_SetAcwRsnCodeSet(STATTNTM_INFOHandle* self, unsigned int* value);"
+        "void cgowrap_StatusInfo_SetSecondaryReasonCodes(StatusInfoHandle* self, unsigned int* value);"
     ));
     assert!(header.contains(
-        "unsigned int* cgowrap_SUBSCRIBE_CODE_GetSubScrIds(const SUBSCRIBE_CODEHandle* self);"
+        "unsigned int* cgowrap_SubscriptionCodes_GetSubscriptionIds(const SubscriptionCodesHandle* self);"
     ));
     assert!(header.contains(
-        "void cgowrap_SUBSCRIBE_CODE_SetSubScrIds(SUBSCRIBE_CODEHandle* self, unsigned int* value);"
+        "void cgowrap_SubscriptionCodes_SetSubscriptionIds(SubscriptionCodesHandle* self, unsigned int* value);"
     ));
 
-    assert!(go_text.contains("func (s *STATTNTMINFO) GetNrdRsnCodeSet() ([]uint32, error) {"));
-    assert!(go_text.contains("func (s *STATTNTMINFO) SetNrdRsnCodeSet(value []uint32) {"));
-    assert!(go_text.contains("func (s *STATTNTMINFO) GetAcwRsnCodeSet() ([]uint32, error) {"));
-    assert!(go_text.contains("func (s *STATTNTMINFO) SetAcwRsnCodeSet(value []uint32) {"));
-    assert!(go_text.contains("func (s *SUBSCRIBECODE) GetSubScrIds() ([]uint32, error) {"));
-    assert!(go_text.contains("func (s *SUBSCRIBECODE) SetSubScrIds(value []uint32) {"));
+    assert!(go_text.contains("func (s *StatusInfo) GetPrimaryReasonCodes() ([]uint32, error) {"));
+    assert!(go_text.contains("func (s *StatusInfo) SetPrimaryReasonCodes(value []uint32) {"));
+    assert!(go_text.contains("func (s *StatusInfo) GetSecondaryReasonCodes() ([]uint32, error) {"));
+    assert!(go_text.contains("func (s *StatusInfo) SetSecondaryReasonCodes(value []uint32) {"));
+    assert!(go_text.contains("func (s *SubscriptionCodes) GetSubscriptionIds() ([]uint32, error) {"));
+    assert!(go_text.contains("func (s *SubscriptionCodes) SetSubscriptionIds(value []uint32) {"));
     assert!(go_text.contains("cSlice := (*[64]C.uint32_t)(unsafe.Pointer(raw))"));
     assert!(go_text.contains("cSlice := (*[16]C.uint32_t)(unsafe.Pointer(raw))"));
     assert!(go_text.contains("(*C.uint32_t)(unsafe.Pointer(&value[0]))"));

@@ -139,22 +139,22 @@ naming:
 }
 
 #[test]
-fn resolves_ipron_reason_and_subscribe_fixed_arrays_via_canonical_unsigned_types() {
-    let root = temp_dir("ipron_fixed_array");
+fn resolves_reason_and_subscription_fixed_arrays_via_canonical_unsigned_types() {
+    let root = temp_dir("fixed_array_aliases");
     fs::write(
         root.join("include/Api.hpp"),
         r#"
-        typedef unsigned int tRsnCode;
-        typedef unsigned int tSubscribeId;
-        #define DI_SUBSCR_SCRID_MAX 16
+        typedef unsigned int ReasonCode;
+        typedef unsigned int SubscriptionId;
+        #define MAX_SUBSCRIPTION_IDS 16
 
-        struct STATTNTM_INFO {
-            tRsnCode NrdRsnCodeSet[64];
-            tRsnCode AcwRsnCodeSet[64];
+        struct StatusInfo {
+            ReasonCode PrimaryReasonCodes[64];
+            ReasonCode SecondaryReasonCodes[64];
         };
 
-        struct SUBSCRIBE_CODE {
-            tSubscribeId SubScrIds[DI_SUBSCR_SCRID_MAX];
+        struct SubscriptionCodes {
+            SubscriptionId SubscriptionIds[MAX_SUBSCRIPTION_IDS];
         };
         "#,
     )
@@ -185,48 +185,48 @@ naming:
     let nrd_getter = ir
         .functions
         .iter()
-        .find(|item| item.cpp_name == "STATTNTM_INFO::GetNrdRsnCodeSet")
+        .find(|item| item.cpp_name == "StatusInfo::GetPrimaryReasonCodes")
         .unwrap();
-    assert_eq!(nrd_getter.returns.cpp_type, "tRsnCode[64]");
+    assert_eq!(nrd_getter.returns.cpp_type, "ReasonCode[64]");
     assert_eq!(nrd_getter.returns.c_type, "unsigned int*");
 
     let nrd_setter = ir
         .functions
         .iter()
-        .find(|item| item.cpp_name == "STATTNTM_INFO::SetNrdRsnCodeSet")
+        .find(|item| item.cpp_name == "StatusInfo::SetPrimaryReasonCodes")
         .unwrap();
-    assert_eq!(nrd_setter.params[1].ty.cpp_type, "tRsnCode[64]");
+    assert_eq!(nrd_setter.params[1].ty.cpp_type, "ReasonCode[64]");
     assert_eq!(nrd_setter.params[1].ty.c_type, "unsigned int*");
 
     let acw_getter = ir
         .functions
         .iter()
-        .find(|item| item.cpp_name == "STATTNTM_INFO::GetAcwRsnCodeSet")
+        .find(|item| item.cpp_name == "StatusInfo::GetSecondaryReasonCodes")
         .unwrap();
-    assert_eq!(acw_getter.returns.cpp_type, "tRsnCode[64]");
+    assert_eq!(acw_getter.returns.cpp_type, "ReasonCode[64]");
     assert_eq!(acw_getter.returns.c_type, "unsigned int*");
 
     let acw_setter = ir
         .functions
         .iter()
-        .find(|item| item.cpp_name == "STATTNTM_INFO::SetAcwRsnCodeSet")
+        .find(|item| item.cpp_name == "StatusInfo::SetSecondaryReasonCodes")
         .unwrap();
-    assert_eq!(acw_setter.params[1].ty.cpp_type, "tRsnCode[64]");
+    assert_eq!(acw_setter.params[1].ty.cpp_type, "ReasonCode[64]");
     assert_eq!(acw_setter.params[1].ty.c_type, "unsigned int*");
 
     let subscribe_getter = ir
         .functions
         .iter()
-        .find(|item| item.cpp_name == "SUBSCRIBE_CODE::GetSubScrIds")
+        .find(|item| item.cpp_name == "SubscriptionCodes::GetSubscriptionIds")
         .unwrap();
-    assert_eq!(subscribe_getter.returns.cpp_type, "tSubscribeId[16]");
+    assert_eq!(subscribe_getter.returns.cpp_type, "SubscriptionId[16]");
     assert_eq!(subscribe_getter.returns.c_type, "unsigned int*");
 
     let subscribe_setter = ir
         .functions
         .iter()
-        .find(|item| item.cpp_name == "SUBSCRIBE_CODE::SetSubScrIds")
+        .find(|item| item.cpp_name == "SubscriptionCodes::SetSubscriptionIds")
         .unwrap();
-    assert_eq!(subscribe_setter.params[1].ty.cpp_type, "tSubscribeId[16]");
+    assert_eq!(subscribe_setter.params[1].ty.cpp_type, "SubscriptionId[16]");
     assert_eq!(subscribe_setter.params[1].ty.c_type, "unsigned int*");
 }

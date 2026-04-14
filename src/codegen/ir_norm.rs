@@ -2347,26 +2347,26 @@ mod tests {
     fn collects_unknown_return_only_handles_for_model_value_returns() {
         let mut opaque_types = Vec::new();
         let functions = vec![IrFunction {
-            name: "cgowrap_CSmManager_GetIosPtr".to_string(),
+            name: "cgowrap_SessionManager_GetSharedRegion".to_string(),
             kind: IrFunctionKind::Method,
-            cpp_name: "CSmManager::GetIosPtr".to_string(),
-            method_of: Some("CSmManagerHandle".to_string()),
-            owner_cpp_type: Some("CSmManager".to_string()),
+            cpp_name: "SessionManager::GetSharedRegion".to_string(),
+            method_of: Some("SessionManagerHandle".to_string()),
+            owner_cpp_type: Some("SessionManager".to_string()),
             is_const: Some(false),
             field_accessor: None,
             returns: IrType {
                 kind: IrTypeKind::ModelValue,
-                cpp_type: "CIosShm*".to_string(),
-                c_type: "CIosShmHandle*".to_string(),
-                handle: Some("CIosShmHandle".to_string()),
+                cpp_type: "SharedRegion*".to_string(),
+                c_type: "SharedRegionHandle*".to_string(),
+                handle: Some("SharedRegionHandle".to_string()),
             },
             params: vec![IrParam {
                 name: "self".to_string(),
                 ty: IrType {
                     kind: IrTypeKind::Opaque,
-                    cpp_type: "CSmManager*".to_string(),
-                    c_type: "CSmManagerHandle*".to_string(),
-                    handle: Some("CSmManagerHandle".to_string()),
+                    cpp_type: "SessionManager*".to_string(),
+                    c_type: "SessionManagerHandle*".to_string(),
+                    handle: Some("SessionManagerHandle".to_string()),
                 },
             }],
         }];
@@ -2374,8 +2374,8 @@ mod tests {
         collect_referenced_opaque_types(&mut opaque_types, &functions);
 
         assert_eq!(opaque_types.len(), 1);
-        assert_eq!(opaque_types[0].name, "CIosShmHandle");
-        assert_eq!(opaque_types[0].cpp_type, "CIosShm");
+        assert_eq!(opaque_types[0].name, "SharedRegionHandle");
+        assert_eq!(opaque_types[0].cpp_type, "SharedRegion");
     }
 
     #[test]
