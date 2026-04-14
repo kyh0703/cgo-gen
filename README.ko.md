@@ -10,20 +10,23 @@
 
 임의의 현대 C++ 전체를 처리하는 도구가 아니라, 통제 가능한 헤더 표면을 안정적으로 감싸는 도구에 가깝습니다.
 
-## 상태
+## 빠른 시작
 
-`cgo-gen`은 의도적으로 보수적인 범위를 유지합니다. 외부 사용자 기준의 공개 계약은 이 README에 적힌 현재 CLI와 설정 동작입니다. 저장소 안의 [`docs/`](./docs/)에는 과거 기획/설계 문서도 있지만, 코드보다 더 강한 진실의 원천은 아닙니다.
+현재 저장소에서 실제로 유지되는 가장 짧은 흐름은 예제 하나를 그대로 돌려보는 것입니다.
 
-## 생성물
+```bash
+cargo run --bin cgo-gen -- check --config examples/simple-go/config.yaml
+cargo run --bin cgo-gen -- generate --config examples/simple-go/config.yaml --dump-ir
+make -C examples/simple-go run
+```
 
-지원되는 엔트리 헤더마다 `cgo-gen`은 한 출력 디렉터리에 다음 파일들을 생성할 수 있습니다.
+이 흐름은 저장소의 현재 지원 경로를 그대로 보여줍니다.
 
-- `<name>_wrapper.h`
-- `<name>_wrapper.cpp`
-- `<name>_wrapper.go`
-- `--dump-ir` 사용 시 `<name>_wrapper.ir.yaml`
-
-`.go`, `.h`, `.cpp`, `.ir.yaml`를 같은 디렉터리에 두는 이유는 downstream `cgo` 패키지가 한 위치에서 함께 빌드할 수 있게 하기 위해서입니다.
+1. YAML config 로드
+2. `libclang`으로 헤더 파싱
+3. 선언을 normalized IR로 정규화
+4. `output.dir` 아래에 wrapper 파일 생성
+5. 생성된 Go 패키지를 빌드하거나 소비
 
 ## 요구사항
 
@@ -39,19 +42,40 @@
 저장소에서 바로 실행:
 
 ```bash
-cargo run --bin cgo-gen -- check --config examples/simple-go/config.yaml
+cargo run --bin cgo-gen -- --help
 ```
 
 로컬 CLI로 설치:
 
 ```bash
 cargo install --path .
-cgo-gen check --config /path/to/config.yaml
+cgo-gen --help
 ```
 
-## 빠른 시작
+## 핵심 명령
 
-config 파일은 원하는 위치에 두면 됩니다. 저장소 안에서는 `examples/*/config.yaml`이 유지되는 최소 예제입니다. 가장 작은 config 형태는 아래와 같습니다.
+현재 제공하는 서브커맨드는 세 가지입니다.
+
+- `generate --config <path> [--dump-ir] [--go-module <module-path>]`
+- `ir --config <path> [--output <path>] [--format yaml|json]`
+- `check --config <path>`
+
+일반적인 흐름은 아래 두 줄이면 충분합니다.
+
+```bash
+cgo-gen check --config path/to/config.yaml
+cgo-gen generate --config path/to/config.yaml --dump-ir
+```
+
+wrapper를 쓰지 않고 normalized IR만 확인하고 싶다면:
+
+```bash
+cgo-gen ir --config path/to/config.yaml --format yaml
+```
+
+## 최소 설정
+
+가장 실용적인 최소 config는 대개 엔트리 헤더 하나와 `compile_commands.json` 조합입니다.
 
 ```yaml
 version: 1
@@ -69,63 +93,76 @@ naming:
   style: snake_case
 ```
 
-주요 명령:
+핵심 동작:
+
+- 상대 경로는 config 파일 위치를 기준으로 해석됩니다.
+- 지원하지 않는 키는 로드 시점에 오류로 처리됩니다.
+- 생성되는 `.go`, `.h`, `.cpp`, 선택적 `.ir.yaml` 파일은 모두 `output.dir` 아래에 함께 놓입니다.
+- `--go-module <module-path>`를 주면 `generate`가 `go.mod`와 `build_flags.go`도 함께 생성합니다.
+
+## 생성 결과
+
+지원되는 엔트리 헤더마다 `generate`는 보통 아래 파일들을 만듭니다.
+
+- `<name>_wrapper.h`
+- `<name>_wrapper.cpp`
+- `<name>_wrapper.go`
+- `--dump-ir` 사용 시 `<name>_wrapper.ir.yaml`
+
+`--go-module`을 사용하면 추가로 아래 파일도 생성합니다.
+
+- `go.mod`
+- `build_flags.go`
+
+이 파일들을 한 디렉터리에 모아두는 이유는 downstream `cgo` 패키지가 한 위치에서 함께 빌드할 수 있게 하기 위해서입니다.
+
+## Go Module 출력
+
+`output.dir` 자체를 독립적인 Go module처럼 쓰고 싶다면 `generate --go-module <module-path>`를 사용합니다.
 
 ```bash
-cargo run --bin cgo-gen -- check --config examples/simple-go/config.yaml
-cargo run --bin cgo-gen -- ir --config examples/simple-go/config.yaml --format yaml
-cargo run --bin cgo-gen -- generate --config examples/simple-go/config.yaml --dump-ir
+cgo-gen generate --config path/to/config.yaml --go-module example.com/acme/foo
 ```
 
-예제 프로젝트:
+이 옵션을 주면 추가로:
 
-- [`examples/simple-go`](./examples/simple-go)
-- [`examples/simple-go-struct`](./examples/simple-go-struct)
+- `module <module-path>`와 `go 1.25`가 들어간 `go.mod`
+- `build_flags.go`
 
-## Command Recipes
+가 생성됩니다.
 
-CLI 설치 또는 도움말 확인:
+현재 동작은 다음과 같습니다.
 
-```bash
-cargo install --path .
-cgo-gen --help
-cgo-gen generate --help
-```
+- `build_flags.go`는 항상 `#cgo CFLAGS: -I${SRCDIR}`를 포함합니다.
+- `#cgo CXXFLAGS`는 raw `input.clang_args`에서만 추출합니다.
+- export되는 `CXXFLAGS`는 `-I`, `-isystem`, `-D`, `-std=...`만 허용합니다.
+- `input.ldflags`가 있으면 `build_flags.go`에 `#cgo LDFLAGS`도 생성합니다.
+- `compile_commands.json`은 파싱에는 쓰이지만 Go package metadata로 직접 export되지는 않습니다.
 
-설치 없이 저장소에서 바로 실행:
+생성 디렉터리 자체를 Go 패키지로 import하고 빌드하려는 경우 이 모드를 사용하면 됩니다.
 
-```bash
-cargo run --bin cgo-gen -- check --config examples/simple-go/config.yaml
-cargo run --bin cgo-gen -- ir --config examples/simple-go/config.yaml --format yaml
-cargo run --bin cgo-gen -- generate --config examples/simple-go/config.yaml --dump-ir
-```
+## 자주 쓰는 설정 키
 
-체크인된 예제 설정으로 wrapper 생성:
+처음에는 모든 옵션을 알 필요는 없습니다. 실제로 자주 쓰는 것만 보면 됩니다.
 
-```bash
-cargo run --bin cgo-gen -- generate --config examples/simple-go/config.yaml
-cargo run --bin cgo-gen -- generate --config examples/simple-go-struct/config.yaml
-```
+- `input.headers`: 명시적 public entry header 목록
+- `input.dir`: 디렉터리 바로 아래 헤더마다 wrapper 세트를 하나씩 생성
+- `input.header_dirs`: 디렉터리를 재귀적으로 돌며 헤더를 `input.headers`로 확장
+- `input.dirs`: 헤더와 translation unit을 함께 재귀 확장
+- `input.translation_units`: 명시적 parse entry. 있으면 `input.headers`보다 우선
+- `input.compile_commands`: `compile_commands.json`에서 컴파일 플래그와 source TU 후보 읽기
+- `input.clang_args`: `-I`, `-isystem`, `-D`, `-std=...` 같은 추가 libclang 인자
+- `input.ldflags`: 생성되는 `build_flags.go`에 전달할 링커 플래그
+- `output.dir`: 출력 디렉터리
+- `output.header`, `output.source`, `output.ir`: single-header 모드용 출력 파일명 override
+- `naming.prefix`: 생성되는 C symbol prefix
+- `naming.style`: `preserve` 또는 현재 예제들이 쓰는 lowercase/snake-style fallback
 
-체크인된 Go 예제를 end-to-end로 빌드:
+주의할 점:
 
-```bash
-make -C examples/simple-go gen
-make -C examples/simple-go build
-make -C examples/simple-go run
-
-make -C examples/simple-go-struct gen
-make -C examples/simple-go-struct build
-make -C examples/simple-go-struct run
-```
-
-## CLI
-
-현재 제공하는 서브커맨드는 세 가지입니다.
-
-- `generate --config <path> [--dump-ir] [--go-module <module-path>]`
-- `ir --config <path> [--output <path>] [--format yaml|json]`
-- `check --config <path>`
+- multi-header generation에서는 `output.header`, `output.source`, `output.ir`를 기본값으로 두는 편이 안전합니다.
+- `input.clang_args`와 `input.ldflags`의 상대 경로는 config 파일 위치 기준으로 해석됩니다.
+- env 확장은 `$VAR`, `$(VAR)`, `${VAR}`만 지원합니다.
 
 ## 설정 키 설명
 
@@ -142,48 +179,43 @@ make -C examples/simple-go-struct run
 | `input.compile_commands` | `compile_commands.json`에서 compiler flag와 source TU 후보를 읽어옵니다. |
 | `input.clang_args` | 추가 libclang 인자입니다. 상대 `-I...`, `-I <path>`, `-isystem` 경로는 config 파일 기준으로 해석됩니다. `$VAR`, `$(VAR)`, `${VAR}` 형태의 exact env token도 현재 OS environment에서 확장합니다. include root가 필요하면 여기에 `-I...` 토큰으로 직접 적습니다. |
 | `input.ldflags` | 생성되는 `build_flags.go`의 `#cgo LDFLAGS`에 그대로 전달할 링커 플래그입니다. 상대 `-L<path>`, `-L <path>` 경로는 config 파일 기준으로 해석되며, 값 안에 포함된 `${VAR}`, `$(VAR)` env token도 확장됩니다. |
-| `input.allow_diagnostics` | `true`면 libclang diagnostic이 발생한 translation unit을 실패 대신 skip 합니다. |
 | `output.dir` | 출력 디렉터리입니다. 상대 경로는 config 파일 기준입니다. |
 | `output.header` / `output.source` / `output.ir` | 출력 파일명 override입니다. 기본값을 유지하면 single-header 모드에서 `<header_stem>_wrapper.*`로 자동 추론됩니다. |
 | `naming.prefix` | 생성되는 C ABI symbol prefix입니다. `<prefix>_string_free`에도 사용됩니다. |
 | `naming.style` | `preserve`면 원본 케이스를 최대한 유지합니다. 그 외 값은 현재 symbol part를 소문자화하는 쪽으로 동작하며, 저장소 예제는 이 동작을 `snake_case`로 사용합니다. |
 
-## 외부 프로젝트를 심볼릭 링크로 붙이는 방법
+## 예제
 
-외부 SDK나 private C++ 프로젝트를 이 저장소 밖에 두고, 저장소 안에는 symlink만 두는 방식이 잘 맞습니다.
+유지되는 예제:
+
+- [`examples/simple-go`](./examples/simple-go): 가장 작은 end-to-end free-function 흐름
+- [`examples/simple-go-struct`](./examples/simple-go-struct): handle-backed model / facade 흐름
+
+자주 쓰는 명령:
 
 ```bash
-mkdir -p third_party
-ln -s /absolute/path/to/external-sdk third_party/external-sdk
+make -C examples/simple-go gen
+make -C examples/simple-go build
+make -C examples/simple-go run
+
+make -C examples/simple-go-struct gen
+make -C examples/simple-go-struct build
+make -C examples/simple-go-struct run
 ```
 
-그 다음 config에서는 저장소 안의 symlink 경로를 사용합니다.
+## 저장소 구조
 
-```yaml
-version: 1
+사용자 관점의 진입점은 아래 정도로 보면 됩니다.
 
-input:
-  dir: third_party/external-sdk/include
-  compile_commands: third_party/external-sdk/build/compile_commands.json
-  clang_args:
-    - -Ithird_party/external-sdk/include
+- `src/cli.rs`: CLI 계약과 서브커맨드 정의
+- `src/config.rs`: YAML config 로드와 경로 해석
+- `src/parsing/`: libclang 파싱과 translation unit 수집
+- `src/analysis/`: 파생 model projection 분석
+- `src/codegen/`: IR normalization, C ABI 생성, Go facade 생성
+- `src/pipeline/`: 런타임 pipeline context
+- `examples/`: 유지되는 end-to-end 샘플
 
-output:
-  dir: gen/external-sdk
-
-naming:
-  prefix: ext
-  style: preserve
-```
-
-실제로는 이렇게 처리됩니다.
-
-- 상대 경로 기준점은 shell 현재 디렉터리가 아니라 YAML 파일 위치입니다.
-- config 로딩 시 symlink target을 canonicalize 하므로 TU 매칭과 파싱은 실제 경로 기준으로 동작합니다.
-- `compile_commands.json` 안에 `input.dir` 아래 source file이 있으면 header entry보다 그 source TU를 우선 사용합니다.
-- `input.dir` 밖의 imported header는 타입 해석에는 도움을 주지만, 이 프로젝트가 소유한 public entry header로 취급되지는 않습니다.
-
-외부 프로젝트가 이미 괜찮은 `compile_commands.json`을 만들고 있다면, 많은 `clang_args`를 수동으로 복제하는 것보다 그 파일을 그대로 쓰는 편이 낫습니다.
+내부 구조를 더 보고 싶다면 [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)를 보면 되지만, 실제 계약은 결국 코드와 CLI 동작입니다.
 
 ## 현재 지원 범위
 
@@ -212,22 +244,6 @@ naming:
 
 일부 비지원 선언은 전체 실행을 abort 하지 않고 skip 됩니다. 이런 경우 이유는 normalized IR의 `support.skipped_declarations`에 기록됩니다.
 
-## 실무 팁
-
-- `input.allow_diagnostics: true`는 복구용 스위치이지 품질 향상 스위치가 아닙니다. 실패한 translation unit 자체를 통째로 skip 합니다.
-- multi-header directory 모드에서는 `output.header`, `output.source`, `output.ir`를 기본값으로 두는 편이 안전합니다. 그래야 헤더별 출력 파일명을 자동 추론할 수 있습니다.
-- 플랫폼이 `libclang`를 못 찾는다면 먼저 시스템 loader나 LLVM 설치를 고쳐야 합니다.
-- `input.clang_args`의 env 확장은 `$VAR`, `$(VAR)`, `${VAR}` 형태의 exact token만 지원합니다. `${VAR:-default}` 같은 shell 문법이나 문자열 일부 치환은 지원하지 않습니다.
-
 ## 라이선스
 
 [MIT](./LICENSE)
-
-## External Go Package Metadata
-
-`generate --go-module <module-path>`를 사용하면 `output.dir` 아래에 `go.mod`와 `build_flags.go`를 함께 생성합니다.
-
-- `build_flags.go`는 항상 `#cgo CFLAGS: -I${SRCDIR}`를 포함합니다.
-- `#cgo CXXFLAGS`는 raw `input.clang_args`에서 `-I/-isystem`, `-D`, `-std=...`만 반영합니다.
-- `input.ldflags`가 설정된 경우 `build_flags.go`에 `#cgo LDFLAGS` 줄도 함께 생성됩니다. 설정하지 않으면 해당 줄은 생략되며 downstream 소비자가 직접 관리합니다.
-- `input.include_dirs`와 `compile_commands.json`은 package metadata export에 직접 사용되지 않습니다.

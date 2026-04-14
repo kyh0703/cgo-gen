@@ -36,8 +36,6 @@ pub struct InputConfig {
     #[serde(default)]
     pub clang_args: Vec<String>,
     #[serde(default)]
-    pub allow_diagnostics: bool,
-    #[serde(default)]
     pub ldflags: Vec<String>,
 }
 

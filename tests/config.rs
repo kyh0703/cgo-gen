@@ -138,7 +138,6 @@ output:
     assert_eq!(config.version, Some(1));
     assert_eq!(config.input.dir, None);
     assert_eq!(config.input.headers.len(), 1);
-    assert!(!config.input.allow_diagnostics);
     assert_eq!(config.output.header, "foo_wrapper.h");
     assert!(config.input.headers[0].is_absolute());
 }
@@ -174,10 +173,10 @@ output:
 }
 
 #[test]
-fn loads_optional_allow_diagnostics_flag() {
+fn rejects_removed_allow_diagnostics_key() {
     let mut dir = env::temp_dir();
     dir.push(format!(
-        "c_go_config_allow_diagnostics_test_{}",
+        "c_go_config_removed_allow_diagnostics_test_{}",
         std::process::id()
     ));
     let _ = fs::remove_dir_all(&dir);
@@ -199,8 +198,9 @@ output:
     )
     .unwrap();
 
-    let config = Config::load(&config_path).unwrap();
-    assert!(config.input.allow_diagnostics);
+    let error = Config::load(&config_path).unwrap_err().to_string();
+    assert!(error.contains("failed to parse YAML config"));
+    assert!(error.contains("allow_diagnostics"));
 }
 
 #[test]
@@ -251,7 +251,6 @@ fn rejects_config_without_dir_or_headers() {
         r#"
 version: 1
 input:
-  allow_diagnostics: true
 output:
   dir: gen
 "#,

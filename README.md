@@ -2,61 +2,80 @@
 
 [한국어](./README.ko.md)
 
-`cgo-gen` is a Rust CLI that parses a conservative subset of C/C++ headers and emits:
+`cgo-gen` is a Rust CLI that parses a conservative subset of C/C++ headers and generates:
 
 - C ABI wrapper headers and sources
 - optional normalized IR dumps
-- Go `cgo` facade files that live beside the generated native wrapper
+- Go `cgo` facade files beside the generated native wrapper
 
-It is designed for controlled header surfaces, not for arbitrary modern C++.
+It is designed for controlled C/C++ header surfaces, not for arbitrary modern C++ codebases.
 
-## Status
+## Quick Start
 
-`cgo-gen` is intentionally conservative. The public contract is the current CLI and config behavior described in this README. The repository also contains historical planning and design notes under [`docs/`](./docs/), but those are not a stronger source of truth than the code.
+If you just want to see the current workflow end to end, use the checked-in example:
 
-## What It Generates
+```bash
+cargo run --bin cgo-gen -- check --config examples/simple-go/config.yaml
+cargo run --bin cgo-gen -- generate --config examples/simple-go/config.yaml --dump-ir
+make -C examples/simple-go run
+```
 
-For each supported entry header, `cgo-gen` can write these files into one output directory:
+That path exercises the actual supported flow in this repository:
 
-- `<name>_wrapper.h`
-- `<name>_wrapper.cpp`
-- `<name>_wrapper.go`
-- `<name>_wrapper.ir.yaml` when `--dump-ir` is enabled
-
-When `generate` runs with `--go-module <module-path>`, it also writes:
-
-- `build_flags.go`
-- `go.mod`
-
-The generated `.go`, `.h`, `.cpp`, and `.ir.yaml` files are intentionally co-located so a downstream `cgo` package can build them together.
+1. load a YAML config
+2. parse headers with `libclang`
+3. normalize declarations into IR
+4. generate wrapper files into `output.dir`
+5. build or consume the generated Go package
 
 ## Requirements
 
 - Rust toolchain
-- `libclang` discoverable at runtime
+- `libclang` available at runtime
 - a Clang-compatible compile environment for non-trivial headers
-- Go toolchain only if you plan to build the generated Go package
+- Go toolchain only if you plan to build generated Go packages
 
-This crate is built with `clang-sys` feature `clang_18_0`, so an LLVM/Clang 18 era `libclang` setup is the safest target.
+This crate uses `clang-sys` with `clang_18_0`, so a Clang 18 era `libclang` setup is the safest target.
 
 ## Install
 
-Run directly from the repository:
+Run from the repository:
 
 ```bash
-cargo run --bin cgo-gen -- check --config examples/simple-go/config.yaml
+cargo run --bin cgo-gen -- --help
 ```
 
-Or install the CLI locally:
+Or install locally:
 
 ```bash
 cargo install --path .
-cgo-gen check --config /path/to/config.yaml
+cgo-gen --help
 ```
 
-## Quick Start
+## Core Commands
 
-Create a config file anywhere you want. The checked-in examples under `examples/*/config.yaml` are the smallest maintained references. A minimal config looks like this:
+`cgo-gen` currently exposes three subcommands:
+
+- `generate --config <path> [--dump-ir] [--go-module <module-path>]`
+- `ir --config <path> [--output <path>] [--format yaml|json]`
+- `check --config <path>`
+
+Typical flow:
+
+```bash
+cgo-gen check --config path/to/config.yaml
+cgo-gen generate --config path/to/config.yaml --dump-ir
+```
+
+Use `ir` when you want to inspect the normalized model without writing wrapper files:
+
+```bash
+cgo-gen ir --config path/to/config.yaml --format yaml
+```
+
+## Minimal Config
+
+The smallest practical config is usually one entry header plus `compile_commands.json`:
 
 ```yaml
 version: 1
@@ -74,41 +93,83 @@ naming:
   style: snake_case
 ```
 
-Common commands:
+Key behaviors:
+
+- relative paths are resolved from the config file location
+- unknown keys are rejected at load time
+- generated `.go`, `.h`, `.cpp`, and optional `.ir.yaml` files are written together under `output.dir`
+- when `--go-module <module-path>` is set, `generate` also writes `go.mod` and `build_flags.go`
+
+## Generated Output
+
+For each supported entry header, `generate` can emit:
+
+- `<name>_wrapper.h`
+- `<name>_wrapper.cpp`
+- `<name>_wrapper.go`
+- `<name>_wrapper.ir.yaml` when `--dump-ir` is enabled
+
+When `--go-module` is set, it also writes:
+
+- `go.mod`
+- `build_flags.go`
+
+The generated files are intentionally co-located so a downstream `cgo` package can compile them as one package-local unit.
+
+## Go Module Output
+
+Use `generate --go-module <module-path>` when you want `output.dir` to behave like a standalone Go module:
 
 ```bash
-cargo run --bin cgo-gen -- check --config examples/simple-go/config.yaml
-cargo run --bin cgo-gen -- ir --config examples/simple-go/config.yaml --format yaml
-cargo run --bin cgo-gen -- generate --config examples/simple-go/config.yaml --dump-ir
-cargo run --bin cgo-gen -- generate --config examples/simple-go/config.yaml --go-module example.com/acme/foo
+cgo-gen generate --config path/to/config.yaml --go-module example.com/acme/foo
 ```
 
-## Command Recipes
+When enabled, `generate` also writes:
 
-Install or inspect the CLI:
+- `go.mod` with `module <module-path>` and `go 1.25`
+- `build_flags.go`
 
-```bash
-cargo install --path .
-cgo-gen --help
-cgo-gen generate --help
-```
+Current behavior:
 
-Run commands from the repository without installing:
+- `build_flags.go` always emits `#cgo CFLAGS: -I${SRCDIR}`
+- `#cgo CXXFLAGS` are exported from raw `input.clang_args` only
+- exported `CXXFLAGS` allow only `-I`, `-isystem`, `-D`, and `-std=...`
+- when `input.ldflags` is set, `build_flags.go` also emits `#cgo LDFLAGS`
+- `compile_commands.json` helps parsing, but it is not exported into Go package metadata
 
-```bash
-cargo run --bin cgo-gen -- check --config examples/simple-go/config.yaml
-cargo run --bin cgo-gen -- ir --config examples/simple-go/config.yaml --format yaml
-cargo run --bin cgo-gen -- generate --config examples/simple-go/config.yaml --dump-ir
-```
+Use this mode when the generated directory itself should be imported and built as a Go package.
 
-Generate wrappers from the checked-in examples:
+## Config Options That Matter Most
 
-```bash
-cargo run --bin cgo-gen -- generate --config examples/simple-go/config.yaml
-cargo run --bin cgo-gen -- generate --config examples/simple-go-struct/config.yaml
-```
+You do not need every knob to get started. These are the main ones:
 
-Build the checked-in Go examples end to end:
+- `input.headers`: explicit public entry headers
+- `input.dir`: generate one wrapper set per header directly under that directory
+- `input.header_dirs`: recursively expand headers into `input.headers`
+- `input.dirs`: recursively expand headers and translation units
+- `input.translation_units`: explicit parse entries; takes precedence over `input.headers`
+- `input.compile_commands`: import compile flags and source TU discovery from `compile_commands.json`
+- `input.clang_args`: extra libclang flags such as `-I...`, `-isystem...`, `-D...`, `-std=...`
+- `input.ldflags`: linker flags forwarded into generated `build_flags.go`
+- `output.dir`: output directory
+- `output.header`, `output.source`, `output.ir`: explicit filenames for single-header generation
+- `naming.prefix`: generated C symbol prefix
+- `naming.style`: `preserve` or the current lowercase/snake-style fallback used by checked-in configs
+
+Important caveats:
+
+- if you use multi-header generation, leave `output.header`, `output.source`, and `output.ir` at their defaults
+- `input.clang_args` and `input.ldflags` resolve relative paths from the config file directory
+- env expansion supports `$VAR`, `$(VAR)`, and `${VAR}` only
+
+## Examples
+
+Maintained examples:
+
+- [`examples/simple-go`](./examples/simple-go): smallest end-to-end free-function flow
+- [`examples/simple-go-struct`](./examples/simple-go-struct): handle-backed model and facade flow
+
+Useful commands:
 
 ```bash
 make -C examples/simple-go gen
@@ -120,106 +181,38 @@ make -C examples/simple-go-struct build
 make -C examples/simple-go-struct run
 ```
 
-Example projects:
+## Repository Layout
 
-- [`examples/simple-go`](./examples/simple-go)
-- [`examples/simple-go-struct`](./examples/simple-go-struct)
+User-facing entry points:
 
-## CLI
+- `src/cli.rs`: CLI contract and subcommands
+- `src/config.rs`: YAML config loading and path resolution
+- `src/parsing/`: libclang parsing and translation-unit discovery
+- `src/analysis/`: derived model projection analysis
+- `src/codegen/`: IR normalization plus C ABI and Go facade rendering
+- `src/pipeline/`: runtime pipeline context
+- `examples/`: maintained end-to-end sample consumers
 
-`cgo-gen` currently exposes three subcommands:
-
-- `generate --config <path> [--dump-ir] [--go-module <module-path>]`
-- `ir --config <path> [--output <path>] [--format yaml|json]`
-- `check --config <path>`
-
-## External Go Package Metadata
-
-Use `generate --go-module <module-path>` when you want `output.dir` to behave like a standalone Go module.
-
-- `go.mod` is emitted with `module <module-path>` and `go 1.25`
-- `build_flags.go` always emits `#cgo CFLAGS: -I${SRCDIR}`
-- `build_flags.go` exports `#cgo CXXFLAGS` from raw `input.clang_args` only
-- exported `CXXFLAGS` keep authored spellings where possible and allow only `-I/-isystem`, `-D`, and `-std=...`
-- `input.include_dirs` is ignored for exported package metadata
-- when `input.ldflags` is set, `build_flags.go` also emits `#cgo LDFLAGS` with those values; otherwise the line is omitted and the downstream consumer owns linker flags
-
-## Configuration Reference
-
-All supported user-facing knobs are YAML config keys. Relative paths are resolved from the config file directory and existing paths are canonicalized, so symlink paths collapse to their real target as soon as the config is loaded. Unknown keys are rejected at load time.
-
-| Key | Current behavior |
-| --- | --- |
-| `version` | Optional schema marker. Parsed, but not used for behavior branching today. |
-| `input.dir` | Directory-owned parsing mode. `generate` emits one wrapper set per header directly under this directory. |
-| `input.headers` | Explicit entry headers. Use this when you want a narrow, deterministic surface. |
-| `input.header_dirs` | Recursively expands header files from directories into `input.headers`. Good for header-only samples. |
-| `input.dirs` | Recursively expands both headers and translation units from directories. |
-| `input.translation_units` | Explicit parse entries. When present, parsing prefers these over `input.headers`. |
-| `input.compile_commands` | Imports compiler flags and source translation unit discovery from `compile_commands.json`. |
-| `input.clang_args` | Extra libclang arguments. Relative `-I...`, `-I <path>`, and `-isystem` paths are resolved from the config file directory. Exact env tokens in the forms `$VAR`, `$(VAR)`, and `${VAR}` are also expanded from the current OS environment. Author include roots here with explicit `-I...` tokens. |
-| `input.ldflags` | Linker flags forwarded into the generated `build_flags.go` as `#cgo LDFLAGS`. Relative `-L<path>` and `-L <path>` entries are resolved from the config file directory. Embedded env tokens such as `${VAR}` and `$(VAR)` inside flag values are also expanded. |
-| `input.allow_diagnostics` | If `true`, translation units that produce libclang diagnostics are skipped instead of failing the run. |
-| `output.dir` | Output directory. Relative paths resolve from the config file directory. |
-| `output.header` / `output.source` / `output.ir` | Optional output filenames. When left at defaults in single-header mode, names are inferred as `<header_stem>_wrapper.*`. |
-| `naming.prefix` | Prefix for generated C ABI symbols, including `<prefix>_string_free`. |
-| `naming.style` | `preserve` keeps symbol case closer to the source spelling. Any other value currently falls back to lowercasing symbol parts; checked-in configs use `snake_case` for that behavior. |
-
-## Using A Symlinked External Project
-
-If you want to keep an external SDK or private C++ project outside this repository, a symlinked vendor directory works well:
-
-```bash
-mkdir -p third_party
-ln -s /absolute/path/to/external-sdk third_party/external-sdk
-```
-
-Then point your config at the symlink inside this repository:
-
-```yaml
-version: 1
-
-input:
-  dir: third_party/external-sdk/include
-  compile_commands: third_party/external-sdk/build/compile_commands.json
-  clang_args:
-    - -Ithird_party/external-sdk/include
-
-output:
-  dir: gen/external-sdk
-
-naming:
-  prefix: ext
-  style: preserve
-```
-
-What happens in practice:
-
-- relative paths are resolved from the YAML file location, not from the shell working directory
-- symlink targets are canonicalized during config loading, so parsing and TU matching operate on real paths
-- if `compile_commands.json` contains source files inside `input.dir`, those source TUs are preferred over header entries
-- imported headers outside `input.dir` can still help type resolution, but they are not treated as owned public entry headers
-
-When the external project already has a good `compile_commands.json`, prefer that over duplicating many `clang_args`.
+The architecture summary in [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) is useful if you need internals, but the code and CLI behavior are the real contract.
 
 ## Supported Today
 
 - free functions
 - non-template classes
 - constructors and destructors
-- public methods with deterministic overload disambiguation in generated wrapper names
-- public struct field accessors (get and set) for supported field types
-- primitive scalars and fixed-width aliases such as `int32`, `uint64`, and `size_t`
+- public methods with deterministic overload disambiguation
+- public struct field accessors for supported field types
+- primitive scalars and common fixed-width aliases
 - `const char*`, `char*`, `std::string`, and `std::string_view`
-- fixed-size C arrays: `unsigned char[N]` (byte arrays), `T[N]` for primitive element types, and `Model[N]` for model element types
-- primitive pointer and reference write-back in Go
+- fixed-size primitive and model arrays
+- primitive pointer/reference write-back in Go
 - named callback typedefs used by supported APIs
 - `struct timeval*` and `struct timeval&`
-- handle-backed Go wrappers emitted beside the native wrapper files
+- handle-backed Go wrappers for supported object paths
 
 ## Not Supported Or Intentionally Limited
 
-- operator declarations such as `operator+` and `operator==`
+- operators such as `operator+` and `operator==`
 - raw inline function pointer parameters such as `void (*cb)(int)`
 - templates and STL-heavy APIs
 - anonymous classes
@@ -227,14 +220,7 @@ When the external project already has a good `compile_commands.json`, prefer tha
 - advanced inheritance modeling
 - raw-unsafe by-value object parameters or returns
 
-Some unsupported declarations are skipped instead of aborting the whole run. When that happens, the reason is recorded in `support.skipped_declarations` inside the normalized IR.
-
-## Practical Notes
-
-- `input.allow_diagnostics: true` is a recovery switch, not a quality switch. It skips failing translation units entirely.
-- In multi-header directory mode, leave `output.header`, `output.source`, and `output.ir` at defaults so `cgo-gen` can infer one output set per header.
-- If your platform cannot find `libclang`, fix your system loader or LLVM setup first.
-- `input.clang_args` supports exact env token expansion for `$VAR`, `$(VAR)`, and `${VAR}` only. It is not a general shell interpolation layer and does not support forms like `${VAR:-default}` or partial-string substitution.
+Unsupported declarations may be skipped instead of aborting the whole run. When that happens, the reason is recorded in `support.skipped_declarations` in the normalized IR.
 
 ## License
 
