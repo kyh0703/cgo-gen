@@ -1,14 +1,14 @@
 ---
-feature: go-false-overload-suffix-detection-for-smmanager-bool-field-setters
+feature: go-false-overload-suffix-detection-for-representative-bool-field-setters
 status: plan_ready
 created_at: 2026-04-09T17:46:44+09:00
 ---
 
-# Go False Overload Suffix Detection For Smmanager Bool Field Setters
+# Go False Overload Suffix Detection For Representative Bool Field Setters
 
 ## Goal
 
-Fix generated Go method names so non-overloaded bool field setters do not pick up a spurious `Bool` suffix in `smmanager/public_wrapper.go`.
+Fix generated Go method names so non-overloaded bool field setters do not pick up a spurious `Bool` suffix in `sample_manager/public_wrapper.go`.
 
 ## Context / Inputs
 - Source docs:
@@ -20,7 +20,7 @@ Fix generated Go method names so non-overloaded bool field setters do not pick u
   - Go facade export naming currently treats any raw C symbol containing `__` as an overloaded API.
   - underscore-backed owner names such as `_SYS_IF_MONITOR_IODSM` naturally produce raw symbols like `cgowrap__SYS_IF_MONITOR_IODSM_SetBModifyFlag`, even when there is no overload.
   - that false positive causes `go_overload_suffix()` to append the bool token, producing names like `SetBModifyFlagBool`.
-  - generated `smmanager/public_wrapper.go` currently contains repeated false positives such as `SetBModifyFlagBool`.
+  - generated `sample_manager/public_wrapper.go` currently contains repeated false positives such as `SetBModifyFlagBool`.
 - User brief:
   - `SetBModifyFlagBool` should not have the trailing `Bool`.
 
@@ -29,7 +29,7 @@ Fix generated Go method names so non-overloaded bool field setters do not pick u
 - Keep the fix scoped to Go facade export-name detection.
 - Distinguish true overload-disambiguated raw symbols from symbols that merely contain `__` because of preserved owner names.
 - Add regression coverage for a non-overloaded underscore-backed bool setter and confirm it renders as `SetBModifyFlag`.
-- Re-check the representative `smmanager` output for the known `SetBModifyFlagBool` sites.
+- Re-check the representative `sample_manager` output for the known `SetBModifyFlagBool` sites.
 
 ### Success Criteria
 - Non-overloaded bool field setters render as `SetBModifyFlag`, not `SetBModifyFlagBool`.
@@ -39,7 +39,7 @@ Fix generated Go method names so non-overloaded bool field setters do not pick u
 ### Non-Goals
 - Do not broaden this slice to `GetItem` or `operator[]` handling.
 - Do not redesign raw C symbol naming.
-- Do not manually patch generated `smmanager/public_wrapper.go`; the fix must come from the generator.
+- Do not manually patch generated `sample_manager/public_wrapper.go`; the fix must come from the generator.
 
 ### Open Questions
 - none
@@ -48,7 +48,7 @@ Fix generated Go method names so non-overloaded bool field setters do not pick u
 - `cargo test go_facade`
 - `cargo test generator`
 - `cargo test`
-- `rg -n "SetBModifyFlagBool|SetBModifyFlag\\(" smmanager/public_wrapper.go`
+- `rg -n "SetBModifyFlagBool|SetBModifyFlag\\(" sample_manager/public_wrapper.go`
 
 ### Parallelization Hints
 - Candidate write boundaries:
@@ -60,4 +60,4 @@ Fix generated Go method names so non-overloaded bool field setters do not pick u
 - Likely sequential dependencies:
   - tighten overload detection first
   - then add regression coverage
-  - then verify the `smmanager` output
+  - then verify the `sample_manager` output

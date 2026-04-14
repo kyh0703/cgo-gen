@@ -1,4 +1,4 @@
-# Go False Overload Suffix Detection For Smmanager Bool Field Setters
+# Go False Overload Suffix Detection For Representative Bool Field Setters
 
 ## Goal
 - non-overloaded underscore-backed bool field setters가 generated Go facade에서 `SetBModifyFlagBool`이 아니라 `SetBModifyFlag`로 렌더링되게 고치고 회귀 검증을 추가한다.
@@ -7,10 +7,10 @@
 - `docs/STATE.md`
 - `docs/ROADMAP.md`
 - `docs/ARCHITECTURE.md`
-- `docs/v2/designs/2026-04-09-v2-go-false-overload-suffix-detection-for-smmanager-bool-field-setters.md`
+- `docs/v2/designs/2026-04-09-v2-go-false-overload-suffix-detection-for-underscore-bool-field-setters.md`
 
 ## Workspace
-- Branch: feat/v2-go-false-overload-suffix-detection-for-smmanager-bool-field-setters
+- Branch: feat/v2-go-false-overload-suffix-detection-for-representative-bool-field-setters
 - Base: master
 - Isolation: required
 - Created by: exec-plan via git-worktree
@@ -23,9 +23,9 @@
 - Write Scope:
   - `src/codegen/go_facade.rs`
 - Read Context:
-  - `docs/v2/designs/2026-04-09-v2-go-false-overload-suffix-detection-for-smmanager-bool-field-setters.md`
+  - `docs/v2/designs/2026-04-09-v2-go-false-overload-suffix-detection-for-underscore-bool-field-setters.md`
   - `src/codegen/ir_norm.rs`
-  - `smmanager/public_wrapper.go`
+  - `sample_manager/public_wrapper.go`
 - Checks:
   - `cargo test go_facade`
 - Parallel-safe: no
@@ -45,16 +45,16 @@
 - Parallel-safe: no
 
 ### Task T3
-- Goal: representative generated output를 다시 확인해서 `smmanager/public_wrapper.go`의 known `SetBModifyFlagBool` sites가 `SetBModifyFlag`로 바뀌었는지 검증한다.
+- Goal: representative generated output를 다시 확인해서 `sample_manager/public_wrapper.go`의 known `SetBModifyFlagBool` sites가 `SetBModifyFlag`로 바뀌었는지 검증한다.
 - Depends on:
   - T2
 - Write Scope:
-  - `smmanager/`
+  - `sample_manager/`
 - Read Context:
-  - `smmanager/public_wrapper.go`
+  - `sample_manager/public_wrapper.go`
   - local generation command/config
 - Checks:
-  - `rg -n "SetBModifyFlagBool|SetBModifyFlag\\(" smmanager/public_wrapper.go`
+  - `rg -n "SetBModifyFlagBool|SetBModifyFlag\\(" sample_manager/public_wrapper.go`
 - Parallel-safe: no
 
 ## Notes

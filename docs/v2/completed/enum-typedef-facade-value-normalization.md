@@ -8,10 +8,10 @@
 - `docs/ROADMAP.md`
 - `docs/ARCHITECTURE.md`
 - `docs/v2/designs/2026-04-10-v2-enum-typedef-facade-value-normalization.md`
-- `smmanager/public_wrapper.go`
-- `smmanager/sm_manager_wrapper.h`
-- `smmanager/sm_manager_wrapper.cpp`
-- `smmanager/sm_manager_wrapper.go`
+- `sample_manager/public_wrapper.go`
+- `sample_manager/manager_wrapper.h`
+- `sample_manager/manager_wrapper.cpp`
+- `sample_manager/manager_wrapper.go`
 
 ## Workspace
 - Branch: feat/v2-enum-typedef-facade-value-normalization
@@ -37,19 +37,19 @@
 - Parallel-safe: no
 
 ### Task T2
-- Goal: add a focused regression that proves facade output for typedef enum by-value parameters emits value enums in C and Go wrappers, then verify the `smmanager` sample no longer contains `IPRON_DI_PROC_TYPEHandle*`.
+- Goal: add a focused regression that proves facade output for typedef enum by-value parameters emits value enums in C and Go wrappers, then verify the `sample_manager` sample no longer contains `PROCESS_KINDHandle*`.
 - Depends on:
   - T1
 - Write Scope:
   - `tests/`
-  - generated `smmanager/` output for verification only
+  - generated `sample_manager/` output for verification only
 - Read Context:
   - `src/codegen/`
   - `src/analysis/`
-  - `smmanager/`
+  - `sample_manager/`
 - Checks:
   - powershell -NoProfile -Command "Set-Location 'D:/Project/cgo-gen/.worktrees/enum-typedef-facade-value-normalization'; cargo test"
-  - manual: if `smmanager` is regenerated later, confirm `IPRON_DI_PROC_TYPEHandle` / `type IPRONDIPROCTYPE struct` no longer appear
+  - manual: if `sample_manager` is regenerated later, confirm `PROCESS_KINDHandle` / `type ProcessKind struct` no longer appear
 - Parallel-safe: no
 
 ## Notes

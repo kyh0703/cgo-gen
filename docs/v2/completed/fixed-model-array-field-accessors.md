@@ -63,5 +63,5 @@
 
 ## Notes
 - Keep the public C ABI signatures unchanged. Only the generated `.cpp` implementation should change.
-- Do not patch `smmanager/public_wrapper.cpp` directly. The fix must live in the generator and be validated through repository-local regression tests.
+- Do not patch `sample_manager/public_wrapper.cpp` directly. The fix must live in the generator and be validated through repository-local regression tests.
 - Do not broaden ownership or memory-management semantics for model array accessors in this plan.
