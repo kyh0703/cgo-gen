@@ -669,7 +669,7 @@ output:
 
 #[test]
 fn renders_model_value_return_as_owned_handle_copy() {
-    let root = env::temp_dir().join(format!("c_go_model_value_return_{}", std::process::id()));
+    let root = env::temp_dir().join(format!("c_go_model_pointer_return_{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(root.join("include")).unwrap();
     fs::write(
@@ -724,8 +724,8 @@ output:
 }
 
 #[test]
-fn renders_model_view_pointer_return_as_owned_handle_copy() {
-    let root = env::temp_dir().join(format!("c_go_model_view_return_{}", std::process::id()));
+fn renders_model_value_pointer_return_as_owned_handle_copy() {
+    let root = env::temp_dir().join(format!("c_go_model_value_return_{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(root.join("include")).unwrap();
     fs::write(
@@ -774,8 +774,8 @@ output:
         .iter()
         .find(|function| function.cpp_name == "Api::GetChildRef")
         .unwrap();
-    assert_eq!(ptr_getter.returns.kind, IrTypeKind::ModelView);
-    assert_eq!(ref_getter.returns.kind, IrTypeKind::ModelView);
+    assert_eq!(ptr_getter.returns.kind, IrTypeKind::ModelValue);
+    assert_eq!(ref_getter.returns.kind, IrTypeKind::ModelValue);
     assert!(source.contains("auto result = reinterpret_cast<Api*>(self)->GetChildPtr();"));
     assert!(source.contains("return reinterpret_cast<ChildHandle*>(new Child(*result));"));
     assert!(source.contains(

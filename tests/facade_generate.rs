@@ -663,7 +663,7 @@ naming:
 }
 
 #[test]
-fn exposes_model_view_returns_as_wrapper_snapshots_in_go_facade() {
+fn exposes_model_value_returns_as_wrapper_snapshots_in_go_facade() {
     let root = temp_output_dir("model-view-return");
     let include_dir = root.join("include");
     fs::create_dir_all(&include_dir).unwrap();

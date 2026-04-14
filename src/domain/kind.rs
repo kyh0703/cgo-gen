@@ -37,8 +37,6 @@ pub enum IrTypeKind {
     ModelReference,
     #[serde(rename = "model_pointer")]
     ModelPointer,
-    #[serde(rename = "model_view")]
-    ModelView,
     #[serde(rename = "model_value")]
     ModelValue,
 }

@@ -1205,8 +1205,7 @@ fn go_return_supported(_config: &PipelineContext, ty: &IrType) -> bool {
         )
         || (ty.kind == IrTypeKind::Primitive && go_type_for_ir(ty).is_some())
         || (ty.kind == IrTypeKind::Pointer && go_pointer_return_type(ty).is_some())
-        || matches!(ty.kind, IrTypeKind::ModelPointer | IrTypeKind::ModelView)
-        || ty.kind == IrTypeKind::ModelValue
+        || matches!(ty.kind, IrTypeKind::ModelPointer | IrTypeKind::ModelValue)
 }
 
 fn go_pointer_return_type(ty: &IrType) -> Option<String> {
@@ -1238,7 +1237,7 @@ fn go_model_return_type(config: &PipelineContext, ty: &IrType) -> String {
 fn is_model_wrapper_return(ty: &IrType) -> bool {
     matches!(
         ty.kind,
-        IrTypeKind::ModelPointer | IrTypeKind::ModelView | IrTypeKind::ModelValue
+        IrTypeKind::ModelPointer | IrTypeKind::ModelValue
     )
 }
 
@@ -2802,14 +2801,14 @@ mod tests {
     }
 
     #[test]
-    fn model_view_return_is_supported() {
-        let ty = model_type(IrTypeKind::ModelView, "ThingModel");
+    fn model_value_return_is_supported() {
+        let ty = model_type(IrTypeKind::ModelValue, "ThingModel");
         let config = test_context_with_known_model();
         assert!(go_return_supported(&config, &ty));
     }
 
     #[test]
-    fn model_view_return_renders_wrap_pattern() {
+    fn model_value_return_renders_wrap_pattern() {
         let config = test_context_with_known_model();
         let self_param = IrParam {
             name: "self".to_string(),
@@ -2861,7 +2860,7 @@ mod tests {
             owner_cpp_type: Some("Api".to_string()),
             is_const: Some(false),
             field_accessor: None,
-            returns: model_type(IrTypeKind::ModelView, "ThingModel"),
+            returns: model_type(IrTypeKind::ModelValue, "ThingModel"),
             params: vec![self_param],
         };
 
@@ -2969,7 +2968,7 @@ mod tests {
                     is_const: Some(true),
                     field_accessor: None,
                     returns: IrType {
-                        kind: IrTypeKind::ModelView,
+                        kind: IrTypeKind::ModelValue,
                         cpp_type: "_DCSHISTORY*".to_string(),
                         c_type: "DCSHISTORYHandle*".to_string(),
                         handle: Some("DCSHISTORYHandle".to_string()),
@@ -3004,7 +3003,7 @@ mod tests {
     }
 
     #[test]
-    fn opaque_model_view_return_emits_unknown_opaque_wrapper() {
+    fn opaque_model_value_return_emits_unknown_opaque_wrapper() {
         use crate::codegen::ir_norm::{IrModule, OpaqueType, SupportMetadata};
 
         let self_param = IrParam {
@@ -3073,7 +3072,7 @@ mod tests {
                     is_const: Some(true),
                     field_accessor: None,
                     returns: IrType {
-                        kind: IrTypeKind::ModelView,
+                        kind: IrTypeKind::ModelValue,
                         cpp_type: "CIosShm*".to_string(),
                         c_type: "CIosShmHandle*".to_string(),
                         handle: Some("CIosShmHandle".to_string()),
@@ -3113,9 +3112,9 @@ mod tests {
     }
 
     #[test]
-    fn model_view_return_uses_leaf_name_for_unknown_model() {
+    fn model_value_return_uses_leaf_name_for_unknown_model() {
         let config = test_context_with_known_model();
-        let ty = model_type(IrTypeKind::ModelView, "UnknownClass");
+        let ty = model_type(IrTypeKind::ModelValue, "UnknownClass");
         let go_name = go_model_return_type(&config, &ty);
         assert_eq!(go_name, "UnknownClass");
     }

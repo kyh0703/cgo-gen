@@ -500,8 +500,8 @@ output:
 }
 
 #[test]
-fn generated_wrapper_compiles_for_model_view_snapshot_copy_semantics() {
-    let root = temp_output_dir("model_view_snapshot");
+fn generated_wrapper_compiles_for_model_value_snapshot_copy_semantics() {
+    let root = temp_output_dir("model_value_snapshot");
     fs::create_dir_all(root.join("include")).unwrap();
     fs::write(
         root.join("include/Models.hpp"),

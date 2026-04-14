@@ -264,7 +264,6 @@ fn collect_referenced_opaque_types(opaque_types: &mut Vec<OpaqueType>, functions
                 IrTypeKind::ModelReference
                     | IrTypeKind::ModelPointer
                     | IrTypeKind::ModelValue
-                    | IrTypeKind::ModelView
             ) {
                 continue;
             }
@@ -1127,7 +1126,7 @@ fn normalize_return_type_with_canonical(
     ) && !is_abstract_model_type(&ty.cpp_type, abstract_types)
         && base_model_cpp_type(&ty.cpp_type) != "void"
     {
-        ty.kind = IrTypeKind::ModelView;
+        ty.kind = IrTypeKind::ModelValue;
     }
     Ok(ty)
 }
@@ -1883,10 +1882,6 @@ fn type_signature_token(ty: &IrType) -> String {
             "model_ptr_{}",
             sanitize_symbol_token(&base_model_cpp_type(&ty.cpp_type))
         ),
-        IrTypeKind::ModelView => format!(
-            "model_view_{}",
-            sanitize_symbol_token(&base_model_cpp_type(&ty.cpp_type))
-        ),
         IrTypeKind::ModelValue => format!(
             "model_value_{}",
             sanitize_symbol_token(&base_model_cpp_type(&ty.cpp_type))
@@ -2178,7 +2173,7 @@ mod tests {
     }
 
     #[test]
-    fn normalizes_model_pointer_returns_as_model_view() {
+    fn normalizes_model_pointer_returns_as_model_value() {
         let callback_names = BTreeSet::new();
         let ty = normalize_return_type_with_canonical(
             &Config::default(),
@@ -2191,12 +2186,12 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(ty.kind, IrTypeKind::ModelView);
+        assert_eq!(ty.kind, IrTypeKind::ModelValue);
         assert_eq!(ty.c_type, "ThingModelHandle*");
     }
 
     #[test]
-    fn collects_opaque_handles_for_model_view_returns() {
+    fn collects_opaque_handles_for_model_value_returns() {
         let mut opaque_types = Vec::new();
         let functions = vec![IrFunction {
             name: "cgowrap_Api_GetThing".to_string(),
@@ -2207,7 +2202,7 @@ mod tests {
             is_const: Some(true),
             field_accessor: None,
             returns: IrType {
-                kind: IrTypeKind::ModelView,
+                kind: IrTypeKind::ModelValue,
                 cpp_type: "ThingModel*".to_string(),
                 c_type: "ThingModelHandle*".to_string(),
                 handle: Some("ThingModelHandle".to_string()),
@@ -2231,7 +2226,7 @@ mod tests {
     }
 
     #[test]
-    fn collects_unknown_return_only_handles_for_model_view_returns() {
+    fn collects_unknown_return_only_handles_for_model_value_returns() {
         let mut opaque_types = Vec::new();
         let functions = vec![IrFunction {
             name: "cgowrap_CSmManager_GetIosPtr".to_string(),
@@ -2242,7 +2237,7 @@ mod tests {
             is_const: Some(false),
             field_accessor: None,
             returns: IrType {
-                kind: IrTypeKind::ModelView,
+                kind: IrTypeKind::ModelValue,
                 cpp_type: "CIosShm*".to_string(),
                 c_type: "CIosShmHandle*".to_string(),
                 handle: Some("CIosShmHandle".to_string()),
