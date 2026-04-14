@@ -663,7 +663,7 @@ naming:
 }
 
 #[test]
-fn exposes_model_value_returns_as_wrapper_snapshots_in_go_facade() {
+fn exposes_model_pointer_and_reference_returns_as_borrowed_wrappers_in_go_facade() {
     let root = temp_output_dir("model-view-return");
     let include_dir = root.join("include");
     fs::create_dir_all(&include_dir).unwrap();
@@ -722,16 +722,88 @@ naming:
     let raw_source = fs::read_to_string(root.join("out/api_wrapper.cpp")).unwrap();
     let go_facade = fs::read_to_string(root.join("out/api_wrapper.go")).unwrap();
 
-    assert!(raw_source.contains("auto result = reinterpret_cast<Api*>(self)->GetThingPtr();"));
     assert!(
-        raw_source.contains("return reinterpret_cast<ThingModelHandle*>(new ThingModel(*result));")
+        raw_source.contains(
+            "return reinterpret_cast<ThingModelHandle*>(reinterpret_cast<Api*>(self)->GetThingPtr());"
+        )
     );
     assert!(raw_source.contains(
-        "return reinterpret_cast<ThingModelHandle*>(new ThingModel(reinterpret_cast<Api*>(self)->GetThingRef()));"
+        "return reinterpret_cast<ThingModelHandle*>(&reinterpret_cast<Api*>(self)->GetThingRef());"
     ));
     assert!(go_facade.contains("func (a *Api) GetThingPtr() *ThingModel {"));
     assert!(go_facade.contains("func (a *Api) GetThingRef() *ThingModel {"));
-    assert!(go_facade.contains("return &ThingModel{ptr: raw}"));
+    assert!(go_facade.contains("return newBorrowedThingModel(raw, a.root)"));
+}
+
+#[test]
+fn keeps_const_model_borrow_returns_in_raw_only() {
+    let root = temp_output_dir("const-model-borrow-raw-only");
+    let include_dir = root.join("include");
+    fs::create_dir_all(&include_dir).unwrap();
+
+    fs::write(
+        include_dir.join("ThingModel.hpp"),
+        r#"
+        class ThingModel {
+        public:
+            ThingModel() = default;
+            ~ThingModel() = default;
+            int GetValue() const;
+            void SetValue(int value);
+        };
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        include_dir.join("Api.hpp"),
+        r#"
+        #include "ThingModel.hpp"
+
+        class Api {
+        public:
+            Api() = default;
+            ~Api() = default;
+            bool IsReady() const;
+            const ThingModel& GetThing() const;
+        };
+        "#,
+    )
+    .unwrap();
+
+    let config_path = root.join("cppgo-wrap.yaml");
+    fs::write(
+        &config_path,
+        r#"
+version: 1
+input:
+  headers:
+    - include/ThingModel.hpp
+    - include/Api.hpp
+output:
+  dir: out
+naming:
+  prefix: cgowrap
+  style: preserve
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(&config_path).unwrap();
+    let ctx = PipelineContext::new(config.clone());
+    generator::generate_all(&ctx, true).unwrap();
+
+    let raw_header = fs::read_to_string(root.join("out/api_wrapper.h")).unwrap();
+    let raw_source = fs::read_to_string(root.join("out/api_wrapper.cpp")).unwrap();
+    let go_facade = fs::read_to_string(root.join("out/api_wrapper.go")).unwrap();
+
+    assert!(raw_header.contains(
+        "const ThingModelHandle* cgowrap_Api_GetThing(const ApiHandle* self);"
+    ));
+    assert!(raw_source.contains(
+        "return reinterpret_cast<const ThingModelHandle*>(&reinterpret_cast<const Api*>(self)->GetThing());"
+    ));
+    assert!(go_facade.contains("func (a *Api) IsReady() bool {"));
+    assert!(!go_facade.contains("func (a *Api) GetThing()"));
 }
 
 #[test]

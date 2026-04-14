@@ -724,7 +724,7 @@ output:
 }
 
 #[test]
-fn renders_model_value_pointer_return_as_owned_handle_copy() {
+fn renders_model_pointer_and_reference_returns_as_borrowed_handles() {
     let root = env::temp_dir().join(format!("c_go_model_value_return_{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(root.join("include")).unwrap();
@@ -774,17 +774,18 @@ output:
         .iter()
         .find(|function| function.cpp_name == "Api::GetChildRef")
         .unwrap();
-    assert_eq!(ptr_getter.returns.kind, IrTypeKind::ModelValue);
-    assert_eq!(ref_getter.returns.kind, IrTypeKind::ModelValue);
-    assert!(source.contains("auto result = reinterpret_cast<Api*>(self)->GetChildPtr();"));
-    assert!(source.contains("return reinterpret_cast<ChildHandle*>(new Child(*result));"));
+    assert_eq!(ptr_getter.returns.kind, IrTypeKind::ModelPointer);
+    assert_eq!(ref_getter.returns.kind, IrTypeKind::ModelReference);
     assert!(source.contains(
-        "return reinterpret_cast<ChildHandle*>(new Child(reinterpret_cast<Api*>(self)->GetChildRef()));"
+        "return reinterpret_cast<ChildHandle*>(reinterpret_cast<Api*>(self)->GetChildPtr());"
+    ));
+    assert!(source.contains(
+        "return reinterpret_cast<ChildHandle*>(&reinterpret_cast<Api*>(self)->GetChildRef());"
     ));
 }
 
 #[test]
-fn renders_model_value_field_accessors_as_snapshot_get_and_explicit_set() {
+fn renders_model_value_field_accessors_as_borrowed_get_and_explicit_set() {
     let root = env::temp_dir().join(format!("c_go_model_value_field_{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(root.join("include")).unwrap();
@@ -827,13 +828,13 @@ output:
         .collect::<Vec<_>>()
         .join("\n");
 
-    assert!(header.contains("ChildHandle* cgowrap_Parent_GetChild(const ParentHandle* self);"));
+    assert!(header.contains("ChildHandle* cgowrap_Parent_GetChild(ParentHandle* self);"));
     assert!(
         header.contains("void cgowrap_Parent_SetChild(ParentHandle* self, ChildHandle* value);")
     );
-    assert!(source.contains(
-        "return reinterpret_cast<ChildHandle*>(new Child(reinterpret_cast<const Parent*>(self)->child));"
-    ));
+    assert!(
+        source.contains("return reinterpret_cast<ChildHandle*>(&reinterpret_cast<Parent*>(self)->child);")
+    );
     assert!(
         source
             .contains("reinterpret_cast<Parent*>(self)->child = *reinterpret_cast<Child*>(value);")

@@ -513,7 +513,7 @@ fn render_callback_export(usage: &CallbackUsage<'_>) -> String {
 
 fn render_facade_class(class: &AnalyzedFacadeClass<'_>) -> String {
     format!(
-        "type {} struct {{\n    ptr *C.{}\n}}\n",
+        "type {} struct {{\n    ptr *C.{}\n    owned bool\n    root *bool\n}}\n",
         class.go_name, class.handle_name
     )
 }
@@ -553,7 +553,7 @@ fn render_facade_constructor(
         out.push('\n');
     }
     out.push_str(&format!(
-        "    if ptr == nil {{\n        return nil, errors.New(\"wrapper returned nil facade handle\")\n    }}\n    return &{}{{ptr: ptr}}, nil\n}}\n",
+        "    if ptr == nil {{\n        return nil, errors.New(\"wrapper returned nil facade handle\")\n    }}\n    return newOwned{}(ptr), nil\n}}\n",
         class.go_name
     ));
     out
@@ -562,8 +562,17 @@ fn render_facade_constructor(
 fn render_facade_close(class: &AnalyzedFacadeClass<'_>) -> String {
     let receiver = receiver_name(&class.go_name);
     format!(
-        "func ({} *{}) Close() {{\n    if {} == nil || {}.ptr == nil {{\n        return\n    }}\n    C.{}({}.ptr)\n    {}.ptr = nil\n}}\n",
-        receiver, class.go_name, receiver, receiver, class.destructor.name, receiver, receiver,
+        "func ({} *{}) Close() {{\n    if {} == nil || {}.ptr == nil {{\n        return\n    }}\n    if !{}.owned {{\n        return\n    }}\n    if {}.root != nil {{\n        *{}.root = true\n    }}\n    C.{}({}.ptr)\n    {}.ptr = nil\n}}\n",
+        receiver,
+        class.go_name,
+        receiver,
+        receiver,
+        receiver,
+        receiver,
+        receiver,
+        class.destructor.name,
+        receiver,
+        receiver,
     )
 }
 
@@ -572,9 +581,27 @@ fn render_handle_helpers(class: &AnalyzedFacadeClass<'_>) -> String {
     let handle = &class.handle_name;
     let receiver = receiver_name(go_name);
     format!(
-        "func require{go_name}Handle({receiver} *{go_name}) *C.{handle} {{\n\
+        "func newOwned{go_name}(ptr *C.{handle}) *{go_name} {{\n\
+         \x20   if ptr == nil {{\n\
+         \x20       return nil\n\
+         \x20   }}\n\
+         \x20   root := new(bool)\n\
+         \x20   return &{go_name}{{ptr: ptr, owned: true, root: root}}\n\
+         }}\n\
+         \n\
+         func newBorrowed{go_name}(ptr *C.{handle}, root *bool) *{go_name} {{\n\
+         \x20   if ptr == nil {{\n\
+         \x20       return nil\n\
+         \x20   }}\n\
+         \x20   return &{go_name}{{ptr: ptr, root: root}}\n\
+         }}\n\
+         \n\
+         func require{go_name}Handle({receiver} *{go_name}) *C.{handle} {{\n\
          \x20   if {receiver} == nil || {receiver}.ptr == nil {{\n\
          \x20       panic(\"{go_name} handle is required but nil\")\n\
+         \x20   }}\n\
+         \x20   if {receiver}.root != nil && *{receiver}.root {{\n\
+         \x20       panic(\"{go_name} handle is closed\")\n\
          \x20   }}\n\
          \x20   return {receiver}.ptr\n\
          }}\n\
@@ -582,6 +609,9 @@ fn render_handle_helpers(class: &AnalyzedFacadeClass<'_>) -> String {
          func optional{go_name}Handle({receiver} *{go_name}) *C.{handle} {{\n\
          \x20   if {receiver} == nil {{\n\
          \x20       return nil\n\
+         \x20   }}\n\
+         \x20   if {receiver}.root != nil && *{receiver}.root {{\n\
+         \x20       panic(\"{go_name} handle is closed\")\n\
          \x20   }}\n\
          \x20   return {receiver}.ptr\n\
          }}\n"
@@ -625,6 +655,10 @@ fn render_general_api_method(
         "    if {receiver} == nil || {receiver}.ptr == nil {{\n        {}\n    }}\n",
         go_nil_return_stmt(&function.returns)
     ));
+    out.push_str(&format!(
+        "    if {receiver}.root != nil && *{receiver}.root {{\n        panic(\"{} handle is closed\")\n    }}\n",
+        class.go_name
+    ));
     out.push_str(&indented_lines(&prep.setup_lines));
     out.push_str(&indented_lines(&prep.defer_lines));
     out.push_str(&render_go_call_return(
@@ -632,6 +666,7 @@ fn render_general_api_method(
         function,
         &call,
         &prep.post_call_lines,
+        Some(format!("{receiver}.root")),
     ));
     out.push_str("}\n");
     out
@@ -646,6 +681,7 @@ fn render_free_function(config: &PipelineContext, function: &IrFunction) -> Stri
     let prep = render_call_prep(config, &params_list);
     let call = format!("C.{}({})", function.name, prep.args.join(", "));
     let go_name = go_facade_export_name(function);
+    let borrow_root = infer_borrow_root_expr(&params_list);
 
     let sig = go_return_sig(config, &function.returns);
     let sig_part = if sig.is_empty() {
@@ -661,6 +697,7 @@ fn render_free_function(config: &PipelineContext, function: &IrFunction) -> Stri
         function,
         &call,
         &prep.post_call_lines,
+        borrow_root,
     ));
     out.push_str("}\n");
     out
@@ -700,6 +737,10 @@ fn render_callback_method(
         "    if {receiver} == nil || {receiver}.ptr == nil {{\n        {}\n    }}\n",
         go_nil_return_stmt(&function.returns)
     ));
+    out.push_str(&format!(
+        "    if {receiver}.root != nil && *{receiver}.root {{\n        panic(\"{} handle is closed\")\n    }}\n",
+        class.go_name
+    ));
     out.push_str(&indented_lines(&prep.setup_lines));
     out.push_str(&indented_lines(&prep.defer_lines));
     out.push_str(&render_go_call_return(
@@ -707,6 +748,7 @@ fn render_callback_method(
         function,
         &call,
         &prep.post_call_lines,
+        Some(format!("{receiver}.root")),
     ));
     out.push_str("}\n");
     out
@@ -718,6 +760,7 @@ fn render_callback_free_function(config: &PipelineContext, function: &IrFunction
     let prep = render_callback_call_prep(config, function, &params_list, 0);
     let call = format!("C.{}_bridge({})", function.name, prep.args.join(", "));
     let go_name = go_facade_export_name(function);
+    let borrow_root = infer_borrow_root_expr(&params_list);
 
     let sig = go_return_sig(config, &function.returns);
     let sig_part = if sig.is_empty() {
@@ -733,6 +776,7 @@ fn render_callback_free_function(config: &PipelineContext, function: &IrFunction
         function,
         &call,
         &prep.post_call_lines,
+        borrow_root,
     ));
     out.push_str("}\n");
     out
@@ -1153,6 +1197,18 @@ fn go_param_supported(config: &PipelineContext, ty: &IrType) -> bool {
     go_param_type(config, ty).is_some()
 }
 
+fn is_const_model_borrow(ty: &IrType) -> bool {
+    matches!(ty.kind, IrTypeKind::ModelReference | IrTypeKind::ModelPointer) && {
+        let base = ty
+            .cpp_type
+            .trim()
+            .trim_end_matches('&')
+            .trim_end_matches('*')
+            .trim();
+        base.starts_with("const ") || base.ends_with(" const")
+    }
+}
+
 fn go_param_type(config: &PipelineContext, ty: &IrType) -> Option<String> {
     match ty.kind {
         IrTypeKind::String | IrTypeKind::CString => Some("string".to_string()),
@@ -1193,6 +1249,9 @@ fn go_param_type(config: &PipelineContext, ty: &IrType) -> Option<String> {
 }
 
 fn go_return_supported(_config: &PipelineContext, ty: &IrType) -> bool {
+    if is_const_model_borrow(ty) {
+        return false;
+    }
     ty.kind == IrTypeKind::Void
         || matches!(
             ty.kind,
@@ -1205,7 +1264,10 @@ fn go_return_supported(_config: &PipelineContext, ty: &IrType) -> bool {
         )
         || (ty.kind == IrTypeKind::Primitive && go_type_for_ir(ty).is_some())
         || (ty.kind == IrTypeKind::Pointer && go_pointer_return_type(ty).is_some())
-        || matches!(ty.kind, IrTypeKind::ModelPointer | IrTypeKind::ModelValue)
+        || matches!(
+            ty.kind,
+            IrTypeKind::ModelReference | IrTypeKind::ModelPointer | IrTypeKind::ModelValue
+        )
 }
 
 fn go_pointer_return_type(ty: &IrType) -> Option<String> {
@@ -1237,7 +1299,7 @@ fn go_model_return_type(config: &PipelineContext, ty: &IrType) -> String {
 fn is_model_wrapper_return(ty: &IrType) -> bool {
     matches!(
         ty.kind,
-        IrTypeKind::ModelPointer | IrTypeKind::ModelValue
+        IrTypeKind::ModelReference | IrTypeKind::ModelPointer | IrTypeKind::ModelValue
     )
 }
 
@@ -1285,6 +1347,20 @@ fn go_nil_return_stmt(ty: &IrType) -> String {
     }
 }
 
+fn infer_borrow_root_expr(params: &[&ir_norm::IrParam]) -> Option<String> {
+    let model_params = params
+        .iter()
+        .filter(|param| {
+            matches!(
+                param.ty.kind,
+                IrTypeKind::ModelReference | IrTypeKind::ModelPointer | IrTypeKind::ModelValue
+            ) && base_model_cpp_type(&param.ty.cpp_type) != "void"
+        })
+        .map(|param| param.name.as_str())
+        .collect::<Vec<_>>();
+    (model_params.len() == 1).then(|| format!("{}.root", model_params[0]))
+}
+
 /// Renders the function body from the C call onwards (call, post_call, nil-check, return).
 /// Does NOT include setup/defer lines or the closing `}`.
 fn render_go_call_return(
@@ -1292,6 +1368,7 @@ fn render_go_call_return(
     function: &IrFunction,
     call: &str,
     post_call_lines: &[String],
+    borrow_root: Option<String>,
 ) -> String {
     let ty = &function.returns;
     match ty.kind {
@@ -1345,9 +1422,15 @@ fn render_go_call_return(
             let c_handle = ty.handle.as_deref().unwrap_or("");
             let mut out = format!("    raw := {call}\n");
             out.push_str(&indented_lines(post_call_lines));
-            out.push_str(&format!(
-                "    if raw == nil {{\n        return nil, errors.New(\"wrapper returned nil model array\")\n    }}\n    defer C.free(unsafe.Pointer(raw))\n    cSlice := (*[{n}]*C.{c_handle})(unsafe.Pointer(raw))\n    result := make([]*{go_name}, {n})\n    for i := range result {{\n        result[i] = &{go_name}{{ptr: cSlice[i]}}\n    }}\n    return result, nil\n"
-            ));
+            if config.known_model_projection(&ty.cpp_type).is_some() {
+                out.push_str(&format!(
+                    "    if raw == nil {{\n        return nil, errors.New(\"wrapper returned nil model array\")\n    }}\n    defer C.free(unsafe.Pointer(raw))\n    cSlice := (*[{n}]*C.{c_handle})(unsafe.Pointer(raw))\n    result := make([]*{go_name}, {n})\n    for i := range result {{\n        result[i] = newOwned{go_name}(cSlice[i])\n    }}\n    return result, nil\n"
+                ));
+            } else {
+                out.push_str(&format!(
+                    "    if raw == nil {{\n        return nil, errors.New(\"wrapper returned nil model array\")\n    }}\n    defer C.free(unsafe.Pointer(raw))\n    cSlice := (*[{n}]*C.{c_handle})(unsafe.Pointer(raw))\n    result := make([]*{go_name}, {n})\n    for i := range result {{\n        result[i] = &{go_name}{{ptr: cSlice[i]}}\n    }}\n    return result, nil\n"
+                ));
+            }
             out
         }
         IrTypeKind::Pointer => {
@@ -1365,9 +1448,21 @@ fn render_go_call_return(
                 out.push_str("    return unsafe.Pointer(raw)\n");
             } else {
                 let ptr_expr = cast_raw_to_projection_handle(config, ty, "raw");
-                out.push_str(&format!(
-                    "    if raw == nil {{\n        return nil\n    }}\n    return &{go_name}{{ptr: {ptr_expr}}}\n"
-                ));
+                if config.known_model_projection(&ty.cpp_type).is_some() {
+                    let helper = if ty.kind == IrTypeKind::ModelValue {
+                        format!("newOwned{go_name}({ptr_expr})")
+                    } else {
+                        let root_expr = borrow_root.unwrap_or_else(|| "nil".to_string());
+                        format!("newBorrowed{go_name}({ptr_expr}, {root_expr})")
+                    };
+                    out.push_str(&format!(
+                        "    if raw == nil {{\n        return nil\n    }}\n    return {helper}\n"
+                    ));
+                } else {
+                    out.push_str(&format!(
+                        "    if raw == nil {{\n        return nil\n    }}\n    return &{go_name}{{ptr: {ptr_expr}}}\n"
+                    ));
+                }
             }
             out
         }
@@ -2795,7 +2890,9 @@ mod tests {
         .unwrap();
         let contents = &files[0].contents;
         assert!(
-            contents.contains("type DCSHISTORY struct {\n    ptr *C.DCSHISTORYHandle\n}"),
+            contents.contains(
+                "type DCSHISTORY struct {\n    ptr *C.DCSHISTORYHandle\n    owned bool\n    root *bool\n}"
+            ),
             "expected stable public handle in class wrapper but got:\n{contents}"
         );
     }
@@ -2883,9 +2980,175 @@ mod tests {
             "expected nil check but got:\n{code}"
         );
         assert!(
-            code.contains("&ThingModel{ptr: raw}"),
-            "expected &ThingModel{{ptr: raw}} but got:\n{code}"
+            code.contains("return newOwnedThingModel(raw)"),
+            "expected newOwnedThingModel(raw) but got:\n{code}"
         );
+    }
+
+    #[test]
+    fn model_pointer_return_renders_borrowed_wrap_pattern() {
+        let config = test_context_with_known_model();
+        let self_param = IrParam {
+            name: "self".to_string(),
+            ty: IrType {
+                kind: IrTypeKind::Opaque,
+                cpp_type: "Api".to_string(),
+                c_type: "ApiHandle*".to_string(),
+                handle: Some("ApiHandle".to_string()),
+            },
+        };
+        let void_type = IrType {
+            kind: IrTypeKind::Void,
+            cpp_type: "void".to_string(),
+            c_type: "void".to_string(),
+            handle: None,
+        };
+        let constructor = IrFunction {
+            name: "cgowrap_Api_new".to_string(),
+            kind: IrFunctionKind::Constructor,
+            cpp_name: "Api".to_string(),
+            method_of: None,
+            owner_cpp_type: Some("Api".to_string()),
+            is_const: None,
+            field_accessor: None,
+            returns: IrType {
+                kind: IrTypeKind::Opaque,
+                cpp_type: "Api*".to_string(),
+                c_type: "ApiHandle*".to_string(),
+                handle: Some("ApiHandle".to_string()),
+            },
+            params: vec![],
+        };
+        let destructor = IrFunction {
+            name: "cgowrap_Api_delete".to_string(),
+            kind: IrFunctionKind::Destructor,
+            cpp_name: "Api".to_string(),
+            method_of: None,
+            owner_cpp_type: Some("Api".to_string()),
+            is_const: None,
+            field_accessor: None,
+            returns: void_type,
+            params: vec![self_param.clone()],
+        };
+        let function = IrFunction {
+            name: "cgowrap_Api_GetThing".to_string(),
+            kind: IrFunctionKind::Method,
+            cpp_name: "Api::GetThing".to_string(),
+            method_of: Some("Api".to_string()),
+            owner_cpp_type: Some("Api".to_string()),
+            is_const: Some(false),
+            field_accessor: None,
+            returns: model_type(IrTypeKind::ModelPointer, "ThingModel"),
+            params: vec![self_param],
+        };
+
+        assert!(method_supported(&config, &function));
+
+        let class = AnalyzedFacadeClass {
+            go_name: "Api".to_string(),
+            handle_name: "ApiHandle".to_string(),
+            constructors: vec![&constructor],
+            destructor: &destructor,
+            methods: vec![&function],
+        };
+        let code = render_general_api_method(&config, &class, &function);
+        assert!(
+            code.contains("return newBorrowedThingModel(raw, a.root)"),
+            "expected newBorrowedThingModel(raw, a.root) but got:\n{code}"
+        );
+    }
+
+    #[test]
+    fn const_model_borrow_returns_are_not_supported_in_go_facade() {
+        let config = test_context_with_known_model();
+        let ty = IrType {
+            kind: IrTypeKind::ModelReference,
+            cpp_type: "const ThingModel&".to_string(),
+            c_type: "const ThingModelHandle*".to_string(),
+            handle: Some("ThingModelHandle".to_string()),
+        };
+        assert!(!go_return_supported(&config, &ty));
+
+        let function = IrFunction {
+            name: "cgowrap_Api_GetThing".to_string(),
+            kind: IrFunctionKind::Method,
+            cpp_name: "Api::GetThing".to_string(),
+            method_of: Some("ApiHandle".to_string()),
+            owner_cpp_type: Some("Api".to_string()),
+            is_const: Some(true),
+            field_accessor: None,
+            returns: ty,
+            params: vec![IrParam {
+                name: "self".to_string(),
+                ty: IrType {
+                    kind: IrTypeKind::Opaque,
+                    cpp_type: "const Api*".to_string(),
+                    c_type: "const ApiHandle*".to_string(),
+                    handle: Some("ApiHandle".to_string()),
+                },
+            }],
+        };
+        assert!(!method_supported(&config, &function));
+    }
+
+    #[test]
+    fn free_function_borrowed_return_inherits_unique_model_param_root() {
+        let config = test_context_with_known_model();
+        let function = IrFunction {
+            name: "cgowrap_GetThingChild".to_string(),
+            kind: IrFunctionKind::Function,
+            cpp_name: "GetThingChild".to_string(),
+            method_of: None,
+            owner_cpp_type: None,
+            is_const: None,
+            field_accessor: None,
+            returns: model_type(IrTypeKind::ModelPointer, "ThingModel"),
+            params: vec![IrParam {
+                name: "parent".to_string(),
+                ty: model_type(IrTypeKind::ModelPointer, "ThingModel"),
+            }],
+        };
+
+        let code = render_free_function(&config, &function);
+        assert!(
+            code.contains("return newBorrowedThingModel(raw, parent.root)"),
+            "expected newBorrowedThingModel(raw, parent.root) but got:\n{code}"
+        );
+    }
+
+    #[test]
+    fn class_helpers_track_owned_and_borrowed_lifetimes() {
+        let destructor = IrFunction {
+            name: "cgowrap_ThingModel_delete".to_string(),
+            kind: IrFunctionKind::Destructor,
+            cpp_name: "~ThingModel".to_string(),
+            method_of: Some("ThingModelHandle".to_string()),
+            owner_cpp_type: Some("ThingModel".to_string()),
+            is_const: None,
+            field_accessor: None,
+            returns: IrType {
+                kind: IrTypeKind::Void,
+                cpp_type: "void".to_string(),
+                c_type: "void".to_string(),
+                handle: None,
+            },
+            params: vec![],
+        };
+        let class = AnalyzedFacadeClass {
+            go_name: "ThingModel".to_string(),
+            handle_name: "ThingModelHandle".to_string(),
+            constructors: vec![],
+            destructor: &destructor,
+            methods: vec![],
+        };
+        let helpers = render_handle_helpers(&class);
+        let close = render_facade_close(&class);
+        assert!(helpers.contains("root := new(bool)"));
+        assert!(helpers.contains("return &ThingModel{ptr: ptr, owned: true, root: root}"));
+        assert!(helpers.contains("return &ThingModel{ptr: ptr, root: root}"));
+        assert!(helpers.contains("panic(\"ThingModel handle is closed\")"));
+        assert!(close.contains("if !t.owned {"));
+        assert!(close.contains("*t.root = true"));
     }
 
     #[test]
@@ -2993,8 +3256,8 @@ mod tests {
             "unexpected duplicate DCSHISTORY wrapper:\n{contents}"
         );
         assert!(
-            contents.contains("return &DCSHISTORY{ptr: raw}"),
-            "expected direct stable-handle wrap but got:\n{contents}"
+            contents.contains("return newOwnedDCSHISTORY(raw)"),
+            "expected stable-handle helper wrap but got:\n{contents}"
         );
         assert!(
             !contents.contains("_DCSHISTORYHandle"),

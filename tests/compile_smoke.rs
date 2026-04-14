@@ -500,7 +500,7 @@ output:
 }
 
 #[test]
-fn generated_wrapper_compiles_for_model_value_snapshot_copy_semantics() {
+fn generated_wrapper_compiles_for_model_value_borrow_semantics() {
     let root = temp_output_dir("model_value_snapshot");
     fs::create_dir_all(root.join("include")).unwrap();
     fs::write(
@@ -549,22 +549,17 @@ output:
             ChildHandle* initial = cgowrap_Parent_GetChild(parent);
             if (initial == nullptr) return 11;
             cgowrap_Child_SetValue(initial, 3);
-            cgowrap_Parent_SetChild(parent, initial);
-            cgowrap_Child_delete(initial);
+            if (cgowrap_Child_GetValue(initial) != 3) return 12;
 
-            ChildHandle* snapshot = cgowrap_Parent_GetChild(parent);
-            if (snapshot == nullptr) return 12;
-            cgowrap_Child_SetValue(snapshot, 9);
-            ChildHandle* unchanged = cgowrap_Parent_GetChild(parent);
-            if (unchanged == nullptr) return 13;
-            if (cgowrap_Child_GetValue(unchanged) != 3) return 14;
-            cgowrap_Child_delete(unchanged);
-            cgowrap_Parent_SetChild(parent, snapshot);
-            ChildHandle* updated = cgowrap_Parent_GetChild(parent);
-            if (updated == nullptr) return 15;
-            if (cgowrap_Child_GetValue(updated) != 9) return 16;
-            cgowrap_Child_delete(updated);
-            cgowrap_Child_delete(snapshot);
+            ChildHandle* borrowed = cgowrap_Parent_GetChild(parent);
+            if (borrowed == nullptr) return 13;
+            if (cgowrap_Child_GetValue(borrowed) != 3) return 14;
+            cgowrap_Child_SetValue(borrowed, 9);
+            if (cgowrap_Child_GetValue(initial) != 9) return 15;
+
+            ChildHandle* latest = cgowrap_Parent_GetChild(parent);
+            if (latest == nullptr) return 16;
+            if (cgowrap_Child_GetValue(latest) != 9) return 17;
 
             cgowrap_Parent_delete(parent);
             return 0;

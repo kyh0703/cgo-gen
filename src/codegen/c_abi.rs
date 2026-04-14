@@ -599,6 +599,10 @@ fn render_callable_body(function: &IrFunction, target: &str, arg_start: usize) -
                 "    auto _tmp = {target}({args});\n    {handle}** _r = static_cast<{handle}**>(std::malloc({n} * sizeof({handle}*)));\n    if (_r == nullptr) {{\n        return nullptr;\n    }}\n    for (int _i = 0; _i < {n}; _i++) {{\n        _r[_i] = reinterpret_cast<{handle}*>(new {base_cpp}(_tmp[_i]));\n    }}\n    return _r;\n"
             )
         }
+        IrTypeKind::ModelReference => format!(
+            "    return reinterpret_cast<{}>(&{}({}));\n",
+            function.returns.c_type, target, args
+        ),
         IrTypeKind::ModelValue => render_model_value_return(function, target, &args),
         _ if function.returns.handle.is_some() => format!(
             "    return reinterpret_cast<{}>({}({}));\n",
@@ -631,6 +635,10 @@ fn render_field_getter_body(function: &IrFunction, receiver: &str, field_name: &
                 "    {handle}** _r = static_cast<{handle}**>(std::malloc({n} * sizeof({handle}*)));\n    if (_r == nullptr) {{\n        return nullptr;\n    }}\n    for (int _i = 0; _i < {n}; _i++) {{\n        _r[_i] = reinterpret_cast<{handle}*>(new {base_cpp}({receiver}->{field_name}[_i]));\n    }}\n    return _r;\n"
             )
         }
+        IrTypeKind::ModelPointer | IrTypeKind::ModelReference => format!(
+            "    return reinterpret_cast<{}>(&{receiver}->{field_name});\n",
+            function.returns.c_type
+        ),
         IrTypeKind::ModelValue => format!(
             "    return reinterpret_cast<{}>(new {}({receiver}->{field_name}));\n",
             function.returns.c_type,

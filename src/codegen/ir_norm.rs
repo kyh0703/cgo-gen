@@ -687,13 +687,37 @@ fn make_struct_field_getter(
     returns: IrType,
 ) -> IrFunction {
     let method_name = format!("Get{}", struct_field_accessor_suffix(&field.name));
+    let returns = if returns.kind == IrTypeKind::ModelValue {
+        IrType {
+            kind: IrTypeKind::ModelPointer,
+            cpp_type: format!("{}*", base_model_cpp_type(&returns.cpp_type)),
+            ..returns
+        }
+    } else {
+        returns
+    };
+    let getter_self_ty = if returns.kind == IrTypeKind::ModelPointer {
+        IrType {
+            kind: IrTypeKind::Opaque,
+            cpp_type: format!("{}*", qualified),
+            c_type: format!("{handle_name}*"),
+            handle: Some(handle_name.to_string()),
+        }
+    } else {
+        IrType {
+            kind: IrTypeKind::Opaque,
+            cpp_type: format!("const {}*", qualified),
+            c_type: format!("const {handle_name}*"),
+            handle: Some(handle_name.to_string()),
+        }
+    };
     IrFunction {
         name: symbol_name(config, namespace, owner_name, &method_name),
         kind: IrFunctionKind::Method,
         cpp_name: format!("{qualified}::{method_name}"),
         method_of: Some(handle_name.to_string()),
         owner_cpp_type: Some(qualified.to_string()),
-        is_const: Some(true),
+        is_const: Some(returns.kind != IrTypeKind::ModelPointer),
         field_accessor: Some(IrFieldAccessor {
             field_name: field.name.clone(),
             access: FieldAccessKind::Get,
@@ -701,12 +725,7 @@ fn make_struct_field_getter(
         returns,
         params: vec![IrParam {
             name: "self".to_string(),
-            ty: IrType {
-                kind: IrTypeKind::Opaque,
-                cpp_type: format!("const {}*", qualified),
-                c_type: format!("const {handle_name}*"),
-                handle: Some(handle_name.to_string()),
-            },
+            ty: getter_self_ty,
         }],
     }
 }
@@ -1112,7 +1131,7 @@ fn normalize_return_type_with_canonical(
     known_enum_types: &BTreeSet<String>,
     known_records: &[IrRecord],
 ) -> Result<IrType> {
-    let mut ty = normalize_type_with_canonical(
+    let ty = normalize_type_with_canonical(
         config,
         cpp_type,
         canonical_type,
@@ -1123,10 +1142,9 @@ fn normalize_return_type_with_canonical(
     if matches!(
         ty.kind,
         IrTypeKind::ModelReference | IrTypeKind::ModelPointer
-    ) && !is_abstract_model_type(&ty.cpp_type, abstract_types)
-        && base_model_cpp_type(&ty.cpp_type) != "void"
+    ) && is_abstract_model_type(&ty.cpp_type, abstract_types)
     {
-        ty.kind = IrTypeKind::ModelValue;
+        return Ok(ty);
     }
     Ok(ty)
 }
@@ -1436,7 +1454,11 @@ fn normalize_known_record_type(cpp_type: &str, known_records: &[IrRecord]) -> Op
     let record = known_record(trimmed, known_records)?;
     let shape = raw_type_shape(trimmed);
     let cpp_type = canonicalized_known_record_cpp_type(trimmed, &record.cpp_type);
-    let c_type = format!("{}*", record.handle_name);
+    let c_type = if is_const_qualified_model_type(trimmed) {
+        format!("const {}*", record.handle_name)
+    } else {
+        format!("{}*", record.handle_name)
+    };
     match shape {
         "pointer" => Some(IrType {
             kind: IrTypeKind::ModelPointer,
@@ -1457,6 +1479,15 @@ fn normalize_known_record_type(cpp_type: &str, known_records: &[IrRecord]) -> Op
             handle: Some(record.handle_name.clone()),
         }),
     }
+}
+
+fn is_const_qualified_model_type(value: &str) -> bool {
+    let trimmed = value.trim();
+    let base = trimmed
+        .trim_end_matches('&')
+        .trim_end_matches('*')
+        .trim();
+    base.starts_with("const ") || base.ends_with(" const")
 }
 
 fn known_record<'a>(value: &str, known_records: &'a [IrRecord]) -> Option<&'a IrRecord> {
@@ -1663,7 +1694,11 @@ fn normalize_type(cpp_type: &str, callback_names: &BTreeSet<String>) -> Result<I
             Ok(IrType {
                 kind: IrTypeKind::ModelReference,
                 cpp_type: trimmed.to_string(),
-                c_type: format!("{handle_name}*"),
+                c_type: if is_const_qualified_model_type(trimmed) {
+                    format!("const {handle_name}*")
+                } else {
+                    format!("{handle_name}*")
+                },
                 handle: Some(handle_name),
             })
         }
@@ -1672,7 +1707,11 @@ fn normalize_type(cpp_type: &str, callback_names: &BTreeSet<String>) -> Result<I
             Ok(IrType {
                 kind: IrTypeKind::ModelPointer,
                 cpp_type: trimmed.to_string(),
-                c_type: format!("{handle_name}*"),
+                c_type: if is_const_qualified_model_type(trimmed) {
+                    format!("const {handle_name}*")
+                } else {
+                    format!("{handle_name}*")
+                },
                 handle: Some(handle_name),
             })
         }
@@ -2173,7 +2212,7 @@ mod tests {
     }
 
     #[test]
-    fn normalizes_model_pointer_returns_as_model_value() {
+    fn preserves_model_pointer_returns_as_model_pointer() {
         let callback_names = BTreeSet::new();
         let ty = normalize_return_type_with_canonical(
             &Config::default(),
@@ -2186,7 +2225,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(ty.kind, IrTypeKind::ModelValue);
+        assert_eq!(ty.kind, IrTypeKind::ModelPointer);
         assert_eq!(ty.c_type, "ThingModelHandle*");
     }
 
