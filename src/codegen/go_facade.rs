@@ -1197,21 +1197,6 @@ fn go_param_supported(config: &PipelineContext, ty: &IrType) -> bool {
     go_param_type(config, ty).is_some()
 }
 
-fn is_const_model_borrow(ty: &IrType) -> bool {
-    matches!(
-        ty.kind,
-        IrTypeKind::ModelReference | IrTypeKind::ModelPointer
-    ) && {
-        let base = ty
-            .cpp_type
-            .trim()
-            .trim_end_matches('&')
-            .trim_end_matches('*')
-            .trim();
-        base.starts_with("const ") || base.ends_with(" const")
-    }
-}
-
 fn go_param_type(config: &PipelineContext, ty: &IrType) -> Option<String> {
     match ty.kind {
         IrTypeKind::String | IrTypeKind::CString => Some("string".to_string()),
@@ -1252,9 +1237,6 @@ fn go_param_type(config: &PipelineContext, ty: &IrType) -> Option<String> {
 }
 
 fn go_return_supported(_config: &PipelineContext, ty: &IrType) -> bool {
-    if is_const_model_borrow(ty) {
-        return false;
-    }
     ty.kind == IrTypeKind::Void
         || matches!(
             ty.kind,
@@ -3062,7 +3044,7 @@ mod tests {
     }
 
     #[test]
-    fn const_model_borrow_returns_are_not_supported_in_go_facade() {
+    fn const_model_borrow_returns_are_supported_in_go_facade() {
         let config = test_context_with_known_model();
         let ty = IrType {
             kind: IrTypeKind::ModelReference,
@@ -3070,7 +3052,7 @@ mod tests {
             c_type: "const ThingModelHandle*".to_string(),
             handle: Some("ThingModelHandle".to_string()),
         };
-        assert!(!go_return_supported(&config, &ty));
+        assert!(go_return_supported(&config, &ty));
 
         let function = IrFunction {
             name: "cgowrap_Api_GetThing".to_string(),
@@ -3091,7 +3073,93 @@ mod tests {
                 },
             }],
         };
-        assert!(!method_supported(&config, &function));
+        assert!(method_supported(&config, &function));
+    }
+
+    #[test]
+    fn const_model_borrow_return_renders_borrowed_wrap_pattern() {
+        let config = test_context_with_known_model();
+        let self_param = IrParam {
+            name: "self".to_string(),
+            ty: IrType {
+                kind: IrTypeKind::Opaque,
+                cpp_type: "const Api*".to_string(),
+                c_type: "const ApiHandle*".to_string(),
+                handle: Some("ApiHandle".to_string()),
+            },
+        };
+        let void_type = IrType {
+            kind: IrTypeKind::Void,
+            cpp_type: "void".to_string(),
+            c_type: "void".to_string(),
+            handle: None,
+        };
+        let constructor = IrFunction {
+            name: "cgowrap_Api_new".to_string(),
+            kind: IrFunctionKind::Constructor,
+            cpp_name: "Api".to_string(),
+            method_of: None,
+            owner_cpp_type: Some("Api".to_string()),
+            is_const: None,
+            field_accessor: None,
+            returns: IrType {
+                kind: IrTypeKind::Opaque,
+                cpp_type: "Api*".to_string(),
+                c_type: "ApiHandle*".to_string(),
+                handle: Some("ApiHandle".to_string()),
+            },
+            params: vec![],
+        };
+        let destructor = IrFunction {
+            name: "cgowrap_Api_delete".to_string(),
+            kind: IrFunctionKind::Destructor,
+            cpp_name: "Api".to_string(),
+            method_of: None,
+            owner_cpp_type: Some("Api".to_string()),
+            is_const: None,
+            field_accessor: None,
+            returns: void_type,
+            params: vec![IrParam {
+                name: "self".to_string(),
+                ty: IrType {
+                    kind: IrTypeKind::Opaque,
+                    cpp_type: "Api".to_string(),
+                    c_type: "ApiHandle*".to_string(),
+                    handle: Some("ApiHandle".to_string()),
+                },
+            }],
+        };
+        let function = IrFunction {
+            name: "cgowrap_Api_GetThing".to_string(),
+            kind: IrFunctionKind::Method,
+            cpp_name: "Api::GetThing".to_string(),
+            method_of: Some("Api".to_string()),
+            owner_cpp_type: Some("Api".to_string()),
+            is_const: Some(true),
+            field_accessor: None,
+            returns: IrType {
+                kind: IrTypeKind::ModelReference,
+                cpp_type: "const ThingModel&".to_string(),
+                c_type: "const ThingModelHandle*".to_string(),
+                handle: Some("ThingModelHandle".to_string()),
+            },
+            params: vec![self_param],
+        };
+
+        assert!(method_supported(&config, &function));
+
+        let class = AnalyzedFacadeClass {
+            go_name: "Api".to_string(),
+            handle_name: "ApiHandle".to_string(),
+            constructors: vec![&constructor],
+            destructor: &destructor,
+            methods: vec![&function],
+        };
+        let code = render_general_api_method(&config, &class, &function);
+        assert!(
+            code.contains("return newBorrowedThingModel(raw, a.root)"),
+            "expected newBorrowedThingModel(raw, a.root) but got:\n{code}"
+        );
     }
 
     #[test]

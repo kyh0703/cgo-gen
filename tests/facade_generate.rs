@@ -734,7 +734,7 @@ naming:
 }
 
 #[test]
-fn keeps_const_model_borrow_returns_in_raw_only() {
+fn renders_const_model_borrow_returns_in_go_facade() {
     let root = temp_output_dir("const-model-borrow-raw-only");
     let include_dir = root.join("include");
     fs::create_dir_all(&include_dir).unwrap();
@@ -801,7 +801,8 @@ naming:
         "return reinterpret_cast<const ThingModelHandle*>(&reinterpret_cast<const Api*>(self)->GetThing());"
     ));
     assert!(go_facade.contains("func (a *Api) IsReady() bool {"));
-    assert!(!go_facade.contains("func (a *Api) GetThing()"));
+    assert!(go_facade.contains("func (a *Api) GetThing() *ThingModel {"));
+    assert!(go_facade.contains("return newBorrowedThingModel(raw, a.root)"));
 }
 
 #[test]
