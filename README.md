@@ -35,7 +35,33 @@ That path exercises the actual supported flow in this repository:
 - a Clang-compatible compile environment for non-trivial headers
 - Go toolchain only if you plan to build generated Go packages
 
-This crate uses `clang-sys` with `clang_18_0`, so a Clang 18 era `libclang` setup is the safest target.
+### Clang And libclang
+
+`cgo-gen` uses `libclang` to preprocess, parse, and type-check C/C++ headers.
+
+- if `libclang` is installed in a non-standard location, set `LIBCLANG_PATH`
+
+Typical install paths:
+
+- Windows
+  - `winget install LLVM.LLVM`
+  - if needed, set `LIBCLANG_PATH` to the LLVM `bin` directory, for example `D:\programs\LLVM\bin`
+  - for Mingw64, `pacman -S mingw64/mingw-w64-x86_64-clang`
+- macOS
+  - Homebrew: `brew install llvm`
+  - MacPorts: `port install clang`
+- Debian/Ubuntu
+  - `apt install libclang-dev`
+  - install `clang` as well if you need the full Clang CLI locally
+- Arch
+  - `pacman -S clang`
+- Fedora
+  - `dnf install clang-devel`
+- OpenBSD
+  - `pkg_add llvm`
+  - if needed, set `LIBCLANG_PATH=/usr/local/lib`
+
+If your package manager does not provide a recent enough Clang/libclang, build from source. For this project you only need the Clang pieces, not the full LLVM optional stack.
 
 ## Install
 
@@ -75,28 +101,29 @@ cgo-gen ir --config path/to/config.yaml --format yaml
 
 ## Minimal Config
 
-The smallest practical config is usually one entry header plus `compile_commands.json`:
+The supported config surface is intentionally small:
 
 ```yaml
 version: 1
 
 input:
-  headers:
-    - path/to/foo.hpp
-  compile_commands: path/to/compile_commands.json
+  dir: path/to/include
+  clang_args:
+    - -Ipath/to/include
+    - -std=c++17
+  ldflags:
+    - -Lpath/to/lib
+    - -lfoo
 
 output:
   dir: gen
-
-naming:
-  prefix: cgowrap
-  style: snake_case
 ```
 
 Key behaviors:
 
 - relative paths are resolved from the config file location
 - unknown keys are rejected at load time
+- `input.dir` is scanned recursively
 - generated `.go`, `.h`, `.cpp`, and optional `.ir.yaml` files are written together under `output.dir`
 - when `--go-module <module-path>` is set, `generate` also writes `go.mod` and `build_flags.go`
 
@@ -135,30 +162,23 @@ Current behavior:
 - `#cgo CXXFLAGS` are exported from raw `input.clang_args` only
 - exported `CXXFLAGS` allow only `-I`, `-isystem`, `-D`, and `-std=...`
 - when `input.ldflags` is set, `build_flags.go` also emits `#cgo LDFLAGS`
-- `compile_commands.json` helps parsing, but it is not exported into Go package metadata
 
 Use this mode when the generated directory itself should be imported and built as a Go package.
 
 ## Config Options That Matter Most
 
-You do not need every knob to get started. These are the main ones:
+You do not need many knobs to get started. These are the supported ones:
 
-- `input.headers`: explicit public entry headers
-- `input.dir`: generate one wrapper set per header directly under that directory
-- `input.header_dirs`: recursively expand headers into `input.headers`
-- `input.dirs`: recursively expand headers and translation units
-- `input.translation_units`: explicit parse entries; takes precedence over `input.headers`
-- `input.compile_commands`: import compile flags and source TU discovery from `compile_commands.json`
+- `input.dir`: recursive input root used for header discovery and translation-unit discovery
 - `input.clang_args`: extra libclang flags such as `-I...`, `-isystem...`, `-D...`, `-std=...`
 - `input.ldflags`: linker flags forwarded into generated `build_flags.go`
 - `output.dir`: output directory
-- `output.header`, `output.source`, `output.ir`: explicit filenames for single-header generation
-- `naming.prefix`: generated C symbol prefix
-- `naming.style`: `preserve` or the current lowercase/snake-style fallback used by checked-in configs
+- `output.header`, `output.source`, `output.ir`: optional explicit filenames for single-header generation
 
 Important caveats:
 
 - if you use multi-header generation, leave `output.header`, `output.source`, and `output.ir` at their defaults
+- generated C symbol naming is fixed in source and is not configurable via YAML
 - `input.clang_args` and `input.ldflags` resolve relative paths from the config file directory
 - env expansion supports `$VAR`, `$(VAR)`, and `${VAR}` only
 
@@ -180,20 +200,6 @@ make -C examples/simple-go-struct gen
 make -C examples/simple-go-struct build
 make -C examples/simple-go-struct run
 ```
-
-## Repository Layout
-
-User-facing entry points:
-
-- `src/cli.rs`: CLI contract and subcommands
-- `src/config.rs`: YAML config loading and path resolution
-- `src/parsing/`: libclang parsing and translation-unit discovery
-- `src/analysis/`: derived model projection analysis
-- `src/codegen/`: IR normalization plus C ABI and Go facade rendering
-- `src/pipeline/`: runtime pipeline context
-- `examples/`: maintained end-to-end sample consumers
-
-The architecture summary in [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) is useful if you need internals, but the code and CLI behavior are the real contract.
 
 ## Supported Today
 

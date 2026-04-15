@@ -6,7 +6,14 @@ Top-level sections:
 - `version`
 - `input.*`
 - `output.*`
-- `naming.*`
+
+Current supported input keys:
+- `input.dir`
+- `input.clang_args`
+- `input.ldflags`
+
+`input.dir` is scanned recursively.
+Wrapper symbol naming is fixed in source and is no longer configurable.
 
 Relative paths are resolved from the config file location.
 Unknown keys are rejected when the config is loaded.
