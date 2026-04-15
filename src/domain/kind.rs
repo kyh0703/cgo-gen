@@ -71,4 +71,8 @@ pub enum FieldAccessKind {
     Get,
     #[serde(rename = "set")]
     Set,
+    #[serde(rename = "get_at")]
+    GetAt,
+    #[serde(rename = "set_at")]
+    SetAt,
 }

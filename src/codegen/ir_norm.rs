@@ -62,6 +62,8 @@ pub struct IrFunction {
 pub struct IrFieldAccessor {
     pub field_name: String,
     pub access: FieldAccessKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub array_len: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -646,6 +648,8 @@ fn normalize_struct_fields(
             continue;
         }
 
+        let is_fixed_model_array = field_ty.kind == IrTypeKind::FixedModelArray;
+
         functions.push(make_struct_field_getter(
             config,
             &record.namespace,
@@ -656,11 +660,24 @@ fn normalize_struct_fields(
             field_ty.clone(),
         ));
 
+        if is_fixed_model_array {
+            functions.push(make_struct_field_indexed_getter(
+                config,
+                &record.namespace,
+                &record.name,
+                &qualified,
+                handle_name,
+                field,
+                &field_ty,
+            ));
+        }
+
         let setter_name = format!("Set{suffix}");
         if existing_methods.contains(setter_name.as_str()) || field_is_read_only(field) {
             continue;
         }
 
+        let setter_field_ty = field_ty.clone();
         functions.push(make_struct_field_setter(
             config,
             &record.namespace,
@@ -668,8 +685,20 @@ fn normalize_struct_fields(
             &qualified,
             handle_name,
             field,
-            field_ty,
+            setter_field_ty,
         ));
+
+        if is_fixed_model_array {
+            functions.push(make_struct_field_indexed_setter(
+                config,
+                &record.namespace,
+                &record.name,
+                &qualified,
+                handle_name,
+                field,
+                &field_ty,
+            ));
+        }
     }
 
     Ok(functions)
@@ -719,6 +748,7 @@ fn make_struct_field_getter(
         field_accessor: Some(IrFieldAccessor {
             field_name: field.name.clone(),
             access: FieldAccessKind::Get,
+            array_len: None,
         }),
         returns,
         params: vec![IrParam {
@@ -748,6 +778,7 @@ fn make_struct_field_setter(
         field_accessor: Some(IrFieldAccessor {
             field_name: field.name.clone(),
             access: FieldAccessKind::Set,
+            array_len: None,
         }),
         returns: primitive_type("void"),
         params: vec![
@@ -763,6 +794,108 @@ fn make_struct_field_setter(
             IrParam {
                 name: "value".to_string(),
                 ty: field_ty,
+            },
+        ],
+    }
+}
+
+fn make_struct_field_indexed_getter(
+    config: &Config,
+    namespace: &[String],
+    owner_name: &str,
+    qualified: &str,
+    handle_name: &str,
+    field: &CppField,
+    field_ty: &IrType,
+) -> IrFunction {
+    let method_name = format!("Get{}At", struct_field_accessor_suffix(&field.name));
+    let elem_cpp = fixed_array_elem_type(&field_ty.cpp_type).unwrap_or("void");
+    let elem_handle = field_ty.handle.clone().unwrap_or_default();
+    let array_len = fixed_array_length(&field_ty.cpp_type).unwrap_or(0);
+    IrFunction {
+        name: symbol_name(config, namespace, owner_name, &method_name),
+        kind: IrFunctionKind::Method,
+        cpp_name: format!("{qualified}::{method_name}"),
+        method_of: Some(handle_name.to_string()),
+        owner_cpp_type: Some(qualified.to_string()),
+        is_const: Some(true),
+        field_accessor: Some(IrFieldAccessor {
+            field_name: field.name.clone(),
+            access: FieldAccessKind::GetAt,
+            array_len: Some(array_len),
+        }),
+        returns: IrType {
+            kind: IrTypeKind::ModelPointer,
+            cpp_type: format!("{elem_cpp}*"),
+            c_type: format!("{elem_handle}*"),
+            handle: Some(elem_handle),
+        },
+        params: vec![
+            IrParam {
+                name: "self".to_string(),
+                ty: IrType {
+                    kind: IrTypeKind::Opaque,
+                    cpp_type: format!("const {}*", qualified),
+                    c_type: format!("const {handle_name}*"),
+                    handle: Some(handle_name.to_string()),
+                },
+            },
+            IrParam {
+                name: "index".to_string(),
+                ty: primitive_type("int"),
+            },
+        ],
+    }
+}
+
+fn make_struct_field_indexed_setter(
+    config: &Config,
+    namespace: &[String],
+    owner_name: &str,
+    qualified: &str,
+    handle_name: &str,
+    field: &CppField,
+    field_ty: &IrType,
+) -> IrFunction {
+    let method_name = format!("Set{}At", struct_field_accessor_suffix(&field.name));
+    let elem_cpp = fixed_array_elem_type(&field_ty.cpp_type).unwrap_or("void");
+    let elem_handle = field_ty.handle.clone().unwrap_or_default();
+    let array_len = fixed_array_length(&field_ty.cpp_type).unwrap_or(0);
+    IrFunction {
+        name: symbol_name(config, namespace, owner_name, &method_name),
+        kind: IrFunctionKind::Method,
+        cpp_name: format!("{qualified}::{method_name}"),
+        method_of: Some(handle_name.to_string()),
+        owner_cpp_type: Some(qualified.to_string()),
+        is_const: Some(false),
+        field_accessor: Some(IrFieldAccessor {
+            field_name: field.name.clone(),
+            access: FieldAccessKind::SetAt,
+            array_len: Some(array_len),
+        }),
+        returns: primitive_type("void"),
+        params: vec![
+            IrParam {
+                name: "self".to_string(),
+                ty: IrType {
+                    kind: IrTypeKind::Opaque,
+                    cpp_type: format!("{}*", qualified),
+                    c_type: format!("{handle_name}*"),
+                    handle: Some(handle_name.to_string()),
+                },
+            },
+            IrParam {
+                name: "index".to_string(),
+                ty: primitive_type("int"),
+            },
+            IrParam {
+                name: "value".to_string(),
+                ty: IrType {
+                    kind: IrTypeKind::ModelPointer,
+                    cpp_type: format!("{elem_cpp}*"),
+                    c_type: format!("{elem_handle}*"),
+                    handle: Some(elem_handle),
+                },
             },
         ],
     }

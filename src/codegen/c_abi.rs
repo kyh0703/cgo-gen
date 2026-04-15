@@ -695,6 +695,12 @@ fn render_method_body(function: &IrFunction) -> String {
             FieldAccessKind::Set => {
                 render_field_setter_body(function, &receiver, &accessor.field_name)
             }
+            FieldAccessKind::GetAt => {
+                render_indexed_field_getter_body(function, accessor, &receiver)
+            }
+            FieldAccessKind::SetAt => {
+                render_indexed_field_setter_body(function, accessor, &receiver)
+            }
         };
     }
     let receiver = if function.is_const.unwrap_or(false) {
@@ -773,10 +779,10 @@ fn render_field_getter_body(function: &IrFunction, receiver: &str, field_name: &
         }
         IrTypeKind::FixedModelArray => {
             let handle = function.returns.handle.as_deref().unwrap_or("");
-            let base_cpp = fixed_model_array_elem_cpp_type(&function.returns.cpp_type);
             let n = ir::fixed_array_length(&function.returns.cpp_type).unwrap_or(0);
             format!(
-                "    {handle}** _r = static_cast<{handle}**>(std::malloc({n} * sizeof({handle}*)));\n    if (_r == nullptr) {{\n        return nullptr;\n    }}\n    for (int _i = 0; _i < {n}; _i++) {{\n        _r[_i] = reinterpret_cast<{handle}*>(new {base_cpp}({receiver}->{field_name}[_i]));\n    }}\n    return _r;\n"
+                "    {handle}** _r = static_cast<{handle}**>(std::malloc({n} * sizeof({handle}*)));\n    if (_r == nullptr) {{\n        return nullptr;\n    }}\n    for (int _i = 0; _i < {n}; _i++) {{\n        _r[_i] = reinterpret_cast<{handle}*>(const_cast<{}*>(&{receiver}->{field_name}[_i]));\n    }}\n    return _r;\n",
+                fixed_model_array_elem_cpp_type(&function.returns.cpp_type)
             )
         }
         IrTypeKind::ModelPointer | IrTypeKind::ModelReference => format!(
@@ -790,6 +796,62 @@ fn render_field_getter_body(function: &IrFunction, receiver: &str, field_name: &
         ),
         _ => format!("    return {receiver}->{};\n", field_name),
     }
+}
+
+fn render_indexed_field_getter_body(
+    function: &IrFunction,
+    accessor: &ir::IrFieldAccessor,
+    receiver: &str,
+) -> String {
+    let index_name = function
+        .params
+        .get(1)
+        .map(|param| param.name.as_str())
+        .unwrap_or("index");
+    let array_len = accessor.array_len.unwrap_or(0);
+    let c_type = &function.returns.c_type;
+    let base_cpp = base_model_cpp_type(&function.returns.cpp_type);
+    let cast_expr = if c_type.starts_with("const ") {
+        format!(
+            "reinterpret_cast<{c_type}>(&{receiver}->{field}[{index_name}])",
+            field = accessor.field_name
+        )
+    } else {
+        format!(
+            "reinterpret_cast<{c_type}>(const_cast<{base_cpp}*>(&{receiver}->{field}[{index_name}]))",
+            field = accessor.field_name
+        )
+    };
+    format!(
+        "    if (self == nullptr || {index_name} < 0 || {index_name} >= {array_len}) {{\n        return nullptr;\n    }}\n    return {cast_expr};\n"
+    )
+}
+
+fn render_indexed_field_setter_body(
+    function: &IrFunction,
+    accessor: &ir::IrFieldAccessor,
+    receiver: &str,
+) -> String {
+    let index_name = function
+        .params
+        .get(1)
+        .map(|param| param.name.as_str())
+        .unwrap_or("index");
+    let value_name = function
+        .params
+        .get(2)
+        .map(|param| param.name.as_str())
+        .unwrap_or("value");
+    let array_len = accessor.array_len.unwrap_or(0);
+    let base_cpp = function
+        .params
+        .get(2)
+        .map(|param| base_model_cpp_type(&param.ty.cpp_type))
+        .unwrap_or_else(|| "void".to_string());
+    format!(
+        "    if (self == nullptr || {value_name} == nullptr || {index_name} < 0 || {index_name} >= {array_len}) {{\n        return;\n    }}\n    {receiver}->{field_name}[{index_name}] = *reinterpret_cast<{base_cpp}*>({value_name});\n",
+        field_name = accessor.field_name
+    )
 }
 
 fn render_field_setter_body(function: &IrFunction, receiver: &str, field_name: &str) -> String {

@@ -7,7 +7,7 @@ use anyhow::{Result, bail};
 
 use crate::{
     codegen::ir_norm,
-    domain::kind::{IrFunctionKind, IrTypeKind},
+    domain::kind::{FieldAccessKind, IrFunctionKind, IrTypeKind},
     ir::{IrCallback, IrEnum, IrFunction, IrMacroConstant, IrModule, IrType, OpaqueType},
     pipeline::context::PipelineContext,
 };
@@ -189,14 +189,22 @@ fn render_go_facade_file(
         || functions.iter().any(|function| {
             matches!(
                 function.returns.kind,
-                IrTypeKind::String | IrTypeKind::CString | IrTypeKind::FixedByteArray
+                IrTypeKind::String
+                    | IrTypeKind::CString
+                    | IrTypeKind::FixedByteArray
+                    | IrTypeKind::FixedArray
+                    | IrTypeKind::FixedModelArray
             )
         })
         || classes.iter().any(|class| {
             class.methods.iter().any(|function| {
                 matches!(
                     function.returns.kind,
-                    IrTypeKind::String | IrTypeKind::CString | IrTypeKind::FixedByteArray
+                    IrTypeKind::String
+                        | IrTypeKind::CString
+                        | IrTypeKind::FixedByteArray
+                        | IrTypeKind::FixedArray
+                        | IrTypeKind::FixedModelArray
                 )
             })
         });
@@ -623,6 +631,9 @@ fn render_general_api_method(
     class: &AnalyzedFacadeClass<'_>,
     function: &IrFunction,
 ) -> String {
+    if let Some(rendered) = render_special_field_method(config, class, function) {
+        return rendered;
+    }
     if has_callback_param(function.params.iter().skip(1)) {
         return render_callback_method(config, class, function);
     }
@@ -670,6 +681,213 @@ fn render_general_api_method(
     ));
     out.push_str("}\n");
     out
+}
+
+fn render_special_field_method(
+    config: &PipelineContext,
+    class: &AnalyzedFacadeClass<'_>,
+    function: &IrFunction,
+) -> Option<String> {
+    let accessor = function.field_accessor.as_ref()?;
+    if accessor.access == FieldAccessKind::Get
+        && function.returns.kind == IrTypeKind::FixedModelArray
+    {
+        return Some(render_fixed_model_array_getter_wrapper(
+            config, class, function,
+        ));
+    }
+    if accessor.access == FieldAccessKind::Set
+        && function
+            .params
+            .get(1)
+            .is_some_and(|param| param.ty.kind == IrTypeKind::FixedModelArray)
+    {
+        return Some(render_fixed_model_array_setter_wrapper(class, function));
+    }
+    if accessor.access == FieldAccessKind::GetAt {
+        return Some(render_fixed_model_array_getter_at(config, class, function));
+    }
+    if accessor.access == FieldAccessKind::SetAt {
+        return Some(render_fixed_model_array_setter_at(config, class, function));
+    }
+    None
+}
+
+fn render_fixed_model_array_getter_wrapper(
+    config: &PipelineContext,
+    class: &AnalyzedFacadeClass<'_>,
+    function: &IrFunction,
+) -> String {
+    let receiver = receiver_name(&class.go_name);
+    let go_name = go_model_return_type(config, &function.returns);
+    let n = ir_norm::fixed_array_length(&function.returns.cpp_type).unwrap_or(0);
+    let at_method = go_export_name(&format!("{}At", method_name(function)));
+    let mut out = format!(
+        "func ({receiver} *{}) {}() ([]*{go_name}, error) {{\n",
+        class.go_name,
+        go_method_export_name(function)
+    );
+    out.push_str(&format!(
+        "    if {receiver} == nil || {receiver}.ptr == nil {{\n        return nil, errors.New(\"facade receiver is nil\")\n    }}\n"
+    ));
+    out.push_str(&format!(
+        "    if {receiver}.root != nil && *{receiver}.root {{\n        panic(\"{} handle is closed\")\n    }}\n",
+        class.go_name
+    ));
+    out.push_str(&format!(
+        "    result := make([]*{go_name}, {n})\n    for i := range result {{\n        result[i] = {receiver}.{at_method}(i)\n        if result[i] == nil {{\n            return nil, errors.New(\"wrapper returned nil model array element\")\n        }}\n    }}\n    return result, nil\n"
+    ));
+    out.push_str("}\n");
+    out
+}
+
+fn render_fixed_model_array_setter_wrapper(
+    class: &AnalyzedFacadeClass<'_>,
+    function: &IrFunction,
+) -> String {
+    let receiver = receiver_name(&class.go_name);
+    let params = render_param_list_dummy(function);
+    let n = function
+        .params
+        .get(1)
+        .and_then(|param| ir_norm::fixed_array_length(&param.ty.cpp_type))
+        .unwrap_or(0);
+    let at_method = go_export_name(&format!("{}At", method_name(function)));
+    let value_name = function
+        .params
+        .get(1)
+        .map(|param| param.name.as_str())
+        .unwrap_or("value");
+    let mut out = format!(
+        "func ({receiver} *{}) {}({params}) {{\n",
+        class.go_name,
+        go_method_export_name(function)
+    );
+    out.push_str(&format!(
+        "    if {receiver} == nil || {receiver}.ptr == nil {{\n        return\n    }}\n"
+    ));
+    out.push_str(&format!(
+        "    if {receiver}.root != nil && *{receiver}.root {{\n        panic(\"{} handle is closed\")\n    }}\n",
+        class.go_name
+    ));
+    out.push_str(&format!(
+        "    if len({value_name}) != {n} {{\n        panic(\"{} {} requires {n} elements\")\n    }}\n",
+        class.go_name,
+        go_method_export_name(function)
+    ));
+    out.push_str(&format!(
+        "    for i := range {value_name} {{\n        {receiver}.{at_method}(i, {value_name}[i])\n    }}\n"
+    ));
+    out.push_str("}\n");
+    out
+}
+
+fn render_fixed_model_array_getter_at(
+    config: &PipelineContext,
+    class: &AnalyzedFacadeClass<'_>,
+    function: &IrFunction,
+) -> String {
+    let receiver = receiver_name(&class.go_name);
+    let go_name = go_model_return_type(config, &function.returns);
+    let ptr_expr = cast_raw_to_projection_handle(config, &function.returns, "raw");
+    let wrap = if config
+        .known_model_projection(&function.returns.cpp_type)
+        .is_some()
+    {
+        format!("newBorrowed{go_name}({ptr_expr}, {receiver}.root)")
+    } else {
+        format!("&{go_name}{{ptr: {ptr_expr}}}")
+    };
+    let mut out = format!(
+        "func ({receiver} *{}) {}(index int) *{go_name} {{\n",
+        class.go_name,
+        go_method_export_name(function)
+    );
+    out.push_str(&format!(
+        "    if {receiver} == nil || {receiver}.ptr == nil {{\n        return nil\n    }}\n"
+    ));
+    out.push_str(&format!(
+        "    if {receiver}.root != nil && *{receiver}.root {{\n        panic(\"{} handle is closed\")\n    }}\n",
+        class.go_name
+    ));
+    out.push_str(&format!(
+        "    raw := C.{}({receiver}.ptr, C.int(index))\n    if raw == nil {{\n        return nil\n    }}\n    return {wrap}\n",
+        function.name
+    ));
+    out.push_str("}\n");
+    out
+}
+
+fn render_fixed_model_array_setter_at(
+    config: &PipelineContext,
+    class: &AnalyzedFacadeClass<'_>,
+    function: &IrFunction,
+) -> String {
+    let receiver = receiver_name(&class.go_name);
+    let value_param = function.params.get(2).expect("indexed setter has value");
+    let go_name =
+        go_param_type(config, &value_param.ty).unwrap_or_else(|| "*unsafe.Pointer".to_string());
+    let handle_arg = render_model_handle_arg(config, &value_param.ty, &value_param.name)
+        .unwrap_or_else(|| format!("{}.ptr", value_param.name));
+    let mut out = format!(
+        "func ({receiver} *{}) {}(index int, {} {}) {{\n",
+        class.go_name,
+        go_method_export_name(function),
+        value_param.name,
+        go_name
+    );
+    out.push_str(&format!(
+        "    if {receiver} == nil || {receiver}.ptr == nil {{\n        return\n    }}\n"
+    ));
+    out.push_str(&format!(
+        "    if {receiver}.root != nil && *{receiver}.root {{\n        panic(\"{} handle is closed\")\n    }}\n",
+        class.go_name
+    ));
+    if render_model_handle_arg(config, &value_param.ty, &value_param.name).is_none() {
+        out.push_str(&format!(
+            "    var cArg1 *C.{}\n    if {} == nil {{\n        panic(\"reference facade/model argument cannot be nil\")\n    }}\n    if {} != nil {{\n        cArg1 = {}.ptr\n    }}\n",
+            value_param.ty.handle.as_deref().unwrap_or("void"),
+            value_param.name,
+            value_param.name,
+            value_param.name
+        ));
+        out.push_str(&format!(
+            "    C.{}({receiver}.ptr, C.int(index), cArg1)\n",
+            function.name
+        ));
+    } else {
+        out.push_str(&format!(
+            "    C.{}({receiver}.ptr, C.int(index), {})\n",
+            function.name, handle_arg
+        ));
+    }
+    out.push_str("}\n");
+    out
+}
+
+fn render_param_list_dummy(function: &IrFunction) -> String {
+    function
+        .params
+        .iter()
+        .skip(1)
+        .map(|param| {
+            let go_ty = match param.ty.kind {
+                IrTypeKind::FixedModelArray => {
+                    let go_name = param
+                        .ty
+                        .handle
+                        .as_deref()
+                        .and_then(|h| h.strip_suffix("Handle"))
+                        .map(go_export_name)
+                        .unwrap_or_else(|| "unsafe.Pointer".to_string());
+                    format!("[]*{go_name}")
+                }
+                _ => go_type_for_ir(&param.ty).unwrap_or("int32").to_string(),
+            };
+            format!("{} {}", param.name, go_ty)
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn render_free_function(config: &PipelineContext, function: &IrFunction) -> String {
@@ -812,6 +1030,8 @@ fn render_callback_call_prep(
             }
             IrTypeKind::FixedByteArray => {
                 let c_name = format!("cArg{index}");
+                prep.setup_lines
+                    .extend(render_fixed_length_guard(&param.name, &param.ty));
                 prep.setup_lines.push(format!(
                     "{c_name} := (*C.uint8_t)(unsafe.Pointer(&{}[0]))",
                     param.name
@@ -821,6 +1041,8 @@ fn render_callback_call_prep(
             IrTypeKind::FixedArray => {
                 let c_name = format!("cArg{index}");
                 let c_elem = fixed_array_cgo_elem_type(&param.ty);
+                prep.setup_lines
+                    .extend(render_fixed_length_guard(&param.name, &param.ty));
                 prep.setup_lines.push(format!(
                     "{c_name} := (*{c_elem})(unsafe.Pointer(&{}[0]))",
                     param.name
@@ -833,6 +1055,8 @@ fn render_callback_call_prep(
                 let go_name = go_export_name(&flatten_qualified_cpp_name(elem_cpp));
                 let handles_name = format!("cHandles{index}");
                 let c_name = format!("cArg{index}");
+                prep.setup_lines
+                    .extend(render_fixed_length_guard(&param.name, &param.ty));
                 prep.setup_lines.push(format!(
                     "{handles_name} := make([]*C.{c_handle}, len({}))",
                     param.name
@@ -893,6 +1117,8 @@ fn render_call_prep(config: &PipelineContext, params: &[&ir_norm::IrParam]) -> R
             }
             IrTypeKind::FixedByteArray => {
                 let c_name = format!("cArg{index}");
+                prep.setup_lines
+                    .extend(render_fixed_length_guard(&param.name, &param.ty));
                 prep.setup_lines.push(format!(
                     "{c_name} := (*C.uint8_t)(unsafe.Pointer(&{}[0]))",
                     param.name
@@ -902,6 +1128,8 @@ fn render_call_prep(config: &PipelineContext, params: &[&ir_norm::IrParam]) -> R
             IrTypeKind::FixedArray => {
                 let c_name = format!("cArg{index}");
                 let c_elem = fixed_array_cgo_elem_type(&param.ty);
+                prep.setup_lines
+                    .extend(render_fixed_length_guard(&param.name, &param.ty));
                 prep.setup_lines.push(format!(
                     "{c_name} := (*{c_elem})(unsafe.Pointer(&{}[0]))",
                     param.name
@@ -914,6 +1142,8 @@ fn render_call_prep(config: &PipelineContext, params: &[&ir_norm::IrParam]) -> R
                 let go_name = go_export_name(&flatten_qualified_cpp_name(elem_cpp));
                 let handles_name = format!("cHandles{index}");
                 let c_name = format!("cArg{index}");
+                prep.setup_lines
+                    .extend(render_fixed_length_guard(&param.name, &param.ty));
                 prep.setup_lines.push(format!(
                     "{handles_name} := make([]*C.{c_handle}, len({}))",
                     param.name
@@ -943,6 +1173,17 @@ fn render_call_prep(config: &PipelineContext, params: &[&ir_norm::IrParam]) -> R
     }
 
     prep
+}
+
+fn render_fixed_length_guard(name: &str, ty: &IrType) -> Vec<String> {
+    let Some(n) = ir_norm::fixed_array_length(&ty.cpp_type) else {
+        return Vec::new();
+    };
+    vec![
+        format!("if len({name}) != {n} {{"),
+        format!("    panic(\"{name} requires {n} elements\")"),
+        "}".to_string(),
+    ]
 }
 
 fn render_model_handle_arg(config: &PipelineContext, ty: &IrType, name: &str) -> Option<String> {

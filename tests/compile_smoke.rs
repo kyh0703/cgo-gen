@@ -50,9 +50,7 @@ input:
 output:
   dir: out
 "#,
-            project_root
-                .join("examples/simple-cpp/include")
-                .display()
+            project_root.join("examples/simple-cpp/include").display()
         ),
     )
     .unwrap();
@@ -449,10 +447,7 @@ output:
             if (cgowrap_Item_GetValue(roundtrip[0]) != 10) return 13;
             if (cgowrap_Item_GetValue(roundtrip[1]) != 20) return 14;
             if (cgowrap_Item_GetValue(roundtrip[2]) != 30) return 15;
-
-            cgowrap_Item_delete(roundtrip[0]);
-            cgowrap_Item_delete(roundtrip[1]);
-            cgowrap_Item_delete(roundtrip[2]);
+            if (cgowrap_Item_GetValue(cgowrap_Holder_GetItemsAt(holder, 1)) != 20) return 16;
             free(roundtrip);
 
             cgowrap_Item_delete(item0);

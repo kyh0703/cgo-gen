@@ -656,20 +656,42 @@ output:
     let ir = ir::normalize(&ctx, &parsed).unwrap();
     let header = render_header(&ctx, &ir);
     let source = render_source(&ctx, &ir);
+    let go = render_go_structs(&ctx, &ir).unwrap();
+    let go_text = &go[0].contents;
 
     assert!(header.contains("ItemHandle** cgowrap_Holder_GetItems(const HolderHandle* self);"));
     assert!(
+        header.contains(
+            "ItemHandle* cgowrap_Holder_GetItemsAt(const HolderHandle* self, int index);"
+        )
+    );
+    assert!(
         header.contains("void cgowrap_Holder_SetItems(HolderHandle* self, ItemHandle** value);")
     );
+    assert!(header.contains(
+        "void cgowrap_Holder_SetItemsAt(HolderHandle* self, int index, ItemHandle* value);"
+    ));
 
     assert!(source.contains(
-        "_r[_i] = reinterpret_cast<ItemHandle*>(new Item(reinterpret_cast<const Holder*>(self)->items[_i]));"
+        "_r[_i] = reinterpret_cast<ItemHandle*>(const_cast<Item*>(&reinterpret_cast<const Holder*>(self)->items[_i]));"
+    ));
+    assert!(source.contains(
+        "if (self == nullptr || index < 0 || index >= 3) {\n        return nullptr;\n    }\n    return reinterpret_cast<ItemHandle*>(const_cast<Item*>(&reinterpret_cast<const Holder*>(self)->items[index]));"
     ));
     assert!(source.contains(
         "reinterpret_cast<Holder*>(self)->items[_i] = *reinterpret_cast<Item*>(value[_i]);"
     ));
-    assert!(!source.contains("new Item[3](reinterpret_cast<const Holder*>(self)->items[_i])"));
+    assert!(source.contains(
+        "if (self == nullptr || value == nullptr || index < 0 || index >= 3) {\n        return;\n    }\n    reinterpret_cast<Holder*>(self)->items[index] = *reinterpret_cast<Item*>(value);"
+    ));
+    assert!(!source.contains("new Item(reinterpret_cast<const Holder*>(self)->items[_i])"));
     assert!(!source.contains("reinterpret_cast<Item[3]*>(value[_i])"));
+    assert!(go_text.contains("func (h *Holder) GetItems() ([]*Item, error) {"));
+    assert!(go_text.contains("result[i] = h.GetItemsAt(i)"));
+    assert!(go_text.contains("func (h *Holder) GetItemsAt(index int) *Item {"));
+    assert!(go_text.contains("func (h *Holder) SetItemsAt(index int, value *Item) {"));
+    assert!(go_text.contains("if len(value) != 3 {"));
+    assert!(go_text.contains("h.SetItemsAt(i, value[i])"));
 }
 
 #[test]
@@ -977,7 +999,9 @@ output:
     assert!(go_text.contains("func (s *StatusInfo) SetPrimaryReasonCodes(value []uint32) {"));
     assert!(go_text.contains("func (s *StatusInfo) GetSecondaryReasonCodes() ([]uint32, error) {"));
     assert!(go_text.contains("func (s *StatusInfo) SetSecondaryReasonCodes(value []uint32) {"));
-    assert!(go_text.contains("func (s *SubscriptionCodes) GetSubscriptionIds() ([]uint32, error) {"));
+    assert!(
+        go_text.contains("func (s *SubscriptionCodes) GetSubscriptionIds() ([]uint32, error) {")
+    );
     assert!(go_text.contains("func (s *SubscriptionCodes) SetSubscriptionIds(value []uint32) {"));
     assert!(go_text.contains("cSlice := (*[64]C.uint32_t)(unsafe.Pointer(raw))"));
     assert!(go_text.contains("cSlice := (*[16]C.uint32_t)(unsafe.Pointer(raw))"));
