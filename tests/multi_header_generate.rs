@@ -46,14 +46,9 @@ fn generates_one_wrapper_set_per_header_from_single_config() {
         r#"
 version: 1
 input:
-  headers:
-    - include/AlphaThing.hpp
-    - include/BetaThing.hpp
+  dir: include
 output:
   dir: gen
-naming:
-  prefix: cgowrap
-  style: preserve
 "#,
     )
     .unwrap();
@@ -136,14 +131,9 @@ fn emits_unified_go_wrappers_for_each_supported_header() {
         r#"
 version: 1
 input:
-  headers:
-    - include/ModelThing.hpp
-    - include/FacadeThing.hpp
+  dir: include
 output:
   dir: gen
-naming:
-  prefix: cgowrap
-  style: preserve
 "#,
     )
     .unwrap();
@@ -182,13 +172,9 @@ fn emits_unified_go_enums_without_classification() {
         r#"
 version: 1
 input:
-  headers:
-    - include/ModelTypes.hpp
+  dir: include
 output:
   dir: gen
-naming:
-  prefix: cgowrap
-  style: preserve
 "#,
     )
     .unwrap();
@@ -226,13 +212,9 @@ fn unclassified_headers_still_emit_unified_go_wrappers() {
         r#"
 version: 1
 input:
-  headers:
-    - include/Thing.hpp
+  dir: include
 output:
   dir: gen
-naming:
-  prefix: cgowrap
-  style: preserve
 "#,
     )
     .unwrap();

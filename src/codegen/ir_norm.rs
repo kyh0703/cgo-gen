@@ -6,7 +6,7 @@ use serde::Serialize;
 pub use crate::domain::kind::{FieldAccessKind, IrFunctionKind, IrTypeKind, RecordKind};
 
 use crate::{
-    config::Config,
+    config::{Config, WRAPPER_PREFIX},
     parser::{
         CppCallbackTypedef, CppConstructor, CppEnum, CppField, CppFunction, CppMacroConstant,
         CppMethod, CppParam, CppRecord, ParsedApi,
@@ -125,7 +125,7 @@ pub struct SkippedDeclaration {
 
 pub fn normalize(ctx: &PipelineContext, api: &ParsedApi) -> Result<IrModule> {
     let config = &ctx.config;
-    let module = config.naming.prefix.clone();
+    let module = WRAPPER_PREFIX.to_string();
     let mut opaque_types = Vec::new();
     let mut functions = Vec::new();
     let mut enums = Vec::new();
@@ -1903,17 +1903,13 @@ fn is_supported_primitive(name: &str) -> bool {
     )
 }
 
-fn symbol_name(config: &Config, namespace: &[String], owner: &str, tail: &str) -> String {
-    let mut parts = vec![config.naming.prefix.clone()];
-    parts.extend(
-        namespace
-            .iter()
-            .map(|item| format_symbol_part(config, item)),
-    );
+fn symbol_name(_config: &Config, namespace: &[String], owner: &str, tail: &str) -> String {
+    let mut parts = vec![WRAPPER_PREFIX.to_string()];
+    parts.extend(namespace.iter().map(|item| format_symbol_part(item)));
     if !owner.is_empty() {
-        parts.push(format_symbol_part(config, owner));
+        parts.push(format_symbol_part(owner));
     }
-    parts.push(format_symbol_part(config, tail));
+    parts.push(format_symbol_part(tail));
     parts.join("_")
 }
 
@@ -2045,11 +2041,8 @@ fn sanitize_symbol_token(value: &str) -> String {
     out.trim_matches('_').to_string()
 }
 
-fn format_symbol_part(config: &Config, value: &str) -> String {
-    match config.naming.style.as_str() {
-        "preserve" => value.to_string(),
-        _ => value.to_lowercase(),
-    }
+fn format_symbol_part(value: &str) -> String {
+    value.to_string()
 }
 
 fn cpp_qualified(namespace: &[String], leaf: &str) -> String {

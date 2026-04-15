@@ -60,9 +60,6 @@ input:
     - '-I{include_dir}'
 output:
   dir: ./pkg/model-record
-naming:
-  prefix: gen
-  style: preserve
 "#
         ),
     )
@@ -75,9 +72,7 @@ naming:
 fn gen_model_config_uses_dir_only_input_shape() {
     let config = Config::load(write_model_record_dir_config()).unwrap();
 
-    assert!(config.input.headers.is_empty());
     assert!(config.input.dir.is_some());
-    assert!(config.input.compile_commands.is_none());
 }
 
 #[test]
@@ -116,6 +111,6 @@ fn gen_model_config_generates_go_wrapper_when_sources_exist() {
     assert!(go_wrapper.contains("func (d *DataRecord) GetSlot1Val() (string, error) {"));
     assert!(go_wrapper.contains("func (d *DataRecord) SetSlot2Act(nAct uint16) {"));
     assert!(!go_wrapper.contains("func (d *DataRecord) GetSlot1_Val("));
-    assert!(header_wrapper.contains("gen_DataRecord_GetSlot3_Val"));
-    assert!(header_wrapper.contains("gen_DataRecord_SetTenantId"));
+    assert!(header_wrapper.contains("cgowrap_DataRecord_GetSlot3_Val"));
+    assert!(header_wrapper.contains("cgowrap_DataRecord_SetTenantId"));
 }

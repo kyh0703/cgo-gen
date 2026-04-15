@@ -1,13 +1,9 @@
 version: 1
 
 input:
-  headers:
-    - ../simple-cpp/include/foo.hpp
-  compile_commands: ../simple-cpp/build/compile_commands.json
+  dir: ../simple-cpp/include
+  clang_args:
+    - -std=c++17
 
 output:
   dir: pkg/foo
-
-naming:
-  prefix: cgowrap
-  style: snake_case

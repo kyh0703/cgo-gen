@@ -19,7 +19,6 @@ fn dir_only_config_collects_only_owned_header_declarations() {
     let fixture = temp_fixture_dir("owned_only");
     fs::create_dir_all(fixture.join("include")).unwrap();
     fs::create_dir_all(fixture.join("external")).unwrap();
-    fs::create_dir_all(fixture.join("build")).unwrap();
 
     fs::write(
         fixture.join("include/owned.hpp"),
@@ -61,36 +60,21 @@ fn dir_only_config_collects_only_owned_header_declarations() {
     )
     .unwrap();
     fs::write(
-        fixture.join("build/compile_commands.json"),
-        r#"
-[
-  {
-    "directory": ".",
-    "file": "../include/tu.cpp",
-    "arguments": [
-      "clang++",
-      "-std=c++17",
-      "-x",
-      "c++",
-      "-I../include",
-      "-I../external"
-    ]
-  }
-]
-"#,
-    )
-    .unwrap();
-
-    fs::write(
         fixture.join("config.yaml"),
-        r#"
+        format!(
+            r#"
 version: 1
 input:
   dir: include
-  compile_commands: build/compile_commands.json
+  clang_args:
+    - -I{}
+    - -I{}
 output:
   dir: gen
 "#,
+            fixture.join("include").display(),
+            fixture.join("external").display()
+        ),
     )
     .unwrap();
 
@@ -121,10 +105,9 @@ output:
 }
 
 #[test]
-fn dir_only_config_ignores_header_entries_from_compile_commands_when_sources_exist() {
+fn dir_only_config_prefers_sources_when_present() {
     let fixture = temp_fixture_dir("header_entries_ignored");
     fs::create_dir_all(fixture.join("include")).unwrap();
-    fs::create_dir_all(fixture.join("build")).unwrap();
 
     fs::write(
         fixture.join("include/MemoryStore.h"),
@@ -144,43 +127,11 @@ fn dir_only_config_ignores_header_entries_from_compile_commands_when_sources_exi
     )
     .unwrap();
     fs::write(
-        fixture.join("build/compile_commands.json"),
-        r#"
-[
-  {
-    "directory": ".",
-    "file": "../include/MemoryStore.h",
-    "arguments": [
-      "clang++",
-      "-std=c++17",
-      "-x",
-      "c++",
-      "-I../include"
-    ]
-  },
-  {
-    "directory": ".",
-    "file": "../include/DataHandler.cpp",
-    "arguments": [
-      "clang++",
-      "-std=c++17",
-      "-x",
-      "c++",
-      "-I../include"
-    ]
-  }
-]
-"#,
-    )
-    .unwrap();
-
-    fs::write(
         fixture.join("config.yaml"),
         r#"
 version: 1
 input:
   dir: include
-  compile_commands: build/compile_commands.json
 output:
   dir: gen
 "#,
@@ -250,7 +201,6 @@ output:
 fn scoped_header_keeps_dir_translation_unit_context() {
     let fixture = temp_fixture_dir("scoped_dir_context");
     fs::create_dir_all(fixture.join("include")).unwrap();
-    fs::create_dir_all(fixture.join("build")).unwrap();
 
     fs::write(
         fixture.join("include/types.hpp"),
@@ -278,31 +228,11 @@ fn scoped_header_keeps_dir_translation_unit_context() {
     )
     .unwrap();
     fs::write(
-        fixture.join("build/compile_commands.json"),
-        r#"
-[
-  {
-    "directory": ".",
-    "file": "../include/tu.cpp",
-    "arguments": [
-      "clang++",
-      "-std=c++17",
-      "-x",
-      "c++",
-      "-I../include"
-    ]
-  }
-]
-"#,
-    )
-    .unwrap();
-    fs::write(
         fixture.join("config.yaml"),
         r#"
 version: 1
 input:
   dir: include
-  compile_commands: build/compile_commands.json
 output:
   dir: gen
 "#,
@@ -323,4 +253,106 @@ output:
             .iter()
             .any(|header| header.ends_with("types.hpp"))
     );
+}
+
+#[test]
+fn dir_only_config_keeps_standalone_headers_even_when_sources_exist() {
+    let fixture = temp_fixture_dir("mixed_tree_standalone_headers");
+    fs::create_dir_all(fixture.join("include")).unwrap();
+
+    fs::write(
+        fixture.join("include/A.hpp"),
+        r#"
+        class A {
+        public:
+            int GetValue() const { return 7; }
+        };
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        fixture.join("include/B.hpp"),
+        r#"
+        class B {
+        public:
+            int GetValue() const { return 9; }
+        };
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        fixture.join("include/tu.cpp"),
+        r#"
+        #include "A.hpp"
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        fixture.join("config.yaml"),
+        r#"
+version: 1
+input:
+  dir: include
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(fixture.join("config.yaml")).unwrap();
+    let ctx = PipelineContext::new(config);
+    let parsed = parser::parse(&ctx).unwrap();
+
+    assert!(parsed.records.iter().any(|record| record.name == "A"));
+    assert!(parsed.records.iter().any(|record| record.name == "B"));
+}
+
+#[test]
+fn dir_only_config_recurses_through_deeply_nested_input_tree() {
+    let fixture = temp_fixture_dir("deep_nested_tree");
+    let nested_dir = fixture.join("include/api/v1/models");
+    fs::create_dir_all(&nested_dir).unwrap();
+
+    fs::write(
+        nested_dir.join("Thing.hpp"),
+        r#"
+        class Thing {
+        public:
+            int GetValue() const { return 7; }
+        };
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        fixture.join("include/api/v1/Api.cpp"),
+        r#"
+        #include "models/Thing.hpp"
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        fixture.join("config.yaml"),
+        r#"
+version: 1
+input:
+  dir: include
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(fixture.join("config.yaml")).unwrap();
+    let units = compiler::collect_translation_units(&config).unwrap();
+    let parsed = parser::parse(&PipelineContext::new(config)).unwrap();
+
+    assert_eq!(units.len(), 1);
+    assert!(units[0].ends_with("include/api/v1/Api.cpp"));
+    assert!(
+        parsed
+            .headers
+            .iter()
+            .any(|header| header.ends_with("include/api/v1/models/Thing.hpp"))
+    );
+    assert!(parsed.records.iter().any(|record| record.name == "Thing"));
 }

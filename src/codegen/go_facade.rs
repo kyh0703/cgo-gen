@@ -1367,7 +1367,7 @@ fn render_go_call_return(
             out.push_str(&indented_lines(post_call_lines));
             out.push_str(&format!(
                 "    if raw == nil {{\n        return \"\", errors.New(\"wrapper returned nil string\")\n    }}\n    defer C.{}_string_free(raw)\n    return C.GoString(raw), nil\n",
-                config.naming.prefix
+                crate::config::WRAPPER_PREFIX
             ));
             out
         }
@@ -1385,7 +1385,7 @@ fn render_go_call_return(
             out.push_str(&indented_lines(post_call_lines));
             out.push_str(&format!(
                 "    if raw == nil {{\n        return nil, errors.New(\"wrapper returned nil byte array\")\n    }}\n    defer C.{prefix}_byte_array_free(raw)\n    return C.GoBytes(unsafe.Pointer(raw), C.int({n})), nil\n",
-                prefix = config.naming.prefix
+                prefix = crate::config::WRAPPER_PREFIX
             ));
             out
         }
@@ -1397,7 +1397,7 @@ fn render_go_call_return(
             out.push_str(&indented_lines(post_call_lines));
             out.push_str(&format!(
                 "    if raw == nil {{\n        return nil, errors.New(\"wrapper returned nil array\")\n    }}\n    defer C.{prefix}_array_free(unsafe.Pointer(raw))\n    cSlice := (*[{n}]{c_elem})(unsafe.Pointer(raw))\n    result := make([]{go_elem}, {n})\n    for i := range result {{\n        result[i] = {go_elem}(cSlice[i])\n    }}\n    return result, nil\n",
-                prefix = config.naming.prefix
+                prefix = crate::config::WRAPPER_PREFIX
             ));
             out
         }

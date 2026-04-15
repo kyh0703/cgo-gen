@@ -16,8 +16,8 @@ fn renders_header_and_source_from_fixture() {
 
     let header = render_header(&ctx, &ir);
     assert!(header.contains("typedef struct fooBarHandle fooBarHandle;"));
-    assert!(header.contains("fooBarHandle* cgowrap_foo_bar_new(int value);"));
-    assert!(header.contains("char* cgowrap_foo_bar_name(const fooBarHandle* self);"));
+    assert!(header.contains("fooBarHandle* cgowrap_foo_Bar_new(int value);"));
+    assert!(header.contains("char* cgowrap_foo_Bar_name(const fooBarHandle* self);"));
 
     let source = render_source(&ctx, &ir);
     assert!(source.contains(&format!("#include \"{}\"", config.output.header)));
@@ -69,8 +69,7 @@ fn parsed_struct_pointers_use_handle_wrappers_while_foreign_structs_stay_direct(
         r#"
 version: 1
 input:
-  headers:
-    - include/Api.hpp
+  dir: include
 output:
   dir: gen
 "#,
@@ -143,8 +142,7 @@ fn preserves_const_char_spelling_but_normalizes_c_value_type() {
         r#"
 version: 1
 input:
-  headers:
-    - include/Api.hpp
+  dir: include
 output:
   dir: gen
 "#,
@@ -187,8 +185,7 @@ fn renders_typedef_anonymous_enums_with_alias_name() {
         r#"
 version: 1
 input:
-  headers:
-    - include/Api.hpp
+  dir: include
 output:
   dir: gen
 "#,
@@ -232,8 +229,7 @@ fn renders_standalone_anonymous_enums_as_untyped_go_constants() {
         r#"
 version: 1
 input:
-  headers:
-    - include/Api.hpp
+  dir: include
 output:
   dir: gen
 "#,
@@ -280,8 +276,7 @@ fn renders_standalone_integer_macros_as_go_constants() {
         r#"
 version: 1
 input:
-  headers:
-    - include/Api.hpp
+  dir: include
 output:
   dir: gen
 "#,
@@ -373,8 +368,7 @@ fn renders_typedef_enum_alias_method_params_as_value_enums() {
         r#"
 version: 1
 input:
-  headers:
-    - include/Api.hpp
+  dir: include
 output:
   dir: gen
 "#,
@@ -455,8 +449,7 @@ fn normalizes_primitive_alias_pointer_and_reference_c_types_in_header() {
         r#"
 version: 1
 input:
-  headers:
-    - include/Api.hpp
+  dir: include
 output:
   dir: gen
 "#,
@@ -502,8 +495,7 @@ fn generate_with_go_module_writes_build_flags_and_go_mod() {
         r#"
 version: 1
 input:
-  headers:
-    - include/Api.hpp
+  dir: include
   clang_args:
     - -I${SDK_INCLUDE}
     - -DMODE=1
@@ -567,8 +559,7 @@ fn struct_fields_generate_synthetic_accessors() {
         r#"
 version: 1
 input:
-  headers:
-    - include/Counter.hpp
+  dir: include
 output:
   dir: gen
 "#,
@@ -652,8 +643,7 @@ fn struct_fixed_model_array_fields_render_element_type_in_source() {
         r#"
 version: 1
 input:
-  headers:
-    - include/Holder.hpp
+  dir: include
 output:
   dir: gen
 "#,
@@ -710,8 +700,7 @@ fn renders_model_value_return_as_owned_handle_copy() {
         r#"
 version: 1
 input:
-  headers:
-    - include/Api.hpp
+  dir: include
 output:
   dir: gen
 "#,
@@ -765,8 +754,7 @@ fn renders_model_pointer_and_reference_returns_as_borrowed_handles() {
         r#"
 version: 1
 input:
-  headers:
-    - include/Api.hpp
+  dir: include
 output:
   dir: gen
 "#,
@@ -822,8 +810,7 @@ fn renders_model_value_field_accessors_as_borrowed_get_and_explicit_set() {
         r#"
 version: 1
 input:
-  headers:
-    - include/Models.hpp
+  dir: include
 output:
   dir: gen
 "#,
@@ -884,8 +871,7 @@ fn renders_go_fixed_array_typedef_aliases_with_canonical_unsigned_types() {
         r#"
 version: 1
 input:
-  headers:
-    - include/Api.hpp
+  dir: include
 output:
   dir: gen
 "#,
@@ -949,8 +935,7 @@ fn renders_reason_and_subscription_fixed_arrays_as_uint32_slices() {
         r#"
 version: 1
 input:
-  headers:
-    - include/Api.hpp
+  dir: include
 output:
   dir: gen
 "#,
@@ -1027,8 +1012,7 @@ fn avoids_false_bool_suffix_for_underscore_backed_field_setters_but_keeps_real_o
         r#"
 version: 1
 input:
-  headers:
-    - include/Api.hpp
+  dir: include
 output:
   dir: gen
 "#,

@@ -1,8 +1,7 @@
 version: 1
 
 input:
-  headers:
-    - include/api.hpp
+  dir: include
 
 output:
   dir: out
@@ -10,6 +9,3 @@ output:
   source: wrapper.cpp
   ir: wrapper.ir.yaml
 
-naming:
-  prefix: cgowrap
-  style: snake_case

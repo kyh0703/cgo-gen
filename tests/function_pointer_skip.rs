@@ -38,13 +38,9 @@ fn skips_declarations_using_function_pointer_types() {
         r#"
 version: 1
 input:
-  headers:
-    - include/Api.hpp
+  dir: include
 output:
   dir: out
-naming:
-  prefix: cgowrap
-  style: preserve
 "#,
     )
     .unwrap();
@@ -108,13 +104,9 @@ fn skips_operator_declarations() {
         r#"
 version: 1
 input:
-  headers:
-    - include/Api.hpp
+  dir: include
 output:
   dir: out
-naming:
-  prefix: cgowrap
-  style: preserve
 "#,
     )
     .unwrap();
@@ -209,14 +201,9 @@ fn skips_double_pointer_model_declarations() {
         r#"
 version: 1
 input:
-  headers:
-    - include/ThingModel.hpp
-    - include/Api.hpp
+  dir: include
 output:
   dir: out
-naming:
-  prefix: cgowrap
-  style: preserve
 "#,
     )
     .unwrap();
@@ -278,13 +265,9 @@ fn skips_double_pointer_string_declarations() {
         r#"
 version: 1
 input:
-  headers:
-    - include/Api.hpp
+  dir: include
 output:
   dir: out
-naming:
-  prefix: cgowrap
-  style: preserve
 "#,
     )
     .unwrap();

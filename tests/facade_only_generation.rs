@@ -36,13 +36,9 @@ fn legacy_model_classification_still_emits_direct_facade_methods() {
         r#"
 version: 1
 input:
-  headers:
-    - include/ThingModel.hpp
+  dir: include
 output:
   dir: gen
-naming:
-  prefix: cgowrap
-  style: preserve
 "#,
     )
     .unwrap();
@@ -94,14 +90,9 @@ fn known_model_out_params_work_without_model_filters() {
         r#"
 version: 1
 input:
-  headers:
-    - include/ThingModel.hpp
-    - include/Api.hpp
+  dir: include
 output:
   dir: gen
-naming:
-  prefix: cgowrap
-  style: preserve
 "#,
     )
     .unwrap();

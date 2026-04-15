@@ -18,7 +18,7 @@ type Bar struct {
 }
 
 func NewBar(value int32) *Bar {
-	ptr := C.cgowrap_foo_bar_new(C.int(value))
+	ptr := C.cgowrap_foo_Bar_new(C.int(value))
 	return &Bar{ptr: ptr}
 }
 
@@ -26,20 +26,20 @@ func (b *Bar) Close() {
 	if b == nil || b.ptr == nil {
 		return
 	}
-	C.cgowrap_foo_bar_delete(b.ptr)
+	C.cgowrap_foo_Bar_delete(b.ptr)
 	b.ptr = nil
 }
 
 func (b *Bar) Value() int32 {
-	return int32(C.cgowrap_foo_bar_value(b.ptr))
+	return int32(C.cgowrap_foo_Bar_value(b.ptr))
 }
 
 func (b *Bar) SetValue(value int32) {
-	C.cgowrap_foo_bar_set_value(b.ptr, C.int(value))
+	C.cgowrap_foo_Bar_set_value(b.ptr, C.int(value))
 }
 
 func (b *Bar) Name() (string, error) {
-	raw := C.cgowrap_foo_bar_name(b.ptr)
+	raw := C.cgowrap_foo_Bar_name(b.ptr)
 	if raw == nil {
 		return "", errors.New("wrapper returned nil string")
 	}

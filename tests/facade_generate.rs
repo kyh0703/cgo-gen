@@ -57,13 +57,9 @@ fn generates_go_facade_for_bool_and_string_returns() {
         r#"
 version: 1
 input:
-  headers:
-    - include/Api.hpp
+  dir: include
 output:
   dir: out
-naming:
-  prefix: cgowrap
-  style: preserve
 "#,
     )
     .unwrap();
@@ -118,13 +114,9 @@ fn rejects_namespaced_facade_functions_that_collide_in_go_exports() {
         r#"
 version: 1
 input:
-  headers:
-    - include/Api.hpp
+  dir: include
 output:
   dir: out
-naming:
-  prefix: cgowrap
-  style: preserve
 "#,
     )
     .unwrap();
@@ -171,13 +163,9 @@ fn preserves_numeric_suffix_underscores_in_go_method_names() {
         r#"
 version: 1
 input:
-  headers:
-    - include/Media.hpp
+  dir: include
 output:
   dir: out
-naming:
-  prefix: cgowrap
-  style: preserve
 "#,
     )
     .unwrap();
@@ -233,13 +221,9 @@ fn supports_facade_classes_with_object_pointer_constructor_params() {
         r#"
 version: 1
 input:
-  headers:
-    - include/Api.hpp
+  dir: include
 output:
   dir: out
-naming:
-  prefix: cgowrap
-  style: preserve
 "#,
     )
     .unwrap();
@@ -297,13 +281,9 @@ fn supports_facade_classes_with_object_reference_constructor_params() {
         r#"
 version: 1
 input:
-  headers:
-    - include/Api.hpp
+  dir: include
 output:
   dir: out
-naming:
-  prefix: cgowrap
-  style: preserve
 "#,
     )
     .unwrap();
@@ -366,14 +346,9 @@ fn exposes_object_out_params_as_direct_wrapper_pointer_arguments() {
         r#"
 version: 1
 input:
-  headers:
-    - include/ThingModel.hpp
-    - include/Api.hpp
+  dir: include
 output:
   dir: out
-naming:
-  prefix: cgowrap
-  style: preserve
 "#,
     )
     .unwrap();
@@ -466,14 +441,9 @@ fn keeps_unknown_model_refs_in_raw_wrappers_but_filters_them_from_go_facade() {
         r#"
 version: 1
 input:
-  headers:
-    - include/ThingModel.hpp
-    - include/Api.hpp
+  dir: include
 output:
   dir: out
-naming:
-  prefix: cgowrap
-  style: preserve
 "#,
     )
     .unwrap();
@@ -555,14 +525,9 @@ fn supports_by_value_internal_types_without_aborting_supported_facade_output() {
         r#"
 version: 1
 input:
-  headers:
-    - include/ThingModel.hpp
-    - include/Api.hpp
+  dir: include
 output:
   dir: out
-naming:
-  prefix: cgowrap
-  style: preserve
 "#,
     )
     .unwrap();
@@ -571,11 +536,10 @@ naming:
         generator::prepare_config(&PipelineContext::new(Config::load(&config_path).unwrap()))
             .unwrap();
     let facade_header = prepared
-        .input
-        .headers
-        .iter()
+        .discovered_headers()
+        .unwrap()
+        .into_iter()
         .find(|path| path.file_name().and_then(|name| name.to_str()) == Some("Api.hpp"))
-        .cloned()
         .unwrap();
     let config = prepared.scoped_to_header(facade_header);
     let parsed = parser::parse(&config).unwrap();
@@ -638,13 +602,9 @@ fn keeps_non_model_methods_on_general_api_path_even_if_names_look_like_lookup_ap
         r#"
 version: 1
 input:
-  headers:
-    - include/Api.hpp
+  dir: include
 output:
   dir: out
-naming:
-  prefix: cgowrap
-  style: preserve
 "#,
     )
     .unwrap();
@@ -703,14 +663,9 @@ fn exposes_model_pointer_and_reference_returns_as_borrowed_wrappers_in_go_facade
         r#"
 version: 1
 input:
-  headers:
-    - include/ThingModel.hpp
-    - include/Api.hpp
+  dir: include
 output:
   dir: out
-naming:
-  prefix: cgowrap
-  style: preserve
 "#,
     )
     .unwrap();
@@ -774,14 +729,9 @@ fn renders_const_model_borrow_returns_in_go_facade() {
         r#"
 version: 1
 input:
-  headers:
-    - include/ThingModel.hpp
-    - include/Api.hpp
+  dir: include
 output:
   dir: out
-naming:
-  prefix: cgowrap
-  style: preserve
 "#,
     )
     .unwrap();
@@ -846,14 +796,9 @@ fn supports_object_reference_params_even_outside_last_position() {
         r#"
 version: 1
 input:
-  headers:
-    - include/ThingModel.hpp
-    - include/Api.hpp
+  dir: include
 output:
   dir: out
-naming:
-  prefix: cgowrap
-  style: preserve
 "#,
     )
     .unwrap();
@@ -911,14 +856,9 @@ fn renders_next_style_methods_with_reference_cursor_and_handle_backed_model_out_
         r#"
 version: 1
 input:
-  headers:
-    - include/WebhookRecord.hpp
-    - include/ApiClient.hpp
+  dir: include
 output:
   dir: out
-naming:
-  prefix: sdk
-  style: preserve
 "#,
     )
     .unwrap();
@@ -943,7 +883,7 @@ naming:
     assert!(go_facade.contains("panic(\"pos reference is nil\")"));
     assert!(go_facade.contains("cArg0 := C.int32_t(*pos)"));
     assert!(go_facade.contains(
-        "result := C.sdk_ApiClient_NextWebhook(a.ptr, &cArg0, requireWebhookRecordHandle(out))"
+        "result := C.cgowrap_ApiClient_NextWebhook(a.ptr, &cArg0, requireWebhookRecordHandle(out))"
     ));
     assert!(go_facade.contains("*pos = int32(cArg0)"));
     assert!(go_facade.contains("return bool(result)"));
@@ -982,13 +922,9 @@ fn generates_callback_typedefs_and_facade_bridge_helpers() {
         r#"
 version: 1
 input:
-  headers:
-    - include/Api.hpp
+  dir: include
 output:
   dir: out
-naming:
-  prefix: sdk
-  style: preserve
 "#,
     )
     .unwrap();
@@ -1007,22 +943,22 @@ naming:
     assert!(raw_header.contains(
         "typedef void (*EventCallback)(unsigned int appId, unsigned int eventId, const char* data, int32_t size);"
     ));
-    assert!(raw_header.contains("void sdk_SetEventCallback_bridge(bool use_cb0);"));
+    assert!(raw_header.contains("void cgowrap_SetEventCallback_bridge(bool use_cb0);"));
 
     assert!(raw_source.contains("extern \"C\" {"));
-    assert!(raw_source.contains("void go_sdk_SetEventCallback_cb0("));
-    assert!(raw_source.contains("EventCallback sdk_SetEventCallback_cb0_trampoline"));
+    assert!(raw_source.contains("void go_cgowrap_SetEventCallback_cb0("));
+    assert!(raw_source.contains("EventCallback cgowrap_SetEventCallback_cb0_trampoline"));
     assert!(raw_source.contains(
-        "sdk_SetEventCallback(use_cb0 ? sdk_SetEventCallback_cb0_trampoline : nullptr);"
+        "cgowrap_SetEventCallback(use_cb0 ? cgowrap_SetEventCallback_cb0_trampoline : nullptr);"
     ));
 
     assert!(go_facade.contains("import \"sync\""));
     assert!(go_facade.contains(
         "type EventCallback func(appId uint32, eventId uint32, data string, size int32)"
     ));
-    assert!(go_facade.contains("var sdk_SetEventCallback_cb0 struct {"));
-    assert!(go_facade.contains("//export go_sdk_SetEventCallback_cb0"));
+    assert!(go_facade.contains("var cgowrap_SetEventCallback_cb0 struct {"));
+    assert!(go_facade.contains("//export go_cgowrap_SetEventCallback_cb0"));
     assert!(go_facade.contains("func SetEventCallback(cb EventCallback) {"));
-    assert!(go_facade.contains("sdk_SetEventCallback_cb0.fn = cb"));
-    assert!(go_facade.contains("C.sdk_SetEventCallback_bridge(C.bool(cb != nil))"));
+    assert!(go_facade.contains("cgowrap_SetEventCallback_cb0.fn = cb"));
+    assert!(go_facade.contains("C.cgowrap_SetEventCallback_bridge(C.bool(cb != nil))"));
 }

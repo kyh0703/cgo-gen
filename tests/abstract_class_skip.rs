@@ -42,13 +42,9 @@ fn skips_constructor_for_abstract_class() {
         r#"
 version: 1
 input:
-  headers:
-    - include/Api.hpp
+  dir: include
 output:
   dir: out
-naming:
-  prefix: cgowrap
-  style: preserve
 "#,
     )
     .unwrap();

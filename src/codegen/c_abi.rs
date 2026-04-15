@@ -9,6 +9,7 @@ use anyhow::{Context, Result, bail};
 use crate::{
     analysis::model_analysis,
     codegen::{go_facade as facade, ir_norm as ir},
+    config::WRAPPER_PREFIX,
     domain::kind::{FieldAccessKind, IrFunctionKind, IrTypeKind},
     ir::{IrCallback, IrFunction, IrModule, IrParam, IrType},
     parsing::parser,
@@ -96,29 +97,38 @@ fn class_handles_with_methods(ir: &IrModule) -> BTreeSet<String> {
 }
 
 fn generation_headers(ctx: &PipelineContext) -> Vec<PathBuf> {
-    if ctx.input.dir.is_some() {
-        return scan_generation_headers(ctx.input.dir.as_ref().unwrap()).unwrap_or_default();
-    }
-
-    ctx.input.headers.clone()
+    ctx.input
+        .dir
+        .as_ref()
+        .and_then(|dir| scan_generation_headers(dir).ok())
+        .unwrap_or_default()
 }
 
 fn scan_generation_headers(dir: &Path) -> Result<Vec<PathBuf>> {
     let mut headers = BTreeSet::new();
+    scan_generation_headers_recursive(dir, &mut headers)?;
+    Ok(headers.into_iter().collect())
+}
+
+fn scan_generation_headers_recursive(dir: &Path, headers: &mut BTreeSet<PathBuf>) -> Result<()> {
     for entry in fs::read_dir(dir)
         .with_context(|| format!("failed to read generation directory: {}", dir.display()))?
     {
         let path = entry?.path();
+        if path.is_dir() {
+            scan_generation_headers_recursive(&path, headers)?;
+            continue;
+        }
         if path.is_file()
             && matches!(
                 path.extension().and_then(|ext| ext.to_str()),
                 Some("h" | "hh" | "hpp" | "hxx")
             )
         {
-            headers.insert(path);
+            headers.insert(path.canonicalize().unwrap_or(path));
         }
     }
-    Ok(headers.into_iter().collect())
+    Ok(())
 }
 
 pub fn prepare_context(ctx: &PipelineContext) -> Result<PipelineContext> {
@@ -330,7 +340,7 @@ fn go_package_name(path: &Path) -> String {
 pub fn render_header(ctx: &PipelineContext, ir: &IrModule) -> String {
     let guard = format!(
         "{}_{}",
-        ctx.naming.prefix.to_uppercase(),
+        WRAPPER_PREFIX.to_uppercase(),
         ctx.output.header.replace('.', "_").to_uppercase()
     );
     let mut out = String::new();
@@ -373,7 +383,7 @@ pub fn render_header(ctx: &PipelineContext, ir: &IrModule) -> String {
     {
         out.push_str(&format!(
             "void {}_string_free(char* value);\n\n",
-            ctx.naming.prefix
+            WRAPPER_PREFIX
         ));
     }
 
@@ -384,7 +394,7 @@ pub fn render_header(ctx: &PipelineContext, ir: &IrModule) -> String {
     {
         out.push_str(&format!(
             "static inline void {}_byte_array_free(uint8_t* value) {{ free(value); }}\n\n",
-            ctx.naming.prefix
+            WRAPPER_PREFIX
         ));
     }
 
@@ -397,7 +407,7 @@ pub fn render_header(ctx: &PipelineContext, ir: &IrModule) -> String {
     if needs_array_free {
         out.push_str(&format!(
             "static inline void {}_array_free(void* value) {{ free(value); }}\n\n",
-            ctx.naming.prefix
+            WRAPPER_PREFIX
         ));
     }
 
@@ -1180,9 +1190,9 @@ fn ir_uses_struct_timeval(ir: &IrModule) -> bool {
         })
 }
 
-fn render_string_free(ctx: &PipelineContext) -> String {
+fn render_string_free(_ctx: &PipelineContext) -> String {
     format!(
         "void {}_string_free(char* value) {{\n    free(value);\n}}\n",
-        ctx.naming.prefix
+        WRAPPER_PREFIX
     )
 }

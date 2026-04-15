@@ -5,6 +5,7 @@ use std::{
 };
 
 use cgo_gen::config::Config;
+use cgo_gen::{generator, pipeline::context::PipelineContext};
 #[cfg(unix)]
 use std::os::unix::fs::symlink;
 
@@ -69,9 +70,6 @@ input:
   dir: include
 output:
   dir: pkg/sdk
-naming:
-  prefix: sdk
-  style: preserve
 "#,
     )
     .unwrap();
@@ -102,9 +100,6 @@ input:
     - '-I{fixture_dir}'
 output:
   dir: pkg/model-record
-naming:
-  prefix: gen
-  style: preserve
 "#
         ),
     )
@@ -119,6 +114,7 @@ fn loads_yaml_config() {
     dir.push(format!("c_go_config_test_{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join("include")).unwrap();
+    fs::write(dir.join("include/foo.hpp"), "int foo();").unwrap();
 
     let config_path = dir.join("cppgo-wrap.yaml");
     fs::write(
@@ -126,8 +122,7 @@ fn loads_yaml_config() {
         r#"
 version: 1
 input:
-  headers:
-    - include/foo.hpp
+  dir: include
 output:
   dir: gen
 "#,
@@ -136,10 +131,8 @@ output:
 
     let config = Config::load(&config_path).unwrap();
     assert_eq!(config.version, Some(1));
-    assert_eq!(config.input.dir, None);
-    assert_eq!(config.input.headers.len(), 1);
+    assert_eq!(config.input.dir.as_ref(), Some(&dir.join("include").canonicalize().unwrap()));
     assert_eq!(config.output.header, "foo_wrapper.h");
-    assert!(config.input.headers[0].is_absolute());
 }
 
 #[test]
@@ -165,11 +158,10 @@ output:
 
     let config = Config::load(&config_path).unwrap();
     let expected_dir = dir.join("include").canonicalize().unwrap();
-    assert!(config.input.headers.is_empty());
     assert_eq!(config.input.dir.as_ref(), Some(&expected_dir));
-    assert_eq!(config.output.header, "wrapper.h");
-    assert_eq!(config.output.source, "wrapper.cpp");
-    assert_eq!(config.output.ir, "wrapper.ir.yaml");
+    assert_eq!(config.output.header, "model_wrapper.h");
+    assert_eq!(config.output.source, "model_wrapper.cpp");
+    assert_eq!(config.output.ir, "model_wrapper.ir.yaml");
 }
 
 #[test]
@@ -189,8 +181,7 @@ fn rejects_removed_allow_diagnostics_key() {
         r#"
 version: 1
 input:
-  headers:
-    - include/foo.hpp
+  dir: include
   allow_diagnostics: true
 output:
   dir: gen
@@ -220,8 +211,7 @@ fn rejects_removed_input_include_dirs_key() {
         r#"
 version: 1
 input:
-  headers:
-    - include/foo.hpp
+  dir: include
   include_dirs:
     - include
 output:
@@ -258,7 +248,7 @@ output:
     .unwrap();
 
     let error = format!("{:#}", Config::load(&config_path).unwrap_err());
-    assert!(error.contains("config.input.dir or config.input.headers must be set"));
+    assert!(error.contains("config.input.dir must be set"));
 }
 
 #[test]
@@ -279,11 +269,9 @@ fn rejects_removed_reserved_config_keys() {
 version: 1
 project_root: .
 input:
-  headers:
-    - include/foo.hpp
+  dir: include
 files:
   model:
-    - include/foo.hpp
 policies:
   string_mode: c_str
 output:
@@ -302,6 +290,7 @@ fn derives_output_filenames_from_header_stem() {
     dir.push(format!("c_go_config_basename_test_{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join("include")).unwrap();
+    fs::write(dir.join("include/foo.hpp"), "int foo();").unwrap();
 
     let config_path = dir.join("cppgo-wrap.yaml");
     fs::write(
@@ -309,8 +298,7 @@ fn derives_output_filenames_from_header_stem() {
         r#"
 version: 1
 input:
-  headers:
-    - include/foo.hpp
+  dir: include
 output:
   dir: gen
 "#,
@@ -353,7 +341,6 @@ output:
     let scoped = config.scoped_to_header(&config.input.dir.as_ref().unwrap().join("model.hpp"));
 
     assert_eq!(scoped.input.dir, config.input.dir);
-    assert!(scoped.input.headers.is_empty());
     assert_eq!(scoped.output.header, "model_wrapper.h");
     assert_eq!(scoped.output.source, "model_wrapper.cpp");
     assert_eq!(scoped.output.ir, "model_wrapper.ir.yaml");
@@ -364,7 +351,6 @@ fn loads_directory_wrapper_example_config() {
     let config_path = write_directory_example_config();
     let config = Config::load(&config_path).unwrap();
 
-    assert_eq!(config.naming.prefix, "sdk");
     assert_eq!(
         config.input.dir.as_ref(),
         Some(
@@ -418,8 +404,7 @@ fn resolves_relative_clang_include_args_from_config_dir() {
         r#"
 version: 1
 input:
-  headers:
-    - include/foo.hpp
+  dir: include
   clang_args:
     - -Ideps/inc
     - -isystem
@@ -480,8 +465,7 @@ fn expands_env_tokens_in_clang_args() {
             r#"
 version: 1
 input:
-  headers:
-    - include/foo.hpp
+  dir: include
   clang_args:
     - ${plain_flag}
     - -I${{{inline_include}}}
@@ -532,8 +516,7 @@ fn rejects_missing_env_tokens_in_clang_args() {
             r#"
 version: 1
 input:
-  headers:
-    - include/foo.hpp
+  dir: include
   clang_args:
     - -I${missing}
 output:
@@ -552,9 +535,6 @@ output:
 fn loads_gen_model_config() {
     let config = Config::load(write_model_record_dir_config()).unwrap();
 
-    assert_eq!(config.naming.prefix, "gen");
-    assert!(config.input.headers.is_empty());
-    assert!(config.input.compile_commands.is_none());
     assert!(
         config
             .input
@@ -582,9 +562,7 @@ fn resolves_symlinked_external_project_paths_from_config_dir() {
 
     let external = dir.join("external-sdk");
     fs::create_dir_all(external.join("include")).unwrap();
-    fs::create_dir_all(external.join("build")).unwrap();
     fs::write(external.join("include/foo.hpp"), "int foo();").unwrap();
-    fs::write(external.join("build/compile_commands.json"), "[]").unwrap();
 
     let workspace = dir.join("workspace");
     fs::create_dir_all(workspace.join("third_party")).unwrap();
@@ -597,7 +575,6 @@ fn resolves_symlinked_external_project_paths_from_config_dir() {
 version: 1
 input:
   dir: third_party/external-sdk/include
-  compile_commands: third_party/external-sdk/build/compile_commands.json
   clang_args:
     - -Ithird_party/external-sdk/include
 output:
@@ -608,16 +585,8 @@ output:
 
     let config = Config::load(&config_path).unwrap();
     let expected_include = external.join("include").canonicalize().unwrap();
-    let expected_compdb = external
-        .join("build/compile_commands.json")
-        .canonicalize()
-        .unwrap();
 
     assert_eq!(config.input.dir.as_ref(), Some(&expected_include));
-    assert_eq!(
-        config.input.compile_commands.as_ref(),
-        Some(&expected_compdb)
-    );
     assert_eq!(
         config.input.clang_args,
         vec![format!("-I{}", normalize_expected_path(&expected_include))]
@@ -642,8 +611,7 @@ fn preserves_raw_clang_args_without_injection() {
         r#"
 version: 1
 input:
-  headers:
-    - include/foo.hpp
+  dir: include
   clang_args:
     - -Imanual/inc
     - -DMODE=1
@@ -664,4 +632,128 @@ output:
         config.input.clang_args,
         vec![expected_manual, "-DMODE=1".to_string()]
     );
+}
+
+#[test]
+fn resolves_relative_ldflags_from_config_dir() {
+    let dir = temp_test_dir("relative_ldflags");
+    fs::create_dir_all(dir.join("include")).unwrap();
+    fs::create_dir_all(dir.join("deps/lib")).unwrap();
+    fs::write(dir.join("include/foo.hpp"), "int foo();").unwrap();
+
+    let config_path = dir.join("cppgo-wrap.yaml");
+    fs::write(
+        &config_path,
+        r#"
+version: 1
+input:
+  dir: include
+  ldflags:
+    - -Ldeps/lib
+    - -lfoo
+    - -L
+    - deps/lib
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(&config_path).unwrap();
+
+    assert_eq!(
+        config.input.ldflags,
+        vec![
+            format!("-L{}", normalize_expected_path(&dir.join("deps/lib"))),
+            "-lfoo".to_string(),
+            "-L".to_string(),
+            normalize_expected_path(&dir.join("deps/lib")),
+        ]
+    );
+}
+
+#[test]
+fn expands_env_tokens_in_ldflags() {
+    let dir = temp_test_dir("env_ldflags");
+    fs::create_dir_all(dir.join("include")).unwrap();
+    fs::create_dir_all(dir.join("deps/lib")).unwrap();
+    fs::write(dir.join("include/foo.hpp"), "int foo();").unwrap();
+
+    let inline_lib = format!("C_GO_TEST_LDFLAG_LIB_{}", std::process::id());
+    let plain_lib = format!("C_GO_TEST_LDFLAG_PLAIN_{}", std::process::id());
+    let _inline_lib = set_test_env(inline_lib.clone(), "deps/lib");
+    let _plain_lib = set_test_env(plain_lib.clone(), "-lfoo");
+
+    let config_path = dir.join("cppgo-wrap.yaml");
+    fs::write(
+        &config_path,
+        format!(
+            r#"
+version: 1
+input:
+  dir: include
+  ldflags:
+    - -L${{{inline_lib}}}
+    - ${plain_lib}
+output:
+  dir: gen
+"#
+        ),
+    )
+    .unwrap();
+
+    let config = Config::load(&config_path).unwrap();
+
+    assert_eq!(
+        config.input.ldflags,
+        vec![
+            format!("-L{}", normalize_expected_path(&dir.join("deps/lib"))),
+            "-lfoo".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn emits_resolved_ldflags_into_build_flags_go() {
+    let dir = temp_test_dir("build_flags_ldflags");
+    fs::create_dir_all(dir.join("include")).unwrap();
+    fs::create_dir_all(dir.join("deps/lib")).unwrap();
+    fs::write(
+        dir.join("include/Foo.hpp"),
+        r#"
+        class Foo {
+        public:
+            Foo() = default;
+            int GetValue() const { return 7; }
+        };
+        "#,
+    )
+    .unwrap();
+
+    let config_path = dir.join("cppgo-wrap.yaml");
+    fs::write(
+        &config_path,
+        r#"
+version: 1
+input:
+  dir: include
+  ldflags:
+    - -Ldeps/lib
+    - -lfoo
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+
+    let ctx = PipelineContext::from_config_path(&config_path)
+        .unwrap()
+        .with_go_module(Some("example.com/ldflags/demo".to_string()));
+    generator::generate_all(&ctx, true).unwrap();
+
+    let build_flags = fs::read_to_string(ctx.output_dir().join("build_flags.go")).unwrap();
+    let resolved_lib_dir = normalize_expected_path(&dir.join("deps/lib"));
+
+    assert!(build_flags.contains("#cgo LDFLAGS:"));
+    assert!(build_flags.contains(&format!("-L{resolved_lib_dir} -lfoo")));
 }

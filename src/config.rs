@@ -14,8 +14,6 @@ pub struct Config {
     pub input: InputConfig,
     #[serde(default)]
     pub output: OutputConfig,
-    #[serde(default)]
-    pub naming: NamingConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -23,16 +21,6 @@ pub struct Config {
 pub struct InputConfig {
     #[serde(default)]
     pub dir: Option<PathBuf>,
-    #[serde(default)]
-    pub headers: Vec<PathBuf>,
-    #[serde(default)]
-    pub dirs: Vec<PathBuf>,
-    #[serde(default)]
-    pub header_dirs: Vec<PathBuf>,
-    #[serde(default)]
-    pub translation_units: Vec<PathBuf>,
-    #[serde(default)]
-    pub compile_commands: Option<PathBuf>,
     #[serde(default)]
     pub clang_args: Vec<String>,
     #[serde(default)]
@@ -62,22 +50,7 @@ impl Default for OutputConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NamingConfig {
-    #[serde(default = "default_prefix")]
-    pub prefix: String,
-    #[serde(default = "default_style")]
-    pub style: String,
-}
-
-impl Default for NamingConfig {
-    fn default() -> Self {
-        Self {
-            prefix: default_prefix(),
-            style: default_style(),
-        }
-    }
-}
+pub const WRAPPER_PREFIX: &str = "cgowrap";
 
 fn default_output_dir() -> PathBuf {
     PathBuf::from("gen")
@@ -90,12 +63,6 @@ fn default_source_name() -> String {
 }
 fn default_ir_name() -> String {
     "wrapper.ir.yaml".to_string()
-}
-fn default_prefix() -> String {
-    "cgowrap".to_string()
-}
-fn default_style() -> String {
-    "preserve".to_string()
 }
 
 fn resolve_ldflags(flags: &mut Vec<String>, base_dir: &Path) -> Result<()> {
@@ -331,19 +298,12 @@ fn is_supported_header_path(path: &Path) -> bool {
     )
 }
 
-fn is_supported_translation_unit_path(path: &Path) -> bool {
-    matches!(
-        path.extension().and_then(|value| value.to_str()),
-        Some("cc" | "cpp" | "cxx")
-    )
-}
-
 fn collect_headers_from_dir(dir: &Path, output: &mut Vec<PathBuf>) -> Result<()> {
     if !dir.exists() {
-        bail!("header directory not found: {}", dir.display());
+        bail!("input.dir not found: {}", dir.display());
     }
     if !dir.is_dir() {
-        bail!("header_dirs entry must be a directory: {}", dir.display());
+        bail!("input.dir must be a directory: {}", dir.display());
     }
 
     let mut entries = fs::read_dir(dir)
@@ -359,36 +319,6 @@ fn collect_headers_from_dir(dir: &Path, output: &mut Vec<PathBuf>) -> Result<()>
             continue;
         }
         if !is_supported_header_path(&path) {
-            continue;
-        }
-        let canonical = path.canonicalize().unwrap_or(path);
-        push_unique_path(output, canonical);
-    }
-
-    Ok(())
-}
-
-fn collect_translation_units_from_dir(dir: &Path, output: &mut Vec<PathBuf>) -> Result<()> {
-    if !dir.exists() {
-        bail!("input.dirs entry not found: {}", dir.display());
-    }
-    if !dir.is_dir() {
-        bail!("input.dirs entry must be a directory: {}", dir.display());
-    }
-
-    let mut entries = fs::read_dir(dir)
-        .with_context(|| format!("failed to read input directory: {}", dir.display()))?
-        .collect::<std::result::Result<Vec<_>, _>>()
-        .with_context(|| format!("failed to list input directory: {}", dir.display()))?;
-    entries.sort_by_key(|entry| entry.path());
-
-    for entry in entries {
-        let path = entry.path();
-        if path.is_dir() {
-            collect_translation_units_from_dir(&path, output)?;
-            continue;
-        }
-        if !is_supported_translation_unit_path(&path) {
             continue;
         }
         let canonical = path.canonicalize().unwrap_or(path);
@@ -415,16 +345,12 @@ impl Config {
         Ok(Self::load_with_raw_clang_args(path)?.0)
     }
 
-    pub fn compile_commands_path(&self) -> Option<PathBuf> {
-        self.input.compile_commands.clone()
-    }
-
-    pub fn parse_entries(&self) -> Vec<PathBuf> {
-        if self.input.translation_units.is_empty() {
-            self.input.headers.clone()
-        } else {
-            self.input.translation_units.clone()
+    pub fn discovered_headers(&self) -> Result<Vec<PathBuf>> {
+        let mut headers = Vec::new();
+        if let Some(dir) = &self.input.dir {
+            collect_headers_from_dir(dir, &mut headers)?;
         }
+        Ok(headers)
     }
 
     pub fn uses_default_output_names(&self) -> bool {
@@ -435,11 +361,6 @@ impl Config {
 
     pub fn scoped_to_header(&self, header: &Path) -> Self {
         let mut scoped = self.clone();
-        if scoped.input.dir.is_none() {
-            scoped.input.headers = vec![header.to_path_buf()];
-        } else {
-            scoped.input.headers.clear();
-        }
         scoped.apply_output_defaults_for_header(header);
         scoped
     }
@@ -447,47 +368,7 @@ impl Config {
     fn resolve_relative_paths(&mut self, config_path: &Path) -> Result<()> {
         let base_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
         if let Some(dir) = &mut self.input.dir {
-            if dir.is_relative() {
-                *dir = base_dir.join(&*dir);
-            }
-            if let Ok(canonical) = dir.canonicalize() {
-                *dir = canonical;
-            }
-        }
-        for header in &mut self.input.headers {
-            resolve_path(header, base_dir);
-        }
-        for header_dir in &mut self.input.header_dirs {
-            resolve_path(header_dir, base_dir);
-        }
-        for dir in &mut self.input.dirs {
             resolve_path(dir, base_dir);
-        }
-        for header_dir in &mut self.input.header_dirs {
-            resolve_path(header_dir, base_dir);
-        }
-        for entry in &mut self.input.translation_units {
-            resolve_path(entry, base_dir);
-        }
-        let mut expanded_headers = Vec::new();
-        for header in &self.input.headers {
-            push_unique_path(&mut expanded_headers, header.clone());
-        }
-        let mut expanded_translation_units = Vec::new();
-        for entry in &self.input.translation_units {
-            push_unique_path(&mut expanded_translation_units, entry.clone());
-        }
-        for dir in &self.input.dirs {
-            collect_headers_from_dir(dir, &mut expanded_headers)?;
-            collect_translation_units_from_dir(dir, &mut expanded_translation_units)?;
-        }
-        for header_dir in &self.input.header_dirs {
-            collect_headers_from_dir(header_dir, &mut expanded_headers)?;
-        }
-        self.input.headers = expanded_headers;
-        self.input.translation_units = expanded_translation_units;
-        if let Some(compdb) = &mut self.input.compile_commands {
-            resolve_path(compdb, base_dir);
         }
         resolve_relative_clang_args(&mut self.input.clang_args, base_dir)?;
         resolve_ldflags(&mut self.input.ldflags, base_dir)?;
@@ -499,17 +380,11 @@ impl Config {
     }
 
     fn validate(&self) -> Result<()> {
-        if self.input.dir.is_none() && self.input.headers.is_empty() {
-            bail!("config.input.dir or config.input.headers must be set");
-        }
-        if let Some(dir) = &self.input.dir
-            && dir.exists()
-            && !dir.is_dir()
-        {
-            bail!(
-                "config.input.dir must point to a directory: {}",
-                dir.display()
-            );
+        let Some(dir) = &self.input.dir else {
+            bail!("config.input.dir must be set");
+        };
+        if dir.exists() && !dir.is_dir() {
+            bail!("config.input.dir must point to a directory: {}", dir.display());
         }
         Ok(())
     }
@@ -532,8 +407,11 @@ impl Config {
     }
 
     fn apply_output_defaults(&mut self) {
-        if self.input.headers.len() == 1 {
-            self.apply_output_defaults_for_header(&self.input.headers[0].clone());
+        let Ok(headers) = self.discovered_headers() else {
+            return;
+        };
+        if headers.len() == 1 {
+            self.apply_output_defaults_for_header(&headers[0]);
         }
     }
 

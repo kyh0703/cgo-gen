@@ -1,8 +1,7 @@
 version: 1
 
 input:
-  header_dirs:
-    - cpp
+  dir: cpp
 
 output:
   dir: pkg/demo

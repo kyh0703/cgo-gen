@@ -16,8 +16,7 @@ fn write_fixture(name: &str, header: &str) -> std::path::PathBuf {
         r#"
 version: 1
 input:
-  headers:
-    - include/Api.hpp
+  dir: include
 output:
   dir: gen
 "#,

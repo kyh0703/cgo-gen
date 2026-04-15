@@ -44,20 +44,14 @@ fn write_simple_cpp_config(root: &Path) -> PathBuf {
         format!(
             r#"version: 1
 input:
-  headers:
-    - {}
-  compile_commands: {}
+  dir: {}
+  clang_args:
+    - -std=c++17
 output:
   dir: out
-naming:
-  prefix: cgowrap
-  style: snake_case
 "#,
             project_root
-                .join("examples/simple-cpp/include/foo.hpp")
-                .display(),
-            project_root
-                .join("examples/simple-cpp/build/compile_commands.json")
+                .join("examples/simple-cpp/include")
                 .display()
         ),
     )
@@ -81,16 +75,16 @@ fn generated_wrapper_compiles_and_runs_against_sample_cpp_library() {
             r#"
         #include "{}"
         int main() {{
-            fooBarHandle* bar = cgowrap_foo_bar_new(7);
+            fooBarHandle* bar = cgowrap_foo_Bar_new(7);
             if (bar == nullptr) return 10;
             if (cgowrap_foo_add(1, 2) != 3) return 11;
-            if (cgowrap_foo_bar_value(bar) != 7) return 12;
-            cgowrap_foo_bar_set_value(bar, 9);
-            if (cgowrap_foo_bar_value(bar) != 9) return 13;
-            char* name = cgowrap_foo_bar_name(bar);
+            if (cgowrap_foo_Bar_value(bar) != 7) return 12;
+            cgowrap_foo_Bar_set_value(bar, 9);
+            if (cgowrap_foo_Bar_value(bar) != 9) return 13;
+            char* name = cgowrap_foo_Bar_name(bar);
             if (name == nullptr) return 14;
             cgowrap_string_free(name);
-            cgowrap_foo_bar_delete(bar);
+            cgowrap_foo_Bar_delete(bar);
             return 0;
         }}
         "#,
@@ -165,8 +159,7 @@ fn generated_wrapper_compiles_for_enum_and_alias_overload_header() {
         r#"
 version: 1
 input:
-  headers:
-    - include/iSerialize.h
+  dir: include
 output:
   dir: out
 "#,
@@ -248,8 +241,7 @@ fn generated_wrapper_compiles_for_struct_field_accessors() {
         r#"
 version: 1
 input:
-  headers:
-    - include/Counter.hpp
+  dir: include
 output:
   dir: out
 "#,
@@ -325,8 +317,7 @@ fn generated_wrapper_compiles_for_char_array_field_accessors() {
         r#"
 version: 1
 input:
-  headers:
-    - include/Agent.hpp
+  dir: include
 output:
   dir: out
 "#,
@@ -418,8 +409,7 @@ fn generated_wrapper_compiles_for_fixed_model_array_field_accessors() {
         r#"
 version: 1
 input:
-  headers:
-    - include/Holder.hpp
+  dir: include
 output:
   dir: out
 "#,
@@ -523,8 +513,7 @@ fn generated_wrapper_compiles_for_model_value_borrow_semantics() {
         r#"
 version: 1
 input:
-  headers:
-    - include/Models.hpp
+  dir: include
 output:
   dir: out
 "#,
@@ -623,8 +612,7 @@ fn generated_wrapper_compiles_for_abstract_model_pointer_returns() {
         r#"
 version: 1
 input:
-  headers:
-    - include/Factory.hpp
+  dir: include
 output:
   dir: out
 "#,
@@ -952,8 +940,7 @@ fn generated_wrapper_compiles_for_const_model_value_and_reference_args() {
         r#"
 version: 1
 input:
-  headers:
-    - include/FlowApi.hpp
+  dir: include
 output:
   dir: out
 "#,

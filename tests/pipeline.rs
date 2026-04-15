@@ -29,7 +29,7 @@ fn parses_fixture_and_builds_ir() {
     assert!(
         ir.functions
             .iter()
-            .any(|item| item.name == "cgowrap_foo_bar_new")
+            .any(|item| item.name == "cgowrap_foo_Bar_new")
     );
     assert!(
         ir.functions
@@ -37,7 +37,7 @@ fn parses_fixture_and_builds_ir() {
             .any(|item| item.name == "cgowrap_foo_add")
     );
     assert!(ir.functions.iter().any(|item| {
-        item.name == "cgowrap_foo_bar_name" && item.returns.kind == IrTypeKind::String
+        item.name == "cgowrap_foo_Bar_name" && item.returns.kind == IrTypeKind::String
     }));
 }
 
@@ -86,8 +86,7 @@ fn parses_struct_and_class_as_distinct_record_kinds() {
         r#"
 version: 1
 input:
-  headers:
-    - include/Api.hpp
+  dir: include
 output:
   dir: gen
 "#,

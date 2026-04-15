@@ -170,20 +170,80 @@ pub fn parse(ctx: &PipelineContext) -> Result<ParsedApi> {
             bail!("failed to create libclang index");
         }
 
-        for translation_unit_path in &translation_units {
-            compiler::ensure_header_exists(translation_unit_path)?;
-            let args = compiler::collect_clang_args(&ctx.config, translation_unit_path)?;
-            let c_header = CString::new(translation_unit_path.to_string_lossy().to_string())?;
-            let c_args = args
-                .iter()
-                .map(|arg| CString::new(arg.as_str()))
-                .collect::<std::result::Result<Vec<_>, _>>()?;
-            let mut arg_ptrs = c_args.iter().map(|arg| arg.as_ptr()).collect::<Vec<_>>();
+        parse_translation_units(
+            index,
+            ctx,
+            &filter,
+            &translation_units,
+            &mut discovered_headers,
+            &mut api,
+        )?;
 
-            let flags = (CXTranslationUnit_DetailedPreprocessingRecord
-                | CXTranslationUnit_SkipFunctionBodies) as c_int;
-            let mut translation_unit = ptr::null_mut();
-            let error = clang_parseTranslationUnit2(
+        if let Some(dir) = &ctx.input.dir {
+            let all_headers = ctx.config.discovered_headers()?;
+            let supplemental_headers = all_headers
+                .into_iter()
+                .filter(|path| path.starts_with(dir))
+                .filter(|path| {
+                    !discovered_headers.iter().any(|seen| {
+                        Path::new(seen)
+                            .canonicalize()
+                            .map(|candidate| candidate == *path)
+                            .unwrap_or(false)
+                    })
+                })
+                .filter(|path| {
+                    ctx.target_header
+                        .as_ref()
+                        .map(|target| same_path(path, target))
+                        .unwrap_or(true)
+                })
+                .collect::<Vec<_>>();
+
+            if !supplemental_headers.is_empty() {
+                parse_translation_units(
+                    index,
+                    ctx,
+                    &filter,
+                    &supplemental_headers,
+                    &mut discovered_headers,
+                    &mut api,
+                )?;
+            }
+        }
+
+        clang_disposeIndex(index);
+    }
+
+    api.headers = discovered_headers.into_iter().collect();
+    dedupe_api(&mut api);
+    Ok(api)
+}
+
+unsafe fn parse_translation_units(
+    index: CXIndex,
+    ctx: &PipelineContext,
+    filter: &ParseFilter,
+    translation_units: &[PathBuf],
+    discovered_headers: &mut BTreeSet<String>,
+    api: &mut ParsedApi,
+) -> Result<()> {
+    for translation_unit_path in translation_units {
+        compiler::ensure_header_exists(translation_unit_path)?;
+        let args = compiler::collect_clang_args(&ctx.config, translation_unit_path)?;
+        let c_header = CString::new(translation_unit_path.to_string_lossy().to_string())?;
+        let c_args = args
+            .iter()
+            .map(|arg| CString::new(arg.as_str()))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let mut arg_ptrs = c_args.iter().map(|arg| arg.as_ptr()).collect::<Vec<_>>();
+
+        let flags =
+            (CXTranslationUnit_DetailedPreprocessingRecord | CXTranslationUnit_SkipFunctionBodies)
+                as c_int;
+        let mut translation_unit = ptr::null_mut();
+        let error = unsafe {
+            clang_parseTranslationUnit2(
                 index,
                 c_header.as_ptr(),
                 arg_ptrs.as_mut_ptr(),
@@ -192,48 +252,36 @@ pub fn parse(ctx: &PipelineContext) -> Result<ParsedApi> {
                 0,
                 flags,
                 &mut translation_unit,
+            )
+        };
+
+        if error != CXError_Success || translation_unit.is_null() {
+            bail!(
+                "failed to parse {} with libclang (error code {})",
+                translation_unit_path.display(),
+                error
             );
-
-            if error != CXError_Success || translation_unit.is_null() {
-                bail!(
-                    "failed to parse {} with libclang (error code {})",
-                    translation_unit_path.display(),
-                    error
-                );
-            }
-
-            let root = clang_getTranslationUnitCursor(translation_unit);
-            for child in direct_children(root) {
-                collect_entity(child, &[], &filter, &mut discovered_headers, &mut api)?;
-            }
-
-            let diagnostics = collect_diagnostics(translation_unit);
-            if !diagnostics.is_empty() {
-                clang_disposeTranslationUnit(translation_unit);
-                bail!(
-                    "libclang reported diagnostics while parsing {}:\n{}",
-                    translation_unit_path.display(),
-                    diagnostics.join("\n")
-                );
-            }
-
-            clang_disposeTranslationUnit(translation_unit);
         }
 
-        clang_disposeIndex(index);
+        let root = unsafe { clang_getTranslationUnitCursor(translation_unit) };
+        for child in direct_children(root) {
+            collect_entity(child, &[], filter, discovered_headers, api)?;
+        }
+
+        let diagnostics = collect_diagnostics(translation_unit);
+        if !diagnostics.is_empty() {
+            unsafe { clang_disposeTranslationUnit(translation_unit) };
+            bail!(
+                "libclang reported diagnostics while parsing {}:\n{}",
+                translation_unit_path.display(),
+                diagnostics.join("\n")
+            );
+        }
+
+        unsafe { clang_disposeTranslationUnit(translation_unit) };
     }
 
-    api.headers = if !ctx.input.headers.is_empty() {
-        ctx.input
-            .headers
-            .iter()
-            .map(|path| path.display().to_string())
-            .collect()
-    } else {
-        discovered_headers.into_iter().collect()
-    };
-    dedupe_api(&mut api);
-    Ok(api)
+    Ok(())
 }
 
 fn dedupe_api(api: &mut ParsedApi) {
@@ -284,7 +332,7 @@ struct ParseFilter {
 impl ParseFilter {
     fn from_context(ctx: &PipelineContext) -> Self {
         Self {
-            main_file_only: ctx.input.dir.is_none(),
+            main_file_only: false,
             owned_dir: ctx.input.dir.clone(),
             target_header: ctx.target_header.clone(),
         }

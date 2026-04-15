@@ -41,13 +41,9 @@ fn resolves_typedef_aliases_via_canonical_types() {
         r#"
 version: 1
 input:
-  headers:
-    - include/Api.hpp
+  dir: include
 output:
   dir: out
-naming:
-  prefix: cgowrap
-  style: preserve
 "#,
     )
     .unwrap();
@@ -105,13 +101,9 @@ fn resolves_typedef_alias_fixed_array_fields_via_canonical_types() {
         r#"
 version: 1
 input:
-  headers:
-    - include/Api.hpp
+  dir: include
 output:
   dir: out
-naming:
-  prefix: cgowrap
-  style: preserve
 "#,
     )
     .unwrap();
@@ -166,13 +158,9 @@ fn resolves_reason_and_subscription_fixed_arrays_via_canonical_unsigned_types() 
         r#"
 version: 1
 input:
-  headers:
-    - include/Api.hpp
+  dir: include
 output:
   dir: out
-naming:
-  prefix: cgowrap
-  style: preserve
 "#,
     )
     .unwrap();

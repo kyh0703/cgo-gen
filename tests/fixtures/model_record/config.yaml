@@ -1,12 +1,8 @@
 version: 1
 
 input:
-  headers:
-    - include/DataRecord.h
+  dir: include
 
 output:
   dir: out
 
-naming:
-  prefix: gen
-  style: preserve

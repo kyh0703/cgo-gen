@@ -46,25 +46,25 @@ fn disambiguates_overloaded_methods_with_signature_suffixes() {
     assert!(
         ir.functions
             .iter()
-            .any(|item| item.name == "cgowrap_clash_widget_set__int_mut")
+            .any(|item| item.name == "cgowrap_clash_Widget_set__int_mut")
     );
     assert!(
         ir.functions
             .iter()
-            .any(|item| item.name == "cgowrap_clash_widget_set__double_mut")
+            .any(|item| item.name == "cgowrap_clash_Widget_set__double_mut")
     );
 
     let header = render_header(&ctx, &ir);
     let source = render_source(&ctx, &ir);
     assert!(
         header
-            .contains("int cgowrap_clash_widget_set__int_mut(clashWidgetHandle* self, int value);")
+            .contains("int cgowrap_clash_Widget_set__int_mut(clashWidgetHandle* self, int value);")
     );
     assert!(header.contains(
-        "int cgowrap_clash_widget_set__double_mut(clashWidgetHandle* self, double value);"
+        "int cgowrap_clash_Widget_set__double_mut(clashWidgetHandle* self, double value);"
     ));
-    assert!(source.contains("cgowrap_clash_widget_set__int_mut"));
-    assert!(source.contains("cgowrap_clash_widget_set__double_mut"));
+    assert!(source.contains("cgowrap_clash_Widget_set__int_mut"));
+    assert!(source.contains("cgowrap_clash_Widget_set__double_mut"));
 }
 
 #[test]
@@ -88,8 +88,7 @@ fn disambiguates_overloaded_constructors_without_panicking() {
         r#"
 version: 1
 input:
-  headers:
-    - include/Widget.hpp
+  dir: include
 output:
   dir: gen
 "#,
@@ -136,8 +135,7 @@ fn renders_go_facade_for_overloaded_constructors_with_explicit_names() {
         r#"
 version: 1
 input:
-  headers:
-    - include/Widget.hpp
+  dir: include
 output:
   dir: gen
 "#,
