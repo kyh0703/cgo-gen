@@ -384,7 +384,10 @@ impl Config {
             bail!("config.input.dir must be set");
         };
         if dir.exists() && !dir.is_dir() {
-            bail!("config.input.dir must point to a directory: {}", dir.display());
+            bail!(
+                "config.input.dir must point to a directory: {}",
+                dir.display()
+            );
         }
         Ok(())
     }

@@ -238,9 +238,8 @@ unsafe fn parse_translation_units(
             .collect::<std::result::Result<Vec<_>, _>>()?;
         let mut arg_ptrs = c_args.iter().map(|arg| arg.as_ptr()).collect::<Vec<_>>();
 
-        let flags =
-            (CXTranslationUnit_DetailedPreprocessingRecord | CXTranslationUnit_SkipFunctionBodies)
-                as c_int;
+        let flags = (CXTranslationUnit_DetailedPreprocessingRecord
+            | CXTranslationUnit_SkipFunctionBodies) as c_int;
         let mut translation_unit = ptr::null_mut();
         let error = unsafe {
             clang_parseTranslationUnit2(

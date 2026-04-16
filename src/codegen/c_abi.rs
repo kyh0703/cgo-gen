@@ -12,7 +12,7 @@ use crate::{
     config::WRAPPER_PREFIX,
     domain::kind::{FieldAccessKind, IrFunctionKind, IrTypeKind},
     ir::{IrCallback, IrFunction, IrModule, IrParam, IrType},
-    parsing::parser,
+    parsing::{compiler, parser},
     pipeline::context::PipelineContext,
 };
 
@@ -420,7 +420,7 @@ pub fn render_source(ctx: &PipelineContext, ir: &IrModule) -> String {
     let mut out = String::new();
     out.push_str(&format!("#include \"{}\"\n", ctx.output.header));
     out.push_str("#include <cstdlib>\n#include <cstring>\n#include <new>\n#include <string>\n\n");
-    for include_name in source_include_prelude(ir) {
+    for include_name in source_include_prelude(ctx, ir) {
         out.push_str(&format!("#include \"{}\"\n", include_name));
     }
     out.push('\n');
@@ -457,10 +457,16 @@ pub fn render_source(ctx: &PipelineContext, ir: &IrModule) -> String {
     out
 }
 
-fn source_include_prelude(ir: &IrModule) -> Vec<String> {
+fn source_include_prelude(ctx: &PipelineContext, ir: &IrModule) -> Vec<String> {
     let mut ordered_paths = Vec::new();
     let mut emitted = BTreeSet::new();
     for header in &ir.source_headers {
+        for include_path in translation_unit_support_include_paths(ctx, Path::new(header)) {
+            let normalized = fs::canonicalize(&include_path).unwrap_or(include_path);
+            if emitted.insert(normalized.clone()) {
+                ordered_paths.push(normalized);
+            }
+        }
         for include_path in immediate_local_include_paths(Path::new(header)) {
             let normalized = fs::canonicalize(&include_path).unwrap_or(include_path);
             if emitted.insert(normalized.clone()) {
@@ -473,19 +479,8 @@ fn source_include_prelude(ir: &IrModule) -> Vec<String> {
         }
     }
 
-    let mut token_scan = String::new();
-    let mut scanned = BTreeSet::new();
-    for header in &ir.source_headers {
-        collect_recursive_token_scan(Path::new(header), &mut scanned, &mut token_scan);
-    }
-
     let mut include_names = Vec::new();
     let mut seen = BTreeSet::new();
-    for support in supplemental_support_headers(&token_scan) {
-        if seen.insert(support.to_string()) {
-            include_names.push(support.to_string());
-        }
-    }
     for path in ordered_paths {
         let include_name = path
             .file_name()
@@ -499,44 +494,47 @@ fn source_include_prelude(ir: &IrModule) -> Vec<String> {
     include_names
 }
 
+fn translation_unit_support_include_paths(ctx: &PipelineContext, header: &Path) -> Vec<PathBuf> {
+    let target = fs::canonicalize(header).unwrap_or_else(|_| header.to_path_buf());
+    let mut support_paths = Vec::new();
+    let mut seen = BTreeSet::new();
+
+    for unit in compiler::collect_translation_units(&ctx.config)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|path| is_source_translation_unit(path))
+    {
+        let normalized = fs::canonicalize(&unit).unwrap_or(unit);
+        let Ok(contents) = fs::read_to_string(&normalized) else {
+            continue;
+        };
+        let Some(target_index) = leading_local_include_paths(&normalized, &contents)
+            .iter()
+            .position(|include_path| same_canonical_path(include_path, &target))
+        else {
+            continue;
+        };
+
+        for include_path in leading_local_include_paths(&normalized, &contents)
+            .into_iter()
+            .take(target_index)
+        {
+            let normalized = fs::canonicalize(&include_path).unwrap_or(include_path);
+            if seen.insert(normalized.clone()) {
+                support_paths.push(normalized);
+            }
+        }
+    }
+
+    support_paths
+}
+
 fn immediate_local_include_paths(path: &Path) -> Vec<PathBuf> {
     let normalized = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let Ok(contents) = fs::read_to_string(&normalized) else {
         return Vec::new();
     };
-    let parent = normalized.parent().unwrap_or_else(|| Path::new("."));
-    leading_local_quoted_includes(&contents)
-        .into_iter()
-        .map(|include| parent.join(include))
-        .filter(|include_path| include_path.exists())
-        .collect()
-}
-
-fn collect_recursive_token_scan(
-    path: &Path,
-    visited: &mut BTreeSet<PathBuf>,
-    token_scan: &mut String,
-) {
-    let normalized = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    if !visited.insert(normalized.clone()) {
-        return;
-    }
-
-    let Ok(contents) = fs::read_to_string(&normalized) else {
-        return;
-    };
-    token_scan.push_str(&contents);
-    token_scan.push('\n');
-
-    for include in local_quoted_includes(&contents) {
-        let include_path = normalized
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join(include);
-        if include_path.exists() {
-            collect_recursive_token_scan(&include_path, visited, token_scan);
-        }
-    }
+    leading_local_include_paths(&normalized, &contents)
 }
 
 fn local_quoted_includes(contents: &str) -> Vec<String> {
@@ -552,8 +550,9 @@ fn local_quoted_includes(contents: &str) -> Vec<String> {
         .collect()
 }
 
-fn leading_local_quoted_includes(contents: &str) -> Vec<String> {
+fn leading_local_include_paths(path: &Path, contents: &str) -> Vec<PathBuf> {
     let mut includes = Vec::new();
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
     for line in contents.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty()
@@ -566,7 +565,10 @@ fn leading_local_quoted_includes(contents: &str) -> Vec<String> {
             continue;
         }
         if let Some(include) = local_quoted_includes(trimmed).into_iter().next() {
-            includes.push(include);
+            let include_path = parent.join(include);
+            if include_path.exists() {
+                includes.push(include_path);
+            }
             continue;
         }
         if trimmed.starts_with('#') {
@@ -577,22 +579,17 @@ fn leading_local_quoted_includes(contents: &str) -> Vec<String> {
     includes
 }
 
-fn supplemental_support_headers(token_scan: &str) -> Vec<&'static str> {
-    let mut headers = Vec::new();
-    for (token, header) in [
-        ("iSerialize", "iSerialize.h"),
-        ("iChLeg_t", "iSilType.h"),
-        ("iMsChnl_t", "iSilType.h"),
-        ("SIL_NAME128", "iSiDef.h"),
-        ("SIL_SORTSEQ_SIZE", "iSiDef.h"),
-        ("SIL_IPv6_SIZE", "iSiDef.h"),
-        ("SIL_ORA_DATE_SIZE", "iSiDef.h"),
-    ] {
-        if token_scan.contains(token) && !headers.contains(&header) {
-            headers.push(header);
-        }
-    }
-    headers
+fn is_source_translation_unit(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|ext| ext.to_str()),
+        Some("c" | "cc" | "cpp" | "cxx")
+    )
+}
+
+fn same_canonical_path(left: &Path, right: &Path) -> bool {
+    fs::canonicalize(left)
+        .map(|path| path == right)
+        .unwrap_or_else(|_| left == right)
 }
 
 pub fn render_go_structs(ctx: &PipelineContext, ir: &IrModule) -> Result<Vec<GeneratedGoFile>> {

@@ -131,7 +131,10 @@ output:
 
     let config = Config::load(&config_path).unwrap();
     assert_eq!(config.version, Some(1));
-    assert_eq!(config.input.dir.as_ref(), Some(&dir.join("include").canonicalize().unwrap()));
+    assert_eq!(
+        config.input.dir.as_ref(),
+        Some(&dir.join("include").canonicalize().unwrap())
+    );
     assert_eq!(config.output.header, "foo_wrapper.h");
 }
 
