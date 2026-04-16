@@ -168,6 +168,38 @@ output:
 }
 
 #[test]
+fn loads_input_owner_overrides() {
+    let dir = temp_test_dir("owner_overrides");
+    fs::create_dir_all(dir.join("include")).unwrap();
+    fs::write(dir.join("include/factory.hpp"), "class Factory {};").unwrap();
+
+    let config_path = dir.join("cppgo-wrap.yaml");
+    fs::write(
+        &config_path,
+        r#"
+version: 1
+input:
+  dir: include
+  owner:
+    - DBHandlerFactory::CreateHandler
+    - WidgetFactory::Create
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(&config_path).unwrap();
+    assert_eq!(
+        config.input.owner,
+        vec![
+            "DBHandlerFactory::CreateHandler".to_string(),
+            "WidgetFactory::Create".to_string()
+        ]
+    );
+}
+
+#[test]
 fn rejects_removed_allow_diagnostics_key() {
     let mut dir = env::temp_dir();
     dir.push(format!(

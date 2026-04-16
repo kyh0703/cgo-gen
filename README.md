@@ -111,6 +111,8 @@ input:
   clang_args:
     - -Ipath/to/include
     - -std=c++17
+  owner:
+    - WidgetFactory::Create
   ldflags:
     - -Lpath/to/lib
     - -lfoo
@@ -171,6 +173,7 @@ You do not need many knobs to get started. These are the supported ones:
 
 - `input.dir`: recursive input root used for header discovery and translation-unit discovery
 - `input.clang_args`: extra libclang flags such as `-I...`, `-isystem...`, `-D...`, `-std=...`
+- `input.owner`: qualified callable names whose pointer returns should be emitted as owned Go wrappers
 - `input.ldflags`: linker flags forwarded into generated `build_flags.go`
 - `output.dir`: output directory
 - `output.header`, `output.source`, `output.ir`: optional explicit filenames for single-header generation
@@ -180,6 +183,8 @@ Important caveats:
 - if you use multi-header generation, leave `output.header`, `output.source`, and `output.ir` at their defaults
 - generated C symbol naming is fixed in source and is not configurable via YAML
 - `input.clang_args` and `input.ldflags` resolve relative paths from the config file directory
+- use `input.owner` only when a pointer return actually transfers ownership, for example a factory method that returns `new`-allocated objects
+- `input.owner` matches by qualified callable name such as `WidgetFactory::Create`; if the same name is overloaded, every matching overload is treated as owned
 - env expansion supports `$VAR`, `$(VAR)`, and `${VAR}` only
 
 ## Examples

@@ -111,6 +111,8 @@ input:
   clang_args:
     - -Ipath/to/include
     - -std=c++17
+  owner:
+    - WidgetFactory::Create
   ldflags:
     - -Lpath/to/lib
     - -lfoo
@@ -173,6 +175,7 @@ cgo-gen generate --config path/to/config.yaml --go-module example.com/acme/foo
 
 - `input.dir`: header discovery와 translation-unit discovery에 쓰이는 재귀 입력 루트
 - `input.clang_args`: `-I`, `-isystem`, `-D`, `-std=...` 같은 추가 libclang 인자
+- `input.owner`: pointer return을 owned Go wrapper로 강제할 qualified callable name 목록
 - `input.ldflags`: 생성되는 `build_flags.go`에 전달할 링커 플래그
 - `output.dir`: 출력 디렉터리
 - `output.header`, `output.source`, `output.ir`: single-header 생성에서만 쓰는 선택적 파일명 override
@@ -182,6 +185,8 @@ cgo-gen generate --config path/to/config.yaml --go-module example.com/acme/foo
 - multi-header generation에서는 `output.header`, `output.source`, `output.ir`를 기본값으로 두는 편이 안전합니다.
 - 생성되는 C symbol naming은 코드에 고정돼 있으며 YAML로 바꿀 수 없습니다.
 - `input.clang_args`와 `input.ldflags`의 상대 경로는 config 파일 위치 기준으로 해석됩니다.
+- `input.owner`는 factory method처럼 pointer return이 실제로 ownership을 넘기는 경우에만 사용해야 합니다.
+- `input.owner`는 `WidgetFactory::Create` 같은 qualified callable name으로 매칭되며, 같은 이름의 overload가 있으면 모두 owned로 처리됩니다.
 - env 확장은 `$VAR`, `$(VAR)`, `${VAR}`만 지원합니다.
 
 ## 예제

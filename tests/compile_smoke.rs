@@ -608,6 +608,8 @@ fn generated_wrapper_compiles_for_abstract_model_pointer_returns() {
 version: 1
 input:
   dir: include
+  owner:
+    - DBHandlerFactory::CreateHandler
 output:
   dir: out
 "#,
@@ -621,10 +623,14 @@ output:
     generator::generate(&ctx, &ir, true, &Default::default()).unwrap();
 
     let source = fs::read_to_string(config.output_dir().join(&config.output.source)).unwrap();
+    let go_facade = fs::read_to_string(config.output_dir().join("factory_wrapper.go")).unwrap();
     assert!(source.contains(
         "return reinterpret_cast<DBHandlerHandle*>(reinterpret_cast<DBHandlerFactory*>(self)->CreateHandler());"
     ));
     assert!(!source.contains("new DBHandler(*result)"));
+    assert!(go_facade.contains(
+        "return &DBHandler{ptr: raw, owned: true, root: new(bool)}"
+    ));
 
     let smoke_cpp = config.output.dir.join("smoke.cpp");
     fs::write(

@@ -25,6 +25,8 @@ pub struct InputConfig {
     pub clang_args: Vec<String>,
     #[serde(default)]
     pub ldflags: Vec<String>,
+    #[serde(default)]
+    pub owner: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

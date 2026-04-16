@@ -689,6 +689,69 @@ output:
 }
 
 #[test]
+fn renders_owner_marked_model_pointer_returns_as_owned_in_go_facade() {
+    let root = temp_output_dir("owner-marked-model-pointer-return");
+    let include_dir = root.join("include");
+    fs::create_dir_all(&include_dir).unwrap();
+
+    fs::write(
+        include_dir.join("Factory.hpp"),
+        r#"
+        class DBHandler {
+        public:
+            virtual ~DBHandler() = default;
+            int GetValue() const { return 7; }
+            virtual void ProcDml() = 0;
+        };
+
+        class ConcreteHandler : public DBHandler {
+        public:
+            void ProcDml() override {}
+        };
+
+        class DBHandlerFactory {
+        public:
+            DBHandlerFactory() = default;
+            ~DBHandlerFactory() = default;
+            DBHandler* CreateHandler() { return new ConcreteHandler(); }
+        };
+        "#,
+    )
+    .unwrap();
+
+    let config_path = root.join("cppgo-wrap.yaml");
+    fs::write(
+        &config_path,
+        r#"
+version: 1
+input:
+  dir: include
+  owner:
+    - DBHandlerFactory::CreateHandler
+output:
+  dir: out
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(&config_path).unwrap();
+    let ctx = PipelineContext::new(config.clone());
+    generator::generate_all(&ctx, true).unwrap();
+
+    let raw_source = fs::read_to_string(root.join("out/factory_wrapper.cpp")).unwrap();
+    let go_facade = fs::read_to_string(root.join("out/factory_wrapper.go")).unwrap();
+
+    assert!(raw_source.contains(
+        "return reinterpret_cast<DBHandlerHandle*>(reinterpret_cast<DBHandlerFactory*>(self)->CreateHandler());"
+    ));
+    assert!(go_facade.contains("func (d *DBHandlerFactory) CreateHandler() *DBHandler {"));
+    assert!(go_facade.contains(
+        "return &DBHandler{ptr: raw, owned: true, root: new(bool)}"
+    ));
+    assert!(!go_facade.contains("return newBorrowedDBHandler(raw, d.root)"));
+}
+
+#[test]
 fn renders_const_model_borrow_returns_in_go_facade() {
     let root = temp_output_dir("const-model-borrow-raw-only");
     let include_dir = root.join("include");

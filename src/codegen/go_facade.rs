@@ -283,21 +283,22 @@ fn render_go_facade_file(
         out.push('\n');
     }
 
-    for function in functions {
-        out.push_str(&render_free_function(config, function));
-        out.push('\n');
-    }
-
-    let mut covered_handles = classes
+    let mut covered_handles: BTreeSet<String> = classes
         .iter()
-        .map(|class| class.handle_name.as_str())
-        .collect::<std::collections::BTreeSet<_>>();
+        .map(|class| class.handle_name.clone())
+        .collect();
     covered_handles.extend(
         config
             .known_model_projections
             .iter()
-            .map(|projection| projection.handle_name.as_str()),
+            .map(|projection| projection.handle_name.clone()),
     );
+
+    for function in functions {
+        out.push_str(&render_free_function(config, function, &covered_handles));
+        out.push('\n');
+    }
+
     // Also track Go names used by primary class wrappers to catch cases where a typedef
     // and a class produce the same Go name (e.g. _LegId class → "LegId", LegId opaque → "LegId").
     let mut covered_go_names: BTreeSet<String> =
@@ -310,7 +311,7 @@ fn render_go_facade_file(
     );
 
     for opaque in opaque_types {
-        if covered_handles.contains(opaque.name.as_str()) {
+        if covered_handles.contains(&opaque.name) {
             continue;
         }
         let base = opaque.name.strip_suffix("Handle").unwrap_or(&opaque.name);
@@ -344,7 +345,12 @@ fn render_go_facade_file(
         out.push_str(&render_handle_helpers(class));
         out.push('\n');
         for method in &class.methods {
-            out.push_str(&render_general_api_method(config, class, method));
+            out.push_str(&render_general_api_method(
+                config,
+                class,
+                method,
+                &covered_handles,
+            ));
             out.push('\n');
         }
     }
@@ -630,12 +636,13 @@ fn render_general_api_method(
     config: &PipelineContext,
     class: &AnalyzedFacadeClass<'_>,
     function: &IrFunction,
+    covered_handles: &BTreeSet<String>,
 ) -> String {
     if let Some(rendered) = render_special_field_method(config, class, function) {
         return rendered;
     }
     if has_callback_param(function.params.iter().skip(1)) {
-        return render_callback_method(config, class, function);
+        return render_callback_method(config, class, function, covered_handles);
     }
     let receiver = receiver_name(&class.go_name);
     let method_params = function.params.iter().skip(1).collect::<Vec<_>>();
@@ -678,6 +685,7 @@ fn render_general_api_method(
         &call,
         &prep.post_call_lines,
         Some(format!("{receiver}.root")),
+        covered_handles,
     ));
     out.push_str("}\n");
     out
@@ -693,7 +701,9 @@ fn render_special_field_method(
         && function.returns.kind == IrTypeKind::FixedModelArray
     {
         return Some(render_fixed_model_array_getter_wrapper(
-            config, class, function,
+            config,
+            class,
+            function,
         ));
     }
     if accessor.access == FieldAccessKind::Set
@@ -890,9 +900,13 @@ fn render_param_list_dummy(function: &IrFunction) -> String {
         .join(", ")
 }
 
-fn render_free_function(config: &PipelineContext, function: &IrFunction) -> String {
+fn render_free_function(
+    config: &PipelineContext,
+    function: &IrFunction,
+    covered_handles: &BTreeSet<String>,
+) -> String {
     if has_callback_param(function.params.iter()) {
-        return render_callback_free_function(config, function);
+        return render_callback_free_function(config, function, covered_handles);
     }
     let params_list = function.params.iter().collect::<Vec<_>>();
     let params = render_param_list(config, &params_list);
@@ -916,6 +930,7 @@ fn render_free_function(config: &PipelineContext, function: &IrFunction) -> Stri
         &call,
         &prep.post_call_lines,
         borrow_root,
+        covered_handles,
     ));
     out.push_str("}\n");
     out
@@ -925,6 +940,7 @@ fn render_callback_method(
     config: &PipelineContext,
     class: &AnalyzedFacadeClass<'_>,
     function: &IrFunction,
+    covered_handles: &BTreeSet<String>,
 ) -> String {
     let receiver = receiver_name(&class.go_name);
     let method_params = function.params.iter().skip(1).collect::<Vec<_>>();
@@ -967,12 +983,17 @@ fn render_callback_method(
         &call,
         &prep.post_call_lines,
         Some(format!("{receiver}.root")),
+        covered_handles,
     ));
     out.push_str("}\n");
     out
 }
 
-fn render_callback_free_function(config: &PipelineContext, function: &IrFunction) -> String {
+fn render_callback_free_function(
+    config: &PipelineContext,
+    function: &IrFunction,
+    covered_handles: &BTreeSet<String>,
+) -> String {
     let params_list = function.params.iter().collect::<Vec<_>>();
     let params = render_param_list(config, &params_list);
     let prep = render_callback_call_prep(config, function, &params_list, 0);
@@ -995,6 +1016,7 @@ fn render_callback_free_function(config: &PipelineContext, function: &IrFunction
         &call,
         &prep.post_call_lines,
         borrow_root,
+        covered_handles,
     ));
     out.push_str("}\n");
     out
@@ -1529,6 +1551,31 @@ fn is_model_wrapper_return(ty: &IrType) -> bool {
     )
 }
 
+fn model_return_is_owned(config: &PipelineContext, function: &IrFunction, ty: &IrType) -> bool {
+    ty.kind == IrTypeKind::ModelValue
+        || (ty.kind == IrTypeKind::ModelPointer && config.owner_marks_callable(&function.cpp_name))
+}
+
+fn model_return_uses_inline_owned_literal(
+    config: &PipelineContext,
+    function: &IrFunction,
+    ty: &IrType,
+) -> bool {
+    ty.kind == IrTypeKind::ModelPointer && config.owner_marks_callable(&function.cpp_name)
+}
+
+fn model_return_has_wrapper_helpers(
+    config: &PipelineContext,
+    ty: &IrType,
+    covered_handles: &BTreeSet<String>,
+) -> bool {
+    config.known_model_projection(&ty.cpp_type).is_some()
+        || ty
+            .handle
+            .as_ref()
+            .is_some_and(|handle| covered_handles.contains(handle))
+}
+
 /// Returns the Go return type signature string (without surrounding parens for single values).
 /// e.g. `""` for void, `"(string, error)"` for string, `"([]*Foo, error)"` for FixedModelArray.
 fn go_return_sig(config: &PipelineContext, ty: &IrType) -> String {
@@ -1595,6 +1642,7 @@ fn render_go_call_return(
     call: &str,
     post_call_lines: &[String],
     borrow_root: Option<String>,
+    covered_handles: &BTreeSet<String>,
 ) -> String {
     let ty = &function.returns;
     match ty.kind {
@@ -1674,8 +1722,10 @@ fn render_go_call_return(
                 out.push_str("    return unsafe.Pointer(raw)\n");
             } else {
                 let ptr_expr = cast_raw_to_projection_handle(config, ty, "raw");
-                if config.known_model_projection(&ty.cpp_type).is_some() {
-                    let helper = if ty.kind == IrTypeKind::ModelValue {
+                if model_return_has_wrapper_helpers(config, ty, covered_handles) {
+                    let helper = if model_return_uses_inline_owned_literal(config, function, ty) {
+                        format!("&{go_name}{{ptr: {ptr_expr}, owned: true, root: new(bool)}}")
+                    } else if model_return_is_owned(config, function, ty) {
                         format!("newOwned{go_name}({ptr_expr})")
                     } else {
                         let root_expr = borrow_root.unwrap_or_else(|| "nil".to_string());
@@ -3196,7 +3246,7 @@ mod tests {
             destructor: &destructor,
             methods: vec![&function],
         };
-        let code = render_general_api_method(&config, &class, &function);
+        let code = render_general_api_method(&config, &class, &function, &BTreeSet::new());
         assert!(
             code.contains("*ThingModel"),
             "expected return type *ThingModel but got:\n{code}"
@@ -3277,7 +3327,7 @@ mod tests {
             destructor: &destructor,
             methods: vec![&function],
         };
-        let code = render_general_api_method(&config, &class, &function);
+        let code = render_general_api_method(&config, &class, &function, &BTreeSet::new());
         assert!(
             code.contains("return newBorrowedThingModel(raw, a.root)"),
             "expected newBorrowedThingModel(raw, a.root) but got:\n{code}"
@@ -3396,7 +3446,7 @@ mod tests {
             destructor: &destructor,
             methods: vec![&function],
         };
-        let code = render_general_api_method(&config, &class, &function);
+        let code = render_general_api_method(&config, &class, &function, &BTreeSet::new());
         assert!(
             code.contains("return newBorrowedThingModel(raw, a.root)"),
             "expected newBorrowedThingModel(raw, a.root) but got:\n{code}"
@@ -3421,7 +3471,7 @@ mod tests {
             }],
         };
 
-        let code = render_free_function(&config, &function);
+        let code = render_free_function(&config, &function, &BTreeSet::new());
         assert!(
             code.contains("return newBorrowedThingModel(raw, parent.root)"),
             "expected newBorrowedThingModel(raw, parent.root) but got:\n{code}"

@@ -140,6 +140,14 @@ impl PipelineContext {
         &self.raw_clang_args
     }
 
+    pub fn owner_marks_callable(&self, cpp_name: &str) -> bool {
+        self.config
+            .input
+            .owner
+            .iter()
+            .any(|candidate| candidate.trim() == cpp_name)
+    }
+
     pub fn from_config_path(path: impl AsRef<std::path::Path>) -> Result<Self> {
         let (config, raw_clang_args) = Config::load_with_raw_clang_args(path)?;
         Ok(PipelineContext::new(config).with_raw_clang_args(raw_clang_args))
