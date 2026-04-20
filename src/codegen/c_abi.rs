@@ -994,17 +994,6 @@ fn render_model_value_return(function: &IrFunction, target: &str, args: &str) ->
     )
 }
 
-fn synthetic_opaque_model_value_delete_handles(
-    ctx: &PipelineContext,
-    ir: &IrModule,
-    covered_handles: &BTreeSet<String>,
-) -> BTreeSet<String> {
-    synthetic_opaque_model_value_deletes(ctx, ir, covered_handles)
-        .into_iter()
-        .map(|delete| delete.handle_name)
-        .collect()
-}
-
 fn opaque_model_value_handles_needing_go_ownership(
     ctx: &PipelineContext,
     ir: &IrModule,
