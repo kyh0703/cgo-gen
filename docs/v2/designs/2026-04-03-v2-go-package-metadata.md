@@ -24,7 +24,7 @@ created_at: 2026-04-03T10:30:00+09:00
   - 외부 소비용 package metadata는 `input.include_dirs`를 참조하지 않는다.
   - exported compile flags의 source of truth는 raw `input.clang_args`만 사용한다.
   - authored `clang_args` spellings는 가능한 한 그대로 보존한다.
-  - exported flags는 `-I/-isystem`, `-D`, `-std`만 허용한다.
+  - exported flags는 `-I`, `-D`, `-std`만 허용한다.
   - `libclang` / LLVM 및 링크 관련 플래그는 제외한다.
   - `go.mod`는 CLI의 `--go-module` 값이 있을 때만 생성하고 `go 1.25`를 쓴다.
 

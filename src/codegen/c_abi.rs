@@ -353,7 +353,7 @@ fn exported_cxxflags(ctx: &PipelineContext) -> Vec<String> {
     while index < raw.len() {
         let arg = &raw[index];
 
-        if arg == "-I" || arg == "-isystem" || arg == "-D" {
+        if arg == "-I" || arg == "-D" {
             if let Some(value) = raw.get(index + 1) {
                 flags.push(arg.clone());
                 flags.push(value.clone());
@@ -362,8 +362,12 @@ fn exported_cxxflags(ctx: &PipelineContext) -> Vec<String> {
             continue;
         }
 
+        if arg == "-isystem" {
+            index += 2;
+            continue;
+        }
+
         if (arg.starts_with("-I") && arg.len() > 2)
-            || (arg.starts_with("-isystem") && arg.len() > "-isystem".len())
             || (arg.starts_with("-D") && arg.len() > 2)
             || arg.starts_with("-std=")
         {

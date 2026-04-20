@@ -162,7 +162,7 @@ Current behavior:
 
 - `build_flags.go` always emits `#cgo CFLAGS: -I${SRCDIR}`
 - `#cgo CXXFLAGS` are exported from raw `input.clang_args` only
-- exported `CXXFLAGS` allow only `-I`, `-isystem`, `-D`, and `-std=...`
+- exported `CXXFLAGS` allow only `-I`, `-D`, and `-std=...`
 - when `input.ldflags` is set, `build_flags.go` also emits `#cgo LDFLAGS`
 
 Use this mode when the generated directory itself should be imported and built as a Go package.

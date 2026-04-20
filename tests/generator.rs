@@ -498,6 +498,9 @@ input:
   dir: include
   clang_args:
     - -I${SDK_INCLUDE}
+    - -isystem
+    - system/include
+    - -isysteminline/include
     - -DMODE=1
     - -std=c++20
     - -Wall
@@ -529,6 +532,9 @@ output:
         "#cgo CXXFLAGS: -I${{SRCDIR}} -I{} -DMODE=1 -std=c++20",
         root.join("sdk/include").display()
     )));
+    assert!(!build_flags.contains("-isystem"));
+    assert!(!build_flags.contains("system/include"));
+    assert!(!build_flags.contains("inline/include"));
     assert!(!build_flags.contains("-Winvalid-offsetof"));
     assert!(!build_flags.contains("-Wall"));
 }

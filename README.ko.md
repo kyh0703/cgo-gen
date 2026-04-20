@@ -164,7 +164,7 @@ cgo-gen generate --config path/to/config.yaml --go-module example.com/acme/foo
 
 - `build_flags.go`는 항상 `#cgo CFLAGS: -I${SRCDIR}`를 포함합니다.
 - `#cgo CXXFLAGS`는 raw `input.clang_args`에서만 추출합니다.
-- export되는 `CXXFLAGS`는 `-I`, `-isystem`, `-D`, `-std=...`만 허용합니다.
+- export되는 `CXXFLAGS`는 `-I`, `-D`, `-std=...`만 허용합니다.
 - `input.ldflags`가 있으면 `build_flags.go`에 `#cgo LDFLAGS`도 생성합니다.
 
 생성 디렉터리 자체를 Go 패키지로 import하고 빌드하려는 경우 이 모드를 사용하면 됩니다.
