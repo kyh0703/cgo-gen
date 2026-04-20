@@ -750,6 +750,111 @@ output:
 }
 
 #[test]
+fn opaque_model_value_return_gets_synthetic_delete_and_owned_go_wrapper() {
+    let ctx = PipelineContext::new(Config::default());
+    let self_param = ir::IrParam {
+        name: "self".to_string(),
+        ty: ir::IrType {
+            kind: IrTypeKind::Opaque,
+            cpp_type: "Api*".to_string(),
+            c_type: "ApiHandle*".to_string(),
+            handle: Some("ApiHandle".to_string()),
+        },
+    };
+    let ir = ir::IrModule {
+        version: 1,
+        module: "cgowrap".to_string(),
+        source_headers: vec![],
+        records: vec![],
+        opaque_types: vec![
+            ir::OpaqueType {
+                name: "ApiHandle".to_string(),
+                cpp_type: "Api".to_string(),
+            },
+            ir::OpaqueType {
+                name: "TableiKeyHandle".to_string(),
+                cpp_type: "Table::iKey".to_string(),
+            },
+        ],
+        functions: vec![
+            ir::IrFunction {
+                name: "cgowrap_Api_new".to_string(),
+                kind: ir::IrFunctionKind::Constructor,
+                cpp_name: "Api".to_string(),
+                method_of: Some("ApiHandle".to_string()),
+                owner_cpp_type: Some("Api".to_string()),
+                is_const: None,
+                field_accessor: None,
+                returns: ir::IrType {
+                    kind: IrTypeKind::Opaque,
+                    cpp_type: "Api*".to_string(),
+                    c_type: "ApiHandle*".to_string(),
+                    handle: Some("ApiHandle".to_string()),
+                },
+                params: vec![],
+            },
+            ir::IrFunction {
+                name: "cgowrap_Api_delete".to_string(),
+                kind: ir::IrFunctionKind::Destructor,
+                cpp_name: "~Api".to_string(),
+                method_of: Some("ApiHandle".to_string()),
+                owner_cpp_type: Some("Api".to_string()),
+                is_const: None,
+                field_accessor: None,
+                returns: ir::IrType {
+                    kind: IrTypeKind::Void,
+                    cpp_type: "void".to_string(),
+                    c_type: "void".to_string(),
+                    handle: None,
+                },
+                params: vec![self_param.clone()],
+            },
+            ir::IrFunction {
+                name: "cgowrap_Api_GetKey".to_string(),
+                kind: ir::IrFunctionKind::Method,
+                cpp_name: "Api::GetKey".to_string(),
+                method_of: Some("ApiHandle".to_string()),
+                owner_cpp_type: Some("Api".to_string()),
+                is_const: Some(true),
+                field_accessor: None,
+                returns: ir::IrType {
+                    kind: IrTypeKind::ModelValue,
+                    cpp_type: "Table::iKey".to_string(),
+                    c_type: "TableiKeyHandle*".to_string(),
+                    handle: Some("TableiKeyHandle".to_string()),
+                },
+                params: vec![self_param],
+            },
+        ],
+        enums: vec![],
+        constants: vec![],
+        callbacks: vec![],
+        support: ir::SupportMetadata {
+            parser_backend: "test".to_string(),
+            notes: vec![],
+            skipped_declarations: vec![],
+        },
+    };
+
+    let header = render_header(&ctx, &ir);
+    let source = render_source(&ctx, &ir);
+    let go = render_go_structs(&ctx, &ir).unwrap();
+    let go_text = go
+        .iter()
+        .map(|file| file.contents.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(header.contains("void cgowrap_TableiKey_delete(TableiKeyHandle* self);"));
+    assert!(source.contains("delete reinterpret_cast<Table::iKey*>(self);"));
+    assert!(go_text.contains(
+        "type TableiKey struct {\n    ptr *C.TableiKeyHandle\n    owned bool\n    root *bool\n}"
+    ));
+    assert!(go_text.contains("func (t *TableiKey) Close() {"));
+    assert!(go_text.contains("return newOwnedTableiKey(raw)"));
+}
+
+#[test]
 fn renders_model_pointer_and_reference_returns_as_borrowed_handles() {
     let root = env::temp_dir().join(format!("c_go_model_value_return_{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);

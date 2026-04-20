@@ -745,9 +745,7 @@ output:
         "return reinterpret_cast<DBHandlerHandle*>(reinterpret_cast<DBHandlerFactory*>(self)->CreateHandler());"
     ));
     assert!(go_facade.contains("func (d *DBHandlerFactory) CreateHandler() *DBHandler {"));
-    assert!(go_facade.contains(
-        "return &DBHandler{ptr: raw, owned: true, root: new(bool)}"
-    ));
+    assert!(go_facade.contains("return &DBHandler{ptr: raw, owned: true, root: new(bool)}"));
     assert!(!go_facade.contains("return newBorrowedDBHandler(raw, d.root)"));
 }
 

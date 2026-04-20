@@ -47,6 +47,22 @@ pub fn render_go_facade(
     ir: &IrModule,
     globally_emitted_opaques: &BTreeSet<String>,
 ) -> Result<Vec<GeneratedGoFile>> {
+    render_go_facade_with_owned_opaques(
+        config,
+        ir,
+        globally_emitted_opaques,
+        &BTreeSet::new(),
+        &BTreeSet::new(),
+    )
+}
+
+pub(crate) fn render_go_facade_with_owned_opaques(
+    config: &PipelineContext,
+    ir: &IrModule,
+    globally_emitted_opaques: &BTreeSet<String>,
+    global_owned_opaque_value_handles: &BTreeSet<String>,
+    local_owned_opaque_value_handles: &BTreeSet<String>,
+) -> Result<Vec<GeneratedGoFile>> {
     let functions = ir
         .functions
         .iter()
@@ -57,6 +73,20 @@ pub fn render_go_facade(
     let enums = ir.enums.iter().collect::<Vec<_>>();
     let classes = collect_facade_classes(&config, ir)?;
     let callback_usages = collect_callback_usages(&functions, &classes, ir);
+    let owned_opaque_value_handles = if global_owned_opaque_value_handles.is_empty()
+        && local_owned_opaque_value_handles.is_empty()
+    {
+        collect_owned_opaque_model_value_handles(config, &functions, &classes)
+    } else {
+        global_owned_opaque_value_handles.clone()
+    };
+    let local_owned_opaque_value_handles = if global_owned_opaque_value_handles.is_empty()
+        && local_owned_opaque_value_handles.is_empty()
+    {
+        owned_opaque_value_handles.clone()
+    } else {
+        local_owned_opaque_value_handles.clone()
+    };
 
     if functions.is_empty() && classes.is_empty() && enums.is_empty() && constants.is_empty() {
         return Ok(Vec::new());
@@ -69,7 +99,10 @@ pub fn render_go_facade(
     let local_opaque_types: Vec<&OpaqueType> = ir
         .opaque_types
         .iter()
-        .filter(|ot| !globally_emitted_opaques.contains(&ot.name))
+        .filter(|ot| {
+            !globally_emitted_opaques.contains(&ot.name)
+                || local_owned_opaque_value_handles.contains(&ot.name)
+        })
         .collect();
 
     Ok(vec![GeneratedGoFile {
@@ -82,6 +115,9 @@ pub fn render_go_facade(
             &classes,
             &callback_usages,
             &local_opaque_types,
+            globally_emitted_opaques,
+            &owned_opaque_value_handles,
+            &local_owned_opaque_value_handles,
         ),
     }])
 }
@@ -174,6 +210,36 @@ fn collect_facade_classes<'a>(
     Ok(classes)
 }
 
+fn collect_owned_opaque_model_value_handles(
+    config: &PipelineContext,
+    functions: &[&IrFunction],
+    classes: &[AnalyzedFacadeClass<'_>],
+) -> BTreeSet<String> {
+    let mut covered_handles = classes
+        .iter()
+        .map(|class| class.handle_name.clone())
+        .collect::<BTreeSet<_>>();
+    covered_handles.extend(
+        config
+            .known_model_projections
+            .iter()
+            .map(|projection| projection.handle_name.clone()),
+    );
+
+    functions
+        .iter()
+        .copied()
+        .chain(
+            classes
+                .iter()
+                .flat_map(|class| class.methods.iter().copied()),
+        )
+        .filter(|function| function.returns.kind == IrTypeKind::ModelValue)
+        .filter_map(|function| function.returns.handle.clone())
+        .filter(|handle| !covered_handles.contains(handle))
+        .collect()
+}
+
 fn render_go_facade_file(
     config: &PipelineContext,
     constants: &[&IrMacroConstant],
@@ -182,6 +248,9 @@ fn render_go_facade_file(
     classes: &[AnalyzedFacadeClass<'_>],
     callback_usages: &[CallbackUsage<'_>],
     opaque_types: &[&OpaqueType],
+    globally_emitted_opaques: &BTreeSet<String>,
+    owned_opaque_value_handles: &BTreeSet<String>,
+    local_owned_opaque_value_handles: &BTreeSet<String>,
 ) -> String {
     let package_name = go_package_name(&config.output.dir);
     let requires_cgo = !functions.is_empty() || !classes.is_empty();
@@ -295,7 +364,12 @@ fn render_go_facade_file(
     );
 
     for function in functions {
-        out.push_str(&render_free_function(config, function, &covered_handles));
+        out.push_str(&render_free_function(
+            config,
+            function,
+            &covered_handles,
+            owned_opaque_value_handles,
+        ));
         out.push('\n');
     }
 
@@ -311,7 +385,11 @@ fn render_go_facade_file(
     );
 
     for opaque in opaque_types {
+        let is_local_owned_opaque = local_owned_opaque_value_handles.contains(&opaque.name);
         if covered_handles.contains(&opaque.name) {
+            continue;
+        }
+        if globally_emitted_opaques.contains(&opaque.name) && !is_local_owned_opaque {
             continue;
         }
         let base = opaque.name.strip_suffix("Handle").unwrap_or(&opaque.name);
@@ -319,10 +397,14 @@ fn render_go_facade_file(
         if covered_go_names.contains(&go_name) {
             continue;
         }
-        out.push_str(&format!(
-            "type {} struct {{\n    ptr *C.{}\n}}\n\n",
-            go_name, opaque.name
-        ));
+        if is_local_owned_opaque {
+            out.push_str(&render_owned_opaque_wrapper(&go_name, &opaque.name));
+        } else {
+            out.push_str(&format!(
+                "type {} struct {{\n    ptr *C.{}\n}}\n\n",
+                go_name, opaque.name
+            ));
+        }
     }
 
     for class in classes {
@@ -350,6 +432,7 @@ fn render_go_facade_file(
                 class,
                 method,
                 &covered_handles,
+                owned_opaque_value_handles,
             ));
             out.push('\n');
         }
@@ -532,6 +615,40 @@ fn render_facade_class(class: &AnalyzedFacadeClass<'_>) -> String {
     )
 }
 
+fn render_owned_opaque_wrapper(go_name: &str, handle: &str) -> String {
+    let receiver = receiver_name(go_name);
+    let delete_symbol = opaque_delete_symbol(handle);
+    format!(
+        "type {go_name} struct {{\n    ptr *C.{handle}\n    owned bool\n    root *bool\n}}\n\n\
+         func ({receiver} *{go_name}) Close() {{\n\
+         \x20   if {receiver} == nil || {receiver}.ptr == nil {{\n\
+         \x20       return\n\
+         \x20   }}\n\
+         \x20   if !{receiver}.owned {{\n\
+         \x20       return\n\
+         \x20   }}\n\
+         \x20   if {receiver}.root != nil {{\n\
+         \x20       *{receiver}.root = true\n\
+         \x20   }}\n\
+         \x20   C.{delete_symbol}({receiver}.ptr)\n\
+         \x20   {receiver}.ptr = nil\n\
+         }}\n\n\
+         func newOwned{go_name}(ptr *C.{handle}) *{go_name} {{\n\
+         \x20   if ptr == nil {{\n\
+         \x20       return nil\n\
+         \x20   }}\n\
+         \x20   root := new(bool)\n\
+         \x20   return &{go_name}{{ptr: ptr, owned: true, root: root}}\n\
+         }}\n\n\
+         func newBorrowed{go_name}(ptr *C.{handle}, root *bool) *{go_name} {{\n\
+         \x20   if ptr == nil {{\n\
+         \x20       return nil\n\
+         \x20   }}\n\
+         \x20   return &{go_name}{{ptr: ptr, root: root}}\n\
+         }}\n\n"
+    )
+}
+
 fn render_facade_constructor(
     config: &PipelineContext,
     class: &AnalyzedFacadeClass<'_>,
@@ -637,12 +754,19 @@ fn render_general_api_method(
     class: &AnalyzedFacadeClass<'_>,
     function: &IrFunction,
     covered_handles: &BTreeSet<String>,
+    owned_opaque_value_handles: &BTreeSet<String>,
 ) -> String {
     if let Some(rendered) = render_special_field_method(config, class, function) {
         return rendered;
     }
     if has_callback_param(function.params.iter().skip(1)) {
-        return render_callback_method(config, class, function, covered_handles);
+        return render_callback_method(
+            config,
+            class,
+            function,
+            covered_handles,
+            owned_opaque_value_handles,
+        );
     }
     let receiver = receiver_name(&class.go_name);
     let method_params = function.params.iter().skip(1).collect::<Vec<_>>();
@@ -686,6 +810,7 @@ fn render_general_api_method(
         &prep.post_call_lines,
         Some(format!("{receiver}.root")),
         covered_handles,
+        owned_opaque_value_handles,
     ));
     out.push_str("}\n");
     out
@@ -701,9 +826,7 @@ fn render_special_field_method(
         && function.returns.kind == IrTypeKind::FixedModelArray
     {
         return Some(render_fixed_model_array_getter_wrapper(
-            config,
-            class,
-            function,
+            config, class, function,
         ));
     }
     if accessor.access == FieldAccessKind::Set
@@ -904,9 +1027,15 @@ fn render_free_function(
     config: &PipelineContext,
     function: &IrFunction,
     covered_handles: &BTreeSet<String>,
+    owned_opaque_value_handles: &BTreeSet<String>,
 ) -> String {
     if has_callback_param(function.params.iter()) {
-        return render_callback_free_function(config, function, covered_handles);
+        return render_callback_free_function(
+            config,
+            function,
+            covered_handles,
+            owned_opaque_value_handles,
+        );
     }
     let params_list = function.params.iter().collect::<Vec<_>>();
     let params = render_param_list(config, &params_list);
@@ -931,6 +1060,7 @@ fn render_free_function(
         &prep.post_call_lines,
         borrow_root,
         covered_handles,
+        owned_opaque_value_handles,
     ));
     out.push_str("}\n");
     out
@@ -941,6 +1071,7 @@ fn render_callback_method(
     class: &AnalyzedFacadeClass<'_>,
     function: &IrFunction,
     covered_handles: &BTreeSet<String>,
+    owned_opaque_value_handles: &BTreeSet<String>,
 ) -> String {
     let receiver = receiver_name(&class.go_name);
     let method_params = function.params.iter().skip(1).collect::<Vec<_>>();
@@ -984,6 +1115,7 @@ fn render_callback_method(
         &prep.post_call_lines,
         Some(format!("{receiver}.root")),
         covered_handles,
+        owned_opaque_value_handles,
     ));
     out.push_str("}\n");
     out
@@ -993,6 +1125,7 @@ fn render_callback_free_function(
     config: &PipelineContext,
     function: &IrFunction,
     covered_handles: &BTreeSet<String>,
+    owned_opaque_value_handles: &BTreeSet<String>,
 ) -> String {
     let params_list = function.params.iter().collect::<Vec<_>>();
     let params = render_param_list(config, &params_list);
@@ -1017,6 +1150,7 @@ fn render_callback_free_function(
         &prep.post_call_lines,
         borrow_root,
         covered_handles,
+        owned_opaque_value_handles,
     ));
     out.push_str("}\n");
     out
@@ -1246,6 +1380,11 @@ fn cast_raw_to_projection_handle(
         }
     }
     raw_expr.to_string()
+}
+
+fn opaque_delete_symbol(handle_name: &str) -> String {
+    let base = handle_name.strip_suffix("Handle").unwrap_or(handle_name);
+    format!("{}_{}_delete", crate::config::WRAPPER_PREFIX, base)
 }
 
 fn render_pointer_arg(prep: &mut RenderedCallPrep, ty: &IrType, name: &str, index: usize) {
@@ -1568,12 +1707,12 @@ fn model_return_has_wrapper_helpers(
     config: &PipelineContext,
     ty: &IrType,
     covered_handles: &BTreeSet<String>,
+    owned_opaque_value_handles: &BTreeSet<String>,
 ) -> bool {
     config.known_model_projection(&ty.cpp_type).is_some()
-        || ty
-            .handle
-            .as_ref()
-            .is_some_and(|handle| covered_handles.contains(handle))
+        || ty.handle.as_ref().is_some_and(|handle| {
+            covered_handles.contains(handle) || owned_opaque_value_handles.contains(handle)
+        })
 }
 
 /// Returns the Go return type signature string (without surrounding parens for single values).
@@ -1643,6 +1782,7 @@ fn render_go_call_return(
     post_call_lines: &[String],
     borrow_root: Option<String>,
     covered_handles: &BTreeSet<String>,
+    owned_opaque_value_handles: &BTreeSet<String>,
 ) -> String {
     let ty = &function.returns;
     match ty.kind {
@@ -1722,7 +1862,12 @@ fn render_go_call_return(
                 out.push_str("    return unsafe.Pointer(raw)\n");
             } else {
                 let ptr_expr = cast_raw_to_projection_handle(config, ty, "raw");
-                if model_return_has_wrapper_helpers(config, ty, covered_handles) {
+                if model_return_has_wrapper_helpers(
+                    config,
+                    ty,
+                    covered_handles,
+                    owned_opaque_value_handles,
+                ) {
                     let helper = if model_return_uses_inline_owned_literal(config, function, ty) {
                         format!("&{go_name}{{ptr: {ptr_expr}, owned: true, root: new(bool)}}")
                     } else if model_return_is_owned(config, function, ty) {
@@ -3246,7 +3391,13 @@ mod tests {
             destructor: &destructor,
             methods: vec![&function],
         };
-        let code = render_general_api_method(&config, &class, &function, &BTreeSet::new());
+        let code = render_general_api_method(
+            &config,
+            &class,
+            &function,
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+        );
         assert!(
             code.contains("*ThingModel"),
             "expected return type *ThingModel but got:\n{code}"
@@ -3327,7 +3478,13 @@ mod tests {
             destructor: &destructor,
             methods: vec![&function],
         };
-        let code = render_general_api_method(&config, &class, &function, &BTreeSet::new());
+        let code = render_general_api_method(
+            &config,
+            &class,
+            &function,
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+        );
         assert!(
             code.contains("return newBorrowedThingModel(raw, a.root)"),
             "expected newBorrowedThingModel(raw, a.root) but got:\n{code}"
@@ -3446,7 +3603,13 @@ mod tests {
             destructor: &destructor,
             methods: vec![&function],
         };
-        let code = render_general_api_method(&config, &class, &function, &BTreeSet::new());
+        let code = render_general_api_method(
+            &config,
+            &class,
+            &function,
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+        );
         assert!(
             code.contains("return newBorrowedThingModel(raw, a.root)"),
             "expected newBorrowedThingModel(raw, a.root) but got:\n{code}"
@@ -3471,7 +3634,7 @@ mod tests {
             }],
         };
 
-        let code = render_free_function(&config, &function, &BTreeSet::new());
+        let code = render_free_function(&config, &function, &BTreeSet::new(), &BTreeSet::new());
         assert!(
             code.contains("return newBorrowedThingModel(raw, parent.root)"),
             "expected newBorrowedThingModel(raw, parent.root) but got:\n{code}"
@@ -3723,16 +3886,22 @@ mod tests {
         .unwrap();
         let contents = &files[0].contents;
         assert!(
-            contents.contains("type CIosShm struct {\n    ptr *C.CIosShmHandle\n}"),
-            "expected opaque CIosShm wrapper but got:\n{contents}"
+            contents.contains(
+                "type CIosShm struct {\n    ptr *C.CIosShmHandle\n    owned bool\n    root *bool\n}"
+            ),
+            "expected owned opaque CIosShm wrapper but got:\n{contents}"
+        );
+        assert!(
+            contents.contains("func (c *CIosShm) Close() {"),
+            "expected CIosShm Close method but got:\n{contents}"
         );
         assert!(
             contents.contains("func (a *Api) GetIos() *CIosShm"),
             "expected GetIos method signature but got:\n{contents}"
         );
         assert!(
-            contents.contains("return &CIosShm{ptr: raw}"),
-            "expected opaque CIosShm wrap pattern but got:\n{contents}"
+            contents.contains("return newOwnedCIosShm(raw)"),
+            "expected owned opaque CIosShm wrap pattern but got:\n{contents}"
         );
     }
 

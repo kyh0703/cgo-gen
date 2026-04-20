@@ -628,9 +628,7 @@ output:
         "return reinterpret_cast<DBHandlerHandle*>(reinterpret_cast<DBHandlerFactory*>(self)->CreateHandler());"
     ));
     assert!(!source.contains("new DBHandler(*result)"));
-    assert!(go_facade.contains(
-        "return &DBHandler{ptr: raw, owned: true, root: new(bool)}"
-    ));
+    assert!(go_facade.contains("return &DBHandler{ptr: raw, owned: true, root: new(bool)}"));
 
     let smoke_cpp = config.output.dir.join("smoke.cpp");
     fs::write(

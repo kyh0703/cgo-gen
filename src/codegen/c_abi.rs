@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
 };
@@ -15,6 +15,13 @@ use crate::{
     parsing::{compiler, parser},
     pipeline::context::PipelineContext,
 };
+
+#[derive(Debug, Clone)]
+struct SyntheticOpaqueDelete {
+    handle_name: String,
+    cpp_type: String,
+    symbol_name: String,
+}
 
 pub fn generate_all(ctx: &PipelineContext, write_ir: bool) -> Result<()> {
     let (ctx, parsed) = prepare_with_parsed(&ctx)?;
@@ -62,12 +69,35 @@ pub fn generate_all(ctx: &PipelineContext, write_ir: bool) -> Result<()> {
         .iter()
         .flat_map(|(_, ir)| class_handles_with_methods(ir))
         .collect();
+    let global_owned_opaque_value_handles = all_normalized
+        .iter()
+        .flat_map(|(scoped, ir)| {
+            opaque_model_value_handles_needing_go_ownership(scoped, ir, &global_class_handles)
+        })
+        .collect::<BTreeSet<_>>();
+    let mut owned_opaque_owner = BTreeSet::<String>::new();
 
     // Pass 2: generate each file, tracking every opaque handle that has already been
     // emitted so that non-class opaque types shared across headers are declared only once.
-    let mut globally_emitted_opaques = global_class_handles;
+    let mut globally_emitted_opaques = global_class_handles.clone();
+    globally_emitted_opaques.extend(global_owned_opaque_value_handles.iter().cloned());
     for (scoped, normalized_ir) in &all_normalized {
-        generate(&scoped, &normalized_ir, write_ir, &globally_emitted_opaques)?;
+        let local_owned_opaque_value_handles = opaque_model_value_handles_needing_go_ownership(
+            scoped,
+            normalized_ir,
+            &global_class_handles,
+        )
+        .into_iter()
+        .filter(|handle| owned_opaque_owner.insert(handle.clone()))
+        .collect::<BTreeSet<_>>();
+        generate_with_opaque_ownership(
+            scoped,
+            normalized_ir,
+            write_ir,
+            &globally_emitted_opaques,
+            &global_owned_opaque_value_handles,
+            &local_owned_opaque_value_handles,
+        )?;
         for ot in &normalized_ir.opaque_types {
             globally_emitted_opaques.insert(ot.name.clone());
         }
@@ -201,6 +231,26 @@ pub fn generate(
     write_ir: bool,
     global_class_handles: &BTreeSet<String>,
 ) -> Result<()> {
+    let local_owned_opaque_value_handles =
+        opaque_model_value_handles_needing_go_ownership(ctx, ir, global_class_handles);
+    generate_with_opaque_ownership(
+        ctx,
+        ir,
+        write_ir,
+        global_class_handles,
+        &local_owned_opaque_value_handles,
+        &local_owned_opaque_value_handles,
+    )
+}
+
+fn generate_with_opaque_ownership(
+    ctx: &PipelineContext,
+    ir: &IrModule,
+    write_ir: bool,
+    global_class_handles: &BTreeSet<String>,
+    global_owned_opaque_value_handles: &BTreeSet<String>,
+    local_owned_opaque_value_handles: &BTreeSet<String>,
+) -> Result<()> {
     fs::create_dir_all(ctx.output_dir()).with_context(|| {
         format!(
             "failed to create output dir: {}",
@@ -211,11 +261,23 @@ pub fn generate(
     let header_path = ctx.output_dir().join(&ctx.output.header);
     let source_path = ctx.output_dir().join(&ctx.output.source);
     let ir_path = ctx.output_dir().join(&ctx.output.ir);
-    fs::write(&header_path, render_header(&ctx, ir))
-        .with_context(|| format!("failed to write header: {}", header_path.display()))?;
-    fs::write(&source_path, render_source(&ctx, ir))
-        .with_context(|| format!("failed to write source: {}", source_path.display()))?;
-    for go_file in facade::render_go_facade(&ctx, ir, global_class_handles)? {
+    fs::write(
+        &header_path,
+        render_header_with_covered_handles(&ctx, ir, global_class_handles),
+    )
+    .with_context(|| format!("failed to write header: {}", header_path.display()))?;
+    fs::write(
+        &source_path,
+        render_source_with_covered_handles(&ctx, ir, global_class_handles),
+    )
+    .with_context(|| format!("failed to write source: {}", source_path.display()))?;
+    for go_file in facade::render_go_facade_with_owned_opaques(
+        &ctx,
+        ir,
+        global_class_handles,
+        global_owned_opaque_value_handles,
+        local_owned_opaque_value_handles,
+    )? {
         fs::create_dir_all(ctx.output_dir()).with_context(|| {
             format!(
                 "failed to create go output dir: {}",
@@ -338,6 +400,14 @@ fn go_package_name(path: &Path) -> String {
 }
 
 pub fn render_header(ctx: &PipelineContext, ir: &IrModule) -> String {
+    render_header_with_covered_handles(ctx, ir, &BTreeSet::new())
+}
+
+fn render_header_with_covered_handles(
+    ctx: &PipelineContext,
+    ir: &IrModule,
+    covered_handles: &BTreeSet<String>,
+) -> String {
     let guard = format!(
         "{}_{}",
         WRAPPER_PREFIX.to_uppercase(),
@@ -370,6 +440,12 @@ pub fn render_header(ctx: &PipelineContext, ir: &IrModule) -> String {
     for function in &ir.functions {
         out.push_str(&render_function_decl(function));
         out.push('\n');
+    }
+    for delete in synthetic_opaque_model_value_deletes(ctx, ir, covered_handles) {
+        out.push_str(&format!(
+            "void {}({}* self);\n",
+            delete.symbol_name, delete.handle_name
+        ));
     }
     for function in callback_bridge_functions(ir) {
         out.push_str(&render_function_decl(&function));
@@ -417,6 +493,14 @@ pub fn render_header(ctx: &PipelineContext, ir: &IrModule) -> String {
 }
 
 pub fn render_source(ctx: &PipelineContext, ir: &IrModule) -> String {
+    render_source_with_covered_handles(ctx, ir, &BTreeSet::new())
+}
+
+fn render_source_with_covered_handles(
+    ctx: &PipelineContext,
+    ir: &IrModule,
+    covered_handles: &BTreeSet<String>,
+) -> String {
     let mut out = String::new();
     out.push_str(&format!("#include \"{}\"\n", ctx.output.header));
     out.push_str("#include <cstdlib>\n#include <cstring>\n#include <new>\n#include <string>\n\n");
@@ -427,6 +511,10 @@ pub fn render_source(ctx: &PipelineContext, ir: &IrModule) -> String {
 
     for function in &ir.functions {
         out.push_str(&render_function_def(function));
+        out.push('\n');
+    }
+    for delete in synthetic_opaque_model_value_deletes(ctx, ir, covered_handles) {
+        out.push_str(&render_synthetic_opaque_delete_def(&delete));
         out.push('\n');
     }
     let callback_map = callback_map(ir);
@@ -903,6 +991,104 @@ fn render_model_value_return(function: &IrFunction, target: &str, args: &str) ->
     format!(
         "    return reinterpret_cast<{}>(new {}({}({})));\n",
         function.returns.c_type, base, target, args
+    )
+}
+
+fn synthetic_opaque_model_value_delete_handles(
+    ctx: &PipelineContext,
+    ir: &IrModule,
+    covered_handles: &BTreeSet<String>,
+) -> BTreeSet<String> {
+    synthetic_opaque_model_value_deletes(ctx, ir, covered_handles)
+        .into_iter()
+        .map(|delete| delete.handle_name)
+        .collect()
+}
+
+fn opaque_model_value_handles_needing_go_ownership(
+    ctx: &PipelineContext,
+    ir: &IrModule,
+    covered_handles: &BTreeSet<String>,
+) -> BTreeSet<String> {
+    let mut unavailable_handles = covered_handles.clone();
+    unavailable_handles.extend(
+        ctx.known_model_projections
+            .iter()
+            .map(|projection| projection.handle_name.clone()),
+    );
+    ir.functions
+        .iter()
+        .filter(|function| function.returns.kind == IrTypeKind::ModelValue)
+        .filter_map(|function| function.returns.handle.clone())
+        .filter(|handle| !unavailable_handles.contains(handle))
+        .collect()
+}
+
+fn synthetic_opaque_model_value_deletes(
+    ctx: &PipelineContext,
+    ir: &IrModule,
+    covered_handles: &BTreeSet<String>,
+) -> Vec<SyntheticOpaqueDelete> {
+    let mut unavailable_handles = existing_owned_model_handles(ctx, ir);
+    unavailable_handles.extend(covered_handles.iter().cloned());
+    let existing_symbols = ir
+        .functions
+        .iter()
+        .map(|function| function.name.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut deletes = BTreeMap::<String, SyntheticOpaqueDelete>::new();
+
+    for function in &ir.functions {
+        if function.returns.kind != IrTypeKind::ModelValue {
+            continue;
+        }
+        let Some(handle_name) = function.returns.handle.as_deref() else {
+            continue;
+        };
+        if unavailable_handles.contains(handle_name) {
+            continue;
+        }
+        let symbol_name = opaque_delete_symbol(handle_name);
+        if existing_symbols.contains(symbol_name.as_str()) {
+            continue;
+        }
+        deletes
+            .entry(handle_name.to_string())
+            .or_insert_with(|| SyntheticOpaqueDelete {
+                handle_name: handle_name.to_string(),
+                cpp_type: base_model_cpp_type(&function.returns.cpp_type),
+                symbol_name,
+            });
+    }
+
+    deletes.into_values().collect()
+}
+
+fn existing_owned_model_handles(ctx: &PipelineContext, ir: &IrModule) -> BTreeSet<String> {
+    let mut handles = ir
+        .functions
+        .iter()
+        .filter(|function| function.kind == IrFunctionKind::Destructor)
+        .filter_map(|function| function.params.first())
+        .filter_map(|param| param.ty.handle.clone())
+        .collect::<BTreeSet<_>>();
+    handles.extend(
+        ctx.known_model_projections
+            .iter()
+            .map(|projection| projection.handle_name.clone()),
+    );
+    handles
+}
+
+fn opaque_delete_symbol(handle_name: &str) -> String {
+    let base = handle_name.strip_suffix("Handle").unwrap_or(handle_name);
+    format!("{WRAPPER_PREFIX}_{base}_delete")
+}
+
+fn render_synthetic_opaque_delete_def(delete: &SyntheticOpaqueDelete) -> String {
+    format!(
+        "void {}({}* self) {{\n    delete reinterpret_cast<{}*>(self);\n}}\n",
+        delete.symbol_name, delete.handle_name, delete.cpp_type
     )
 }
 
