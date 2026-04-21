@@ -153,6 +153,62 @@ output:
 }
 
 #[test]
+fn multi_header_model_value_return_emits_delete_with_owned_go_wrapper() {
+    let root = temp_dir("owned_opaque_delete");
+    fs::write(
+        root.join("include/KeyTypes.hpp"),
+        r#"
+        struct Table {
+            struct iKey {
+                int id;
+            };
+        };
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("include/KeyApi.hpp"),
+        r#"
+        #include "KeyTypes.hpp"
+
+        class KeyApi {
+        public:
+            Table::iKey GetKey() const;
+        };
+        "#,
+    )
+    .unwrap();
+
+    let config_path = root.join("cppgo-wrap.yaml");
+    fs::write(
+        &config_path,
+        r#"
+version: 1
+input:
+  dir: include
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(&config_path).unwrap();
+    let ctx = PipelineContext::new(config.clone());
+    generator::generate_all(&ctx, true).unwrap();
+
+    let output_dir = root.join("gen");
+    let api_header = fs::read_to_string(output_dir.join("key_api_wrapper.h")).unwrap();
+    let api_source = fs::read_to_string(output_dir.join("key_api_wrapper.cpp")).unwrap();
+    let api_go = fs::read_to_string(output_dir.join("key_api_wrapper.go")).unwrap();
+
+    assert!(api_header.contains("void cgowrap_TableiKey_delete(TableiKeyHandle* self);"));
+    assert!(api_source.contains("delete reinterpret_cast<Table::iKey*>(self);"));
+    assert!(api_go.contains("type TableiKey struct {"));
+    assert!(api_go.contains("C.cgowrap_TableiKey_delete"));
+    assert!(api_go.contains("return newOwnedTableiKey(raw)"));
+}
+
+#[test]
 fn emits_unified_go_enums_without_classification() {
     let root = temp_dir("model-enum");
     fs::write(
