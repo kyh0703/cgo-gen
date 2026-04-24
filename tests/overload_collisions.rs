@@ -163,3 +163,111 @@ output:
         "expected copy Go constructor but got:\n{go}"
     );
 }
+
+#[test]
+fn renders_dispatchers_for_unambiguous_go_overloads() {
+    let root =
+        std::env::temp_dir().join(format!("c_go_overload_dispatcher_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("include")).unwrap();
+    std::fs::write(
+        root.join("include/Widget.hpp"),
+        r#"
+        class Widget {
+        public:
+            Widget() {}
+            bool set(int value) { return true; }
+            bool set(bool value) { return value; }
+        };
+
+        bool apply(int value) { return true; }
+        bool apply(bool value) { return value; }
+        "#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("config.yaml"),
+        r#"
+version: 1
+input:
+  dir: include
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(root.join("config.yaml")).unwrap();
+    let ctx = PipelineContext::new(config);
+    let parsed = parser::parse(&ctx).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
+    let go_files = render_go_structs(&ctx, &ir).unwrap();
+    assert_eq!(go_files.len(), 1, "expected one Go facade file");
+    let go = &go_files[0].contents;
+
+    assert!(go.contains("import \"fmt\""), "expected fmt import:\n{go}");
+    assert!(go.contains("func ApplyInt32(value int32) bool {"));
+    assert!(go.contains("func ApplyBool(value bool) bool {"));
+    assert!(go.contains("func Apply(args ...any) (bool, error) {"));
+    assert!(go.contains("return ApplyInt32(arg0), nil"));
+    assert!(go.contains("return ApplyBool(arg0), nil"));
+    assert!(go.contains("func (w *Widget) SetInt32(value int32) bool {"));
+    assert!(go.contains("func (w *Widget) SetBool(value bool) bool {"));
+    assert!(go.contains("func (w *Widget) Set(args ...any) (bool, error) {"));
+    assert!(go.contains("return w.SetInt32(arg0), nil"));
+    assert!(go.contains("return w.SetBool(arg0), nil"));
+    assert!(go.contains("fmt.Errorf(\"no matching overload for Widget.Set\""));
+}
+
+#[test]
+fn skips_dispatcher_for_model_ref_and_pointer_ambiguity() {
+    let root = std::env::temp_dir().join(format!(
+        "c_go_overload_dispatcher_ambiguous_{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("include")).unwrap();
+    std::fs::write(
+        root.join("include/Widget.hpp"),
+        r#"
+        class Model {
+        public:
+            Model() {}
+        };
+
+        class Widget {
+        public:
+            Widget() {}
+            bool set(Model& value) { return true; }
+            bool set(Model* value) { return value != 0; }
+        };
+        "#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("config.yaml"),
+        r#"
+version: 1
+input:
+  dir: include
+output:
+  dir: gen
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(root.join("config.yaml")).unwrap();
+    let ctx = PipelineContext::new(config);
+    let parsed = parser::parse(&ctx).unwrap();
+    let ir = ir::normalize(&ctx, &parsed).unwrap();
+    let go_files = render_go_structs(&ctx, &ir).unwrap();
+    assert_eq!(go_files.len(), 1, "expected one Go facade file");
+    let go = &go_files[0].contents;
+
+    assert!(go.contains("func (w *Widget) SetModelRef(value *Model) bool {"));
+    assert!(go.contains("func (w *Widget) SetModelPtr(value *Model) bool {"));
+    assert!(
+        !go.contains("func (w *Widget) Set(args ...any)"),
+        "ambiguous Model&/Model* overloads should not get a dispatcher:\n{go}"
+    );
+}
